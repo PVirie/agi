@@ -1,0 +1,69 @@
+{
+    "configurations": [
+        {
+            "name": "Run current file",
+            "type": "debugpy",
+            "request": "attach",
+            "preLaunchTask": "Current file",
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/implementations",
+                    "remoteRoot": "/app/implementations"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/quest_interface",
+                    "remoteRoot": "/app/quest_interface"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/tasks",
+                    "remoteRoot": "/app/tasks"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/utilities",
+                    "remoteRoot": "/app/utilities"
+                }
+            ],
+            "connect": {
+                "host": "127.0.0.1",
+                "port": 43690
+            }
+        },
+        {
+            "name": "Attach debugger only",
+            "type": "debugpy",
+            "request": "attach",
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/implementations",
+                    "remoteRoot": "/app/implementations"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/quest_interface",
+                    "remoteRoot": "/app/quest_interface"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/tasks",
+                    "remoteRoot": "/app/tasks"
+                },
+                {
+                    "localRoot": "${workspaceFolder}/utilities",
+                    "remoteRoot": "/app/utilities"
+                }
+            ],
+            "connect": {
+                "host": "127.0.0.1",
+                "port": 43690
+            }
+        },
+        {
+            "name": "reset",
+            "type": "debugpy",
+            "request": "attach",
+            "preLaunchTask": "Current file: reset",
+            "connect": {
+                "host": "127.0.0.1",
+                "port": 43690
+            }
+        }
+    ]
+}

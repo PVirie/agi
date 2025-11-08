@@ -1,0 +1,217 @@
+services:
+    python-service:
+        profiles: ["python"]
+        build:
+            dockerfile: ./docker_files/Dockerfile.python
+            context: .
+        container_name: agi-python
+        restart: no
+        volumes:
+            - ./artifacts/log:/app/log
+            - ./artifacts/cache:/app/cache
+            - ./artifacts/experiments:/app/experiments
+            - ./artifacts/pip_modules:/app/pip_modules
+            - ./interfaces:/app/interfaces
+            - ./implementations:/app/implementations
+            - ./utilities:/app/utilities
+            - ./tasks:/app/tasks
+        environment:
+            - ERROR_LOG=/app/log/error.log
+            - LOG_LEVEL=info
+            - PYTHONUNBUFFERED=TRUE
+            - TF_CPP_MIN_LOG_LEVEL=0
+        env_file:
+            - ./secrets.env
+        ports:
+            - "127.0.0.1:43690:43690"
+        networks:
+            - app_network
+    torch-cpu-service:
+        profiles: ["torch-cpu"]
+        build:
+            dockerfile: ./docker_files/Dockerfile.torch-cpu
+            context: .
+        container_name: agi-torch-cpu
+        restart: no
+        volumes:
+            - ./artifacts/log:/app/log
+            - ./artifacts/cache:/app/cache
+            - ./artifacts/experiments:/app/experiments
+            - ./artifacts/pip_modules:/app/pip_modules
+            - ./interfaces:/app/interfaces
+            - ./implementations:/app/implementations
+            - ./utilities:/app/utilities
+            - ./tasks:/app/tasks
+        environment:
+            - ERROR_LOG=/app/log/error.log
+            - LOG_LEVEL=info
+            - PYTHONUNBUFFERED=TRUE
+            - TF_CPP_MIN_LOG_LEVEL=0
+        env_file:
+            - ./secrets.env
+        ports:
+            - "127.0.0.1:43690:43690"
+        networks:
+            - app_network
+    torch-cuda-service:
+        profiles: ["torch-cuda"]
+        build:
+            dockerfile: ./docker_files/Dockerfile.torch-cuda
+            context: .
+        container_name: agi-torch-cuda
+        restart: no
+        volumes:
+            - ./artifacts/log:/app/log
+            - ./artifacts/cache:/app/cache
+            - ./artifacts/experiments:/app/experiments
+            - ./artifacts/pip_modules:/app/pip_modules
+            - ./interfaces:/app/interfaces
+            - ./implementations:/app/implementations
+            - ./utilities:/app/utilities
+            - ./tasks:/app/tasks
+        environment:
+            - ERROR_LOG=/app/log/error.log
+            - LOG_LEVEL=info
+            - PYTHONUNBUFFERED=TRUE
+            - TF_CPP_MIN_LOG_LEVEL=0
+        env_file:
+            - ./secrets.env
+        ports:
+            - "127.0.0.1:43690:43690"
+        networks:
+            - app_network
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          count: 1
+                          capabilities: [gpu]
+    torch-rocm-service:
+        profiles: ["torch-rocm"]
+        build:
+            dockerfile: ./docker_files/Dockerfile.torch-rocm
+            context: .
+        container_name: agi-torch-rocm
+        restart: no
+        volumes:
+            - ./artifacts/log:/app/log
+            - ./artifacts/cache:/app/cache
+            - ./artifacts/experiments:/app/experiments
+            - ./artifacts/pip_modules:/app/pip_modules
+            - ./interfaces:/app/interfaces
+            - ./implementations:/app/implementations
+            - ./utilities:/app/utilities
+            - ./tasks:/app/tasks
+        environment:
+            - ERROR_LOG=/app/log/error.log
+            - LOG_LEVEL=info
+            - PYTHONUNBUFFERED=TRUE
+            - TF_CPP_MIN_LOG_LEVEL=0
+        env_file:
+            - ./secrets.env
+        ports:
+            - "127.0.0.1:43690:43690"
+        networks:
+            - app_network
+        devices:
+            - /dev/kfd
+            - /dev/dri
+        security_opt:
+            - seccomp:unconfined
+    jax-cpu-service:
+        profiles: ["jax-cpu"]
+        build:
+            dockerfile: ./docker_files/Dockerfile.jax-cpu
+            context: .
+        container_name: agi-jax-cpu
+        restart: no
+        volumes:
+            - ./artifacts/log:/app/log
+            - ./artifacts/cache:/app/cache
+            - ./artifacts/experiments:/app/experiments
+            - ./artifacts/pip_modules:/app/pip_modules
+            - ./interfaces:/app/interfaces
+            - ./implementations:/app/implementations
+            - ./utilities:/app/utilities
+            - ./tasks:/app/tasks
+        environment:
+            - ERROR_LOG=/app/log/error.log
+            - LOG_LEVEL=info
+            - PYTHONUNBUFFERED=TRUE
+            - TF_CPP_MIN_LOG_LEVEL=0
+        env_file:
+            - ./secrets.env
+        ports:
+            - "127.0.0.1:43690:43690"
+        networks:
+            - app_network
+    jax-cuda-service:
+        profiles: ["jax-cuda"]
+        build:
+            dockerfile: ./docker_files/Dockerfile.jax-cuda
+            context: .
+        container_name: agi-jax-cuda
+        restart: no
+        volumes:
+            - ./artifacts/log:/app/log
+            - ./artifacts/cache:/app/cache
+            - ./artifacts/experiments:/app/experiments
+            - ./artifacts/pip_modules:/app/pip_modules
+            - ./interfaces:/app/interfaces
+            - ./implementations:/app/implementations
+            - ./utilities:/app/utilities
+            - ./tasks:/app/tasks
+        environment:
+            - ERROR_LOG=/app/log/error.log
+            - LOG_LEVEL=info
+            - PYTHONUNBUFFERED=TRUE
+            - TF_CPP_MIN_LOG_LEVEL=0
+        env_file:
+            - ./secrets.env
+        ports:
+            - "127.0.0.1:43690:43690"
+        networks:
+            - app_network
+        deploy:
+            resources:
+                reservations:
+                    devices:
+                        - driver: nvidia
+                          count: 1
+                          capabilities: [gpu]
+    jax-rocm-service:
+        profiles: ["jax-rocm"]
+        build:
+            dockerfile: ./docker_files/Dockerfile.jax-rocm
+            context: .
+        container_name: agi-jax-rocm
+        restart: no
+        volumes:
+            - ./artifacts/log:/app/log
+            - ./artifacts/cache:/app/cache
+            - ./artifacts/experiments:/app/experiments
+            - ./artifacts/pip_modules:/app/pip_modules
+            - ./interfaces:/app/interfaces
+            - ./implementations:/app/implementations
+            - ./utilities:/app/utilities
+            - ./tasks:/app/tasks
+        environment:
+            - ERROR_LOG=/app/log/error.log
+            - LOG_LEVEL=info
+            - PYTHONUNBUFFERED=TRUE
+            - TF_CPP_MIN_LOG_LEVEL=0
+        env_file:
+            - ./secrets.env
+        ports:
+            - "127.0.0.1:43690:43690"
+        networks:
+            - app_network
+        devices:
+            - /dev/kfd
+            - /dev/dri
+        security_opt:
+            - seccomp:unconfined
+networks:
+    app_network:
+        driver: bridge

@@ -1,0 +1,3 @@
+{
+    "python.analysis.extraPaths": ["${workspaceFolder}/.venv/lib/python3.12/site-packages", "${workspaceFolder}/artifacts/pip_modules/lib/python3.12/site-packages"]
+}
