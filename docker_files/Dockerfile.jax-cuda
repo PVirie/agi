@@ -12,7 +12,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 WORKDIR /app
 
 # install jax with cuda support
-RUN pip3 install --upgrade jax[cuda12] flax optax orbax-checkpoint
+RUN pip3 install --upgrade jax[cuda13] flax optax orbax-checkpoint
 RUN pip3 install debugpy
 
 CMD ["python3", "-m", "debugpy", "--listen", "0.0.0.0:43690", "tasks/benchmark.py"]
