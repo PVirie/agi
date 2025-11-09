@@ -71,3 +71,44 @@ def install(package):
     if not matched:
         logging.warning(f"Installing: {package}")
         subprocess.check_call([venv_python, "-m", "pip", "install", package, "--prefix", f"{APP_ROOT}/pip_modules"])
+
+
+def install_pyproject_toml(path):
+    # install a package from a pyproject.toml file using pip
+    # example pyproject.toml file:
+    """
+        ...
+        dependencies = [
+            "dotenv>=0.9.9",
+            "numpy>=2.3.2",
+            "pillow>=11.2.1",
+            "pydantic>=2.11.7",
+            "requests>=2.32.4"
+        ]
+        ...
+    """
+    logging.warning(f"Installing from pyproject.toml: {path}")
+
+    package_list = []
+    with open(path, "r") as f:
+        lines = f.readlines()
+        in_dependencies = False
+        for line in lines:
+            line = line.strip()
+            if line.startswith("dependencies = ["):
+                in_dependencies = True
+                continue
+            if in_dependencies:
+                if line.startswith("]"):
+                    break
+                # remove quotes and commas
+                package = line.replace('"', '').replace("'", '').replace(",", "").strip()
+                if package != "":
+                    package_list.append(package)
+
+    for package in package_list:
+        try:
+            install(package)
+        except Exception as e:
+            logging.error(f"Failed to install package {package} from {path}: {e}")
+
