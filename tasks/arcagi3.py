@@ -12,8 +12,6 @@ APP_ROOT = os.getenv("APP_ROOT", "/app")
 
 import utilities
 
-utilities.install('argparse')
-
 arcagi_path = f"{APP_ROOT}/cache/ARC-AGI-3-Agents"
 os.makedirs(arcagi_path, exist_ok=True)
 if len(os.listdir(arcagi_path)) == 0:
