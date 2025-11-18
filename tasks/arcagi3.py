@@ -38,9 +38,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(20250701)  
-    torch.manual_seed(20250701)
-    np.random.seed(20250701)
+    random.seed(20251118)  
+    torch.manual_seed(20251118)
+    np.random.seed(20251118)
     torch.use_deterministic_algorithms(True)
 
     agent_001 = my_awesome_agent.MyAwesomeAgent("agent_001")

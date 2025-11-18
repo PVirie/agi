@@ -24,3 +24,9 @@ class Instantiable_Agent:
                 setattr(agent_obj, attr_name, attr_value)
 
         return agent_obj
+    
+    def load_parameters(self, path: str):
+        raise NotImplementedError("load_parameters method must be implemented by the subclass")
+    
+    def save_parameters(self, path: str):
+        raise NotImplementedError("save_parameters method must be implemented by the subclass")
