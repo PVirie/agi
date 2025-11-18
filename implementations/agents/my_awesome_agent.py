@@ -1,16 +1,20 @@
-from agents import AVAILABLE_AGENTS, Agent # Make sure to change from `..` imports
 from agents.structs import FrameData, GameAction, GameState # Make sure to change from `..` imports
+from .decorator import Instantiable_Agent
 import random
+import logging
 
-# Rename the class
-class MyAwesomeAgent(Agent):
-    """A simple agent that chooses random actions."""
+
+class MyAwesomeAgent(Instantiable_Agent):
+    def __init__(self, id: str):
+        self.id = id
     
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
         # Your logic to determine if the game is finished
         return latest_frame.state is GameState.WIN
 
     def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> GameAction:
+        logging.info(f"MyAwesomeAgent {self.id} choosing action...")
+
         # Your custom decision-making logic goes here
         if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             # Start or restart the game
@@ -31,6 +35,3 @@ class MyAwesomeAgent(Agent):
             action.reasoning = {"action": action.value, "reason": "Random choice"}
         
         return action
-    
-# Register the agent in AVAILABLE_AGENTS
-AVAILABLE_AGENTS['MyAwesomeAgent'] = MyAwesomeAgent
