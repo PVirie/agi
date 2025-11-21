@@ -25,7 +25,7 @@ sys.path.append(os.path.join(arcagi_path))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from implementations.agents import register_agent_class, my_awesome_agent
+from implementations.agents import register_agent_class, random_agent
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     np.random.seed(20251118)
     torch.use_deterministic_algorithms(True)
 
-    agent_001 = my_awesome_agent.MyAwesomeAgent("agent_001")
+    agent_001 = random_agent.Random_Agent("agent_001")
     register_agent_class("small_agent", agent_001)
 
     from main import main

@@ -4,7 +4,7 @@ import random
 import logging
 
 
-class MyAwesomeAgent(Instantiable_Agent):
+class Random_Agent(Instantiable_Agent):
     def __init__(self, id: str):
         self.id = id
     
@@ -13,7 +13,7 @@ class MyAwesomeAgent(Instantiable_Agent):
         return latest_frame.state is GameState.WIN
 
     def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> GameAction:
-        logging.info(f"MyAwesomeAgent {self.id} choosing action...")
+        logging.info(f"Random agent {self.id} choosing action...")
 
         # Your custom decision-making logic goes here
         if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
