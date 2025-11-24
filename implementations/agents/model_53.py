@@ -1,13 +1,17 @@
 from agents.structs import FrameData, GameAction, GameState # Make sure to change from `..` imports
 from .decorator import Instantiable_Agent
-import random
 import logging
+import random
+
+from interfaces.learning import Learner
+from interfaces.agent import Agent_Core
 
 
-class Random_Agent(Instantiable_Agent):
-
-    def __init__(self, id: str):
-        self.id = id
+class Model_53(Instantiable_Agent):
+    
+    def __init__(self, agent_core: Agent_Core, trainer: Learner):
+        self.agent_core = agent_core
+        self.trainer = trainer
 
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
@@ -16,7 +20,6 @@ class Random_Agent(Instantiable_Agent):
 
 
     def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> GameAction:
-        logging.info(f"Random agent {self.id} choosing action...")
 
         # Your custom decision-making logic goes here
         if latest_frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
@@ -26,6 +29,9 @@ class Random_Agent(Instantiable_Agent):
             # Choose a random action (except RESET)
             action = random.choice([a for a in GameAction if a is not GameAction.RESET])
         
+        # decide to learn or not
+        # convert frames to tensors
+
         # Add reasoning for simple actions
         if action.is_simple():
             action.reasoning = f"Chose {action.value} randomly"

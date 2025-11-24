@@ -5,17 +5,18 @@ import torch.optim as optim
 import numpy as np
 import time
 
+from interfaces.learning import Learner
+from interfaces.agent import Agent_Core
 
-class PPO:
 
-    def __init__(self, agent, observation_dim: int, action_dim: int, device):
+class PPO(Learner):
+
+    def __init__(self, agent: Agent_Core, device):
         # agent = Agent(envs).to(device)
         self.parameters = agent.parameters()
         self.agent = agent
         self.device = device
 
-        self.observation_dim = observation_dim
-        self.action_dim = action_dim
         self.lr = 3e-4
         self.gamma = 0.99
         self.gae_lambda = 0.95
@@ -31,14 +32,6 @@ class PPO:
         self.num_minibatches = 32
 
         self.optimizer = optim.Adam(self.parameters, lr=self.lr, eps=1e-5)
-
-        # ALGO Logic: Storage setup
-        # obs = torch.zeros((args.num_steps, observation_dim)).to(device)
-        # actions = torch.zeros((args.num_steps, action_dim)).to(device)
-        # logprobs = torch.zeros((args.num_steps)).to(device)
-        # rewards = torch.zeros((args.num_steps)).to(device)
-        # dones = torch.zeros((args.num_steps)).to(device)
-        # values = torch.zeros((args.num_steps)).to(device)
 
     def reset(self, time = 0.0):
         frac = 1.0 - time
@@ -89,17 +82,18 @@ class PPO:
                 advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
+        batch_size = b_returns.shape[0]
+        minibatch_size = batch_size // self.num_minibatches
+
         # flatten the batch
-        b_obs = obs.reshape((-1, self.observation_dim))
-        b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1, self.action_dim))
-        b_advantages = advantages.reshape(-1)
-        b_returns = returns.reshape(-1)
-        b_values = values.reshape(-1)
+        b_obs = obs.reshape((batch_size, -1))
+        b_logprobs = logprobs.reshape(batch_size)
+        b_actions = actions.reshape((batch_size, -1))
+        b_advantages = advantages.reshape(batch_size)
+        b_returns = returns.reshape(batch_size)
+        b_values = values.reshape(batch_size)
 
         # Optimizing the policy and value network
-        batch_size = b_obs.shape[0]
-        minibatch_size = batch_size // self.num_minibatches
         b_inds = np.arange(batch_size)
         clipfracs = []
         for epoch in range(self.update_epochs):

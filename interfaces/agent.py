@@ -1,6 +1,6 @@
 import abc
 
-class Agent(abc.ABC):
+class Agent_Core(abc.ABC):
 
     @abc.abstractmethod
     def get_value(self, x):
