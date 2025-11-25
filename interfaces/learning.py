@@ -7,9 +7,9 @@ class Learner(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def collect(self, obs, value, action, logprob, reward, terminations, truncations):
+    def collect(self, obs, value, action, logprob, reward, termination, truncation):
         pass
 
     @abc.abstractmethod
-    def learn(self, last_value, last_terminations, last_truncations):
+    def learn(self, last_value, last_termination, last_truncation):
         pass

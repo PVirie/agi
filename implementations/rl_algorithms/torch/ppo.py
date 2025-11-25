@@ -47,18 +47,18 @@ class PPO(Learner):
         self.values = []
 
 
-    def collect(self, obs, value, action, logprob, reward, terminations, truncations):
+    def collect(self, obs, value, action, logprob, reward, termination, truncation):
         self.obs.append(obs)
         self.values.append(value)
         self.actions.append(action)
         self.logprobs.append(logprob)
         self.rewards.append(reward)
 
-        next_done = np.logical_or(terminations, truncations)
+        next_done = np.logical_or(termination, truncation)
         self.next_dones.append(next_done)
 
 
-    def learn(self, last_value, last_terminations, last_truncations):
+    def learn(self, last_value, last_termination, last_truncation):
         # bootstrap value if not done
         obs = torch.stack(self.obs)
         actions = torch.stack(self.actions)
@@ -67,7 +67,7 @@ class PPO(Learner):
         next_dones = torch.stack(self.next_dones)
         values = torch.stack(self.values)
 
-        last_done = np.logical_or(last_terminations, last_truncations)
+        last_done = np.logical_or(last_termination, last_truncation)
 
         with torch.no_grad():
             advantages = torch.zeros_like(rewards).to(self.device)

@@ -201,3 +201,31 @@ def reset_transformer_decoder(module):
                 inner_module.reset_parameters()
             elif hasattr(inner_module, '_reset_parameters'):
                 inner_module._reset_parameters()
+
+
+class Multilayer_CNN(nn.Module):
+    def __init__(self, input_channels, output_size, hidden_channels, n_layers=1, kernel_size=3, device=None):
+        super(Multilayer_CNN, self).__init__()
+        self.device = device
+        self.hidden_channels = hidden_channels
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Conv2d(input_channels, hidden_channels, kernel_size=kernel_size, padding=kernel_size//2, device=device))
+        for _ in range(n_layers - 1):
+            self.layers.append(nn.Conv2d(hidden_channels, hidden_channels, kernel_size=kernel_size, padding=kernel_size//2, device=device))
+        self.fc = nn.Linear(hidden_channels, output_size, device=device)
+
+    # output shape: (batch, output_size)
+    def forward(self, x):
+        for layer in self.layers:
+            x = F.relu(layer(x))
+        # Global average pooling
+        x = torch.mean(x, dim=[2, 3])  # Assuming x is of shape (batch, channels, height, width)
+        x = self.fc(x)
+        return x
+    
+
+    def reset_parameters(self):
+        for layer in self.layers:
+            if isinstance(layer, nn.Conv2d):
+                layer.reset_parameters()
+        self.fc.reset_parameters()
