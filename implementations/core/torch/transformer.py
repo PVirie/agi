@@ -5,11 +5,11 @@ from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
-from interfaces.agent import Agent_Core
-from core.torch.base import Multilayer_Relu, apply_transformer, causal_mask, reset_transformer_decoder
+from interfaces.core import Core
+from .base import Multilayer_Relu, apply_transformer, causal_mask, reset_transformer_decoder
 
 
-class Transformer_Agent(Agent_Core, nn.Module):
+class Transformer_Core(Core, nn.Module):
 
     def __init__(self, action_space, hidden_size, heads, layers, device):
         super().__init__()
