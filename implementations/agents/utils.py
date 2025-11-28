@@ -27,7 +27,6 @@ import numpy as np
 #     GAME_OVER = "GAME_OVER"
 
 
-
 def extract_frame(frame_data: FrameData) -> torch.Tensor:
     """Convert frame data to tensor format for the model."""
     # Convert frame to numpy array with color indices 0-15

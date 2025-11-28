@@ -10,6 +10,10 @@ class Core(abc.ABC):
     def get_action_and_value(self, x, action=None):
         pass
 
+    @abc.abstractmethod
+    def unpack_action(packed_action):
+        pass
+
 
 class Context_Collector(abc.ABC):
     
@@ -27,4 +31,8 @@ class Context_Collector(abc.ABC):
 
     @abc.abstractmethod
     def __getitem__(self, index):
+        pass
+
+    @abc.abstractmethod
+    def make_batch(self):
         pass

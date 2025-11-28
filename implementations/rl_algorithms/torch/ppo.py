@@ -40,11 +40,11 @@ class PPO(Learner):
 
     def learn(self, obs, actions, logprobs, rewards, values, next_dones: List[bool], last_value: float, last_done: bool):
         # bootstrap value if not done
-        obs = torch.stack(obs)
-        actions = torch.stack(actions)
-        logprobs = torch.stack(logprobs)
-        rewards = torch.stack(rewards)
-        values = torch.stack(values)
+        # obs = torch.stack(obs, dim=0)
+        actions = torch.stack(actions, dim=0)
+        logprobs = torch.stack(logprobs, dim=0)
+        rewards = torch.stack(rewards, dim=0)
+        values = torch.stack(values, dim=0)
 
         with torch.no_grad():
             advantages = torch.zeros_like(rewards).to(self.device)
@@ -60,11 +60,11 @@ class PPO(Learner):
                 advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        batch_size = b_returns.shape[0]
+        batch_size = obs.shape[0]
         minibatch_size = batch_size // self.num_minibatches
 
         # flatten the batch
-        b_obs = obs.reshape((batch_size, -1))
+        b_obs = obs
         b_actions = actions.reshape((batch_size, -1))
         b_logprobs = logprobs.reshape(batch_size)
         b_advantages = advantages.reshape(batch_size)
@@ -75,12 +75,19 @@ class PPO(Learner):
         b_inds = np.arange(batch_size)
         clipfracs = []
         for epoch in range(self.update_epochs):
-            np.random.shuffle(b_inds)
+            # np.random.shuffle(b_inds)
             for start in range(0, batch_size, minibatch_size):
                 end = start + minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = self.agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                _, newlogprob, entropy, newvalue = self.agent.get_action_and_value(
+                    b_obs[start:end].make_batch(1), 
+                    torch.unsqueeze(b_actions[mb_inds], dim=0)
+                    )
+                newlogprob = newlogprob.view(-1)
+                entropy = entropy.view(-1)
+                newvalue = newvalue.view(-1)
+                
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -100,7 +107,6 @@ class PPO(Learner):
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
-                newvalue = newvalue.view(-1)
                 if self.clip_vloss:
                     v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
                     v_clipped = b_values[mb_inds] + torch.clamp(

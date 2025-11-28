@@ -17,7 +17,7 @@ class State_Sequence(Context_Collector):
             self.data = data
 
 
-    def append(self, obs, action, reward):
+    def append(self, reward, action, obs):
         self.data.append(torch.concat([obs.flatten(), action.flatten(), torch.tensor([reward], device=obs.device)]))
 
 
@@ -36,3 +36,11 @@ class State_Sequence(Context_Collector):
         stop = slice.stop if slice.stop is not None else len(self.data)
         start = max(0, start - self.max_history)
         return State_Sequence(self.max_history, self.data[start:stop], device=self.device)
+    
+
+    def make_batch(self, batch_size=1):
+        # return tensor of shape (batch_size, len(data), :)
+        if len(self.data) == 0:
+            return torch.zeros((batch_size, 0, self.data[0].shape[0]), device=self.device)
+        data_tensor = torch.stack(self.data, dim=0).unsqueeze(0).repeat(batch_size, 1, 1)
+        return data_tensor.to(self.device)

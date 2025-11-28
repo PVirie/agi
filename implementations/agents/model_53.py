@@ -36,18 +36,26 @@ class Model_53(Instantiable_Agent):
 
     def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> GameAction:
 
-        game_state, obs, score, next_done = extract_frame(latest_frame)
+        game_state, obs, score = extract_frame(latest_frame)
         reward = score - self.current_score
         self.current_score = score
+        next_done = game_state in [GameState.GAME_OVER, GameState.WIN]
 
-        self.obs.append(obs, self.last_position, reward)
+        self.obs.append(reward, self.last_position, obs)
 
         # compute last value from the current context (past observation) and the recent observation
         last_value = self.agent_core.get_latest_value(self.obs)
 
         if self.last_position is not None:
             # learn RL and Supervised content
-            self.trainer.learn(self.obs[:-1], self.packed_actions, self.logprobs, self.rewards, self.values, self.next_dones, last_value, next_done)
+            self.trainer.learn(
+                self.obs[:-1], 
+                self.packed_actions, 
+                self.logprobs, 
+                self.rewards, 
+                self.values, 
+                self.next_dones, 
+                last_value, next_done)
             
             self.trainer.reset(time=0.0)
             self.obs.reset()
@@ -64,22 +72,22 @@ class Model_53(Instantiable_Agent):
     
         while True:
             # Choose a random action (except RESET)
-            packed_action, newlogprob, _, newvalue = self.agent_core.get_action_and_value(self.obs[:-1])
+            packed_action, newlogprob, _, newvalue = self.agent_core.get_action_and_value(self.obs[:-1].make_batch(1))
 
-            self.packed_actions.append(packed_action)
-            self.logprobs.append(newlogprob)
+            self.packed_actions.append(packed_action[:, -1, ...])
+            self.logprobs.append(newlogprob[:, -1, ...])
             self.rewards.append(0)
             self.next_dones.append(False)
-            self.values.append(newvalue)
+            self.values.append(newvalue[:, -1, ...])
 
             # extract output here
-            ext_flag, action_data, position, content = unpack_action(packed_action)
+            ext_flag, action_data, position, content = self.agent_core.unpack_action(packed_action[:, -1, ...], self.obs[:-1].make_batch(1))
 
-            if ext_flag:
+            if ext_flag[0].item() > 0.5:
                 self.last_position = position
                 break
             else:
-                self.obs.append(content, position, 0)
+                self.obs.append(0, position, content)
 
         action = GameAction(action_data)
 
