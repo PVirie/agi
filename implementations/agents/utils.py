@@ -28,7 +28,7 @@ import numpy as np
 
 
 
-def frame_to_tensor(self, frame_data: FrameData) -> torch.Tensor:
+def extract_frame(frame_data: FrameData) -> torch.Tensor:
     """Convert frame data to tensor format for the model."""
     # Convert frame to numpy array with color indices 0-15
     frame = np.array(frame_data.frame, dtype=np.int64)
@@ -36,26 +36,4 @@ def frame_to_tensor(self, frame_data: FrameData) -> torch.Tensor:
     # Take the last frame (in case of an animation of frames)
     frame = frame[-1]
     
-    assert frame.shape == (self.grid_size, self.grid_size)
-    
-    # One-hot encode: (64, 64) -> (16, 64, 64)
-    tensor = torch.zeros(self.num_colours, self.grid_size, self.grid_size, dtype=torch.float32)
-    tensor.scatter_(0, torch.from_numpy(frame).unsqueeze(0), 1)
-    
-    return tensor.to(self.device)
-
-
-def frame_data_to_tensors(frames: list[FrameData]) -> torch.Tensor:
-    batch_size = len(frames)
-    grid_size = 64
-    num_channels = 16
-
-    tensor_data = torch.zeros((batch_size, grid_size, grid_size, num_channels), dtype=torch.float32)
-    for i, frame_data in enumerate(frames):
-        for y in range(min(grid_size, len(frame_data.frame))):
-            for x in range(min(grid_size, len(frame_data.frame[y]))):
-                cell_value = frame_data.frame[y][x]
-                if 0 <= cell_value < num_channels:
-                    tensor_data[i, y, x, cell_value] = 1.0  # One-hot encoding
-                    
-    return tensor_data
+    return frame_data.state, frame, frame_data.score

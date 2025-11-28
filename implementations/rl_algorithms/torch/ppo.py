@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, List
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -6,14 +6,12 @@ import numpy as np
 import time
 
 from interfaces.learning import Learner
-from interfaces.agent import Agent_Core
+from interfaces.core import Core
 
 
 class PPO(Learner):
 
-    def __init__(self, agent: Agent_Core, device):
-        # agent = Agent(envs).to(device)
-        self.parameters = agent.parameters()
+    def __init__(self, agent: Core, device):
         self.agent = agent
         self.device = device
 
@@ -31,53 +29,32 @@ class PPO(Learner):
         self.update_epochs = 10
         self.num_minibatches = 32
 
-        self.optimizer = optim.Adam(self.parameters, lr=self.lr, eps=1e-5)
+        self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
 
 
     def reset(self, time = 0.0):
         frac = 1.0 - time
         lrnow = frac * self.lr
         self.optimizer.param_groups[0]["lr"] = lrnow
-        
-        self.obs = []
-        self.actions = []
-        self.logprobs = []
-        self.rewards = []
-        self.next_dones = []
-        self.values = []
 
 
-    def collect(self, obs, value, action, logprob, reward, termination, truncation):
-        self.obs.append(obs)
-        self.values.append(value)
-        self.actions.append(action)
-        self.logprobs.append(logprob)
-        self.rewards.append(reward)
-
-        next_done = np.logical_or(termination, truncation)
-        self.next_dones.append(next_done)
-
-
-    def learn(self, last_value, last_termination, last_truncation):
+    def learn(self, obs, actions, logprobs, rewards, values, next_dones: List[bool], last_value: float, last_done: bool):
         # bootstrap value if not done
-        obs = torch.stack(self.obs)
-        actions = torch.stack(self.actions)
-        logprobs = torch.stack(self.logprobs)
-        rewards = torch.stack(self.rewards)
-        next_dones = torch.stack(self.next_dones)
-        values = torch.stack(self.values)
-
-        last_done = np.logical_or(last_termination, last_truncation)
+        obs = torch.stack(obs)
+        actions = torch.stack(actions)
+        logprobs = torch.stack(logprobs)
+        rewards = torch.stack(rewards)
+        values = torch.stack(values)
 
         with torch.no_grad():
             advantages = torch.zeros_like(rewards).to(self.device)
             lastgaelam = 0
             for t in reversed(range(rewards.size(0))):
                 if t == rewards.size(0) - 1:
-                    nextnonterminal = 1.0 - last_done
+                    nextnonterminal = 0.0 if last_done else 1.0
                     nextvalues = last_value
                 else:
-                    nextnonterminal = 1.0 - next_dones[t]
+                    nextnonterminal = 0.0 if next_dones[t] else 1.0
                     nextvalues = values[t + 1]
                 delta = rewards[t] + self.gamma * nextvalues * nextnonterminal - values[t]
                 advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
@@ -88,8 +65,8 @@ class PPO(Learner):
 
         # flatten the batch
         b_obs = obs.reshape((batch_size, -1))
-        b_logprobs = logprobs.reshape(batch_size)
         b_actions = actions.reshape((batch_size, -1))
+        b_logprobs = logprobs.reshape(batch_size)
         b_advantages = advantages.reshape(batch_size)
         b_returns = returns.reshape(batch_size)
         b_values = values.reshape(batch_size)
@@ -142,7 +119,7 @@ class PPO(Learner):
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.parameters, self.max_grad_norm)
+                nn.utils.clip_grad_norm_(self.agent.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
             if self.target_kl is not None and approx_kl > self.target_kl:

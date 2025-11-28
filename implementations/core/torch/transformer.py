@@ -48,8 +48,8 @@ class Transformer_Core(Core, nn.Module):
         return x
     
 
-    def get_value(self, x):
-        return self.critic(self.__compute(x))
+    def get_latest_value(self, x):
+        return self.critic(self.__compute(x))[:, -1]
     
 
     def get_action_and_value(self, x, action=None):

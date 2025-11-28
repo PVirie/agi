@@ -1,4 +1,5 @@
 import abc
+from typing import List, Any
 
 class Learner(abc.ABC):
 
@@ -7,9 +8,5 @@ class Learner(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def collect(self, obs, value, action, logprob, reward, termination, truncation):
-        pass
-
-    @abc.abstractmethod
-    def learn(self, last_value, last_termination, last_truncation):
+    def learn(self, obs, actions, logprobs, rewards, values, next_dones: List[bool], last_value: float, last_done: bool):
         pass
