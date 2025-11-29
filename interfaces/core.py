@@ -34,5 +34,5 @@ class Context_Collector(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def make_batch(self):
+    def make_batch(self, batch_led=True):
         pass

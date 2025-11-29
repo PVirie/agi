@@ -6,7 +6,11 @@ import numpy as np
 import time
 
 from interfaces.learning import Learner
-from interfaces.core import Core
+from interfaces.core import Core, Context_Collector
+
+
+def convert_list_of_bool_to_float_tensor(bool_list: List[bool], device) -> torch.Tensor:
+    return torch.tensor([1.0 if b else 0.0 for b in bool_list], dtype=torch.float32).to(device)
 
 
 class PPO(Learner):
@@ -38,57 +42,60 @@ class PPO(Learner):
         self.optimizer.param_groups[0]["lr"] = lrnow
 
 
-    def learn(self, obs, actions, logprobs, rewards, values, next_dones: List[bool], last_value: float, last_done: bool):
-        # bootstrap value if not done
+    def learn(self, obs: Context_Collector, actions: List[Any], logprobs: List[Any], rewards: List[Any], values: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool]):
+        """
+        obs: Context_Collector
+        actions: List: tensor of shape (batch_size, action_size)
+        logprobs: List: tensor of shape (batch_size)
+        rewards: List: np array of shape (batch_size)
+        values: List tensor of shape (batch_size)
+        next_dones: list of bool of length batch_size
+        last_value: tensor of shape (batch_size)
+        last_done: list of bool of length batch_size
+        """
+        # Use dim 0 as context length dimension
         # obs = torch.stack(obs, dim=0)
         actions = torch.stack(actions, dim=0)
         logprobs = torch.stack(logprobs, dim=0)
-        rewards = torch.stack(rewards, dim=0)
+        rewards = torch.stack(torch.tensor(rewards, dtype=torch.float32).to(self.device), dim=0)
         values = torch.stack(values, dim=0)
+
+        sequence_size = actions.shape[0]
+        batch_size = actions.shape[1]
+        minibatch_size = sequence_size // self.num_minibatches
 
         with torch.no_grad():
             advantages = torch.zeros_like(rewards).to(self.device)
             lastgaelam = 0
-            for t in reversed(range(rewards.size(0))):
-                if t == rewards.size(0) - 1:
-                    nextnonterminal = 0.0 if last_done else 1.0
+            for t in reversed(range(sequence_size)):
+                if t == sequence_size - 1:
+                    nextnonterminal = 1.0 - convert_list_of_bool_to_float_tensor(last_done, self.device)
                     nextvalues = last_value
                 else:
-                    nextnonterminal = 0.0 if next_dones[t] else 1.0
+                    nextnonterminal = 1.0 - convert_list_of_bool_to_float_tensor(next_dones[t], self.device)
                     nextvalues = values[t + 1]
                 delta = rewards[t] + self.gamma * nextvalues * nextnonterminal - values[t]
                 advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        batch_size = obs.shape[0]
-        minibatch_size = batch_size // self.num_minibatches
-
-        # flatten the batch
-        b_obs = obs
-        b_actions = actions.reshape((batch_size, -1))
-        b_logprobs = logprobs.reshape(batch_size)
-        b_advantages = advantages.reshape(batch_size)
-        b_returns = returns.reshape(batch_size)
-        b_values = values.reshape(batch_size)
-
         # Optimizing the policy and value network
-        b_inds = np.arange(batch_size)
         clipfracs = []
         for epoch in range(self.update_epochs):
             # np.random.shuffle(b_inds)
-            for start in range(0, batch_size, minibatch_size):
+            for start in range(0, sequence_size, minibatch_size):
                 end = start + minibatch_size
-                mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = self.agent.get_action_and_value(
-                    b_obs[start:end].make_batch(1), 
-                    torch.unsqueeze(b_actions[mb_inds], dim=0)
+                _, b_newlogprob, b_entropy, b_newvalue = self.agent.get_action_and_value(
+                    obs[start:end].make_batch(batch_led=True),
+                    torch.transpose(actions[start:end, ...], 0, 1)
                     )
-                newlogprob = newlogprob.view(-1)
-                entropy = entropy.view(-1)
-                newvalue = newvalue.view(-1)
                 
-                logratio = newlogprob - b_logprobs[mb_inds]
+                mb_log_prob = torch.transpose(logprobs[start:end, ...], 0, 1)
+                mb_value = torch.transpose(values[start:end, ...], 0, 1)
+                mb_advantages = torch.transpose(advantages[start:end, ...], 0, 1)
+                mb_returns = torch.transpose(returns[start:end, ...], 0, 1)
+                
+                logratio = b_newlogprob - mb_log_prob
                 ratio = logratio.exp()
 
                 with torch.no_grad():
@@ -97,7 +104,6 @@ class PPO(Learner):
                     approx_kl = ((ratio - 1) - logratio).mean()
                     clipfracs += [((ratio - 1.0).abs() > self.clip_coef).float().mean().item()]
 
-                mb_advantages = b_advantages[mb_inds]
                 if self.norm_adv:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
@@ -108,19 +114,19 @@ class PPO(Learner):
 
                 # Value loss
                 if self.clip_vloss:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                    v_clipped = b_values[mb_inds] + torch.clamp(
-                        newvalue - b_values[mb_inds],
+                    v_loss_unclipped = (b_newvalue - mb_returns) ** 2
+                    v_clipped = mb_value + torch.clamp(
+                        b_newvalue - mb_value,
                         -self.clip_coef,
                         self.clip_coef,
                     )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                    v_loss_clipped = (v_clipped - mb_returns) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * v_loss_max.mean()
                 else:
-                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                    v_loss = 0.5 * ((b_newvalue - mb_returns) ** 2).mean()
 
-                entropy_loss = entropy.mean()
+                entropy_loss = b_entropy.mean()
                 loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
 
                 self.optimizer.zero_grad()

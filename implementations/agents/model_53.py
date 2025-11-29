@@ -30,6 +30,7 @@ class Model_53(Instantiable_Agent):
         self.current_score = 0
 
         self.last_position = None
+        self.last_content = None
 
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
@@ -44,9 +45,11 @@ class Model_53(Instantiable_Agent):
         self.current_score = score
         next_done = game_state in [GameState.GAME_OVER, GameState.WIN]
 
-        self.obs.append(reward, self.last_position, content_)
+        # content must be batch leading tensor (1, ...)
+        self.obs.append([reward], self.last_position, content_)
 
         # compute last value from the current context (past observation) and the recent observation
+        # this one return batch leading tensors (batch)
         last_value = self.agent_core.get_latest_value(self.obs)
 
         if self.last_position is not None:
@@ -58,7 +61,7 @@ class Model_53(Instantiable_Agent):
                 self.rewards, 
                 self.values, 
                 self.next_dones, 
-                last_value, next_done)
+                last_value, [next_done])
             
             self.trainer.reset(time=0.0)
             self.obs.reset()
@@ -71,23 +74,27 @@ class Model_53(Instantiable_Agent):
         if game_state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             action = GameAction.RESET
             action.reasoning = f"Game is over or not played, choosing RESET"
+            self.last_position = None
+            self.last_content = None
             return action
     
         while True:
             # Choose a random action (except RESET)
-            packed_action, newlogprob, _, newvalue = self.agent_core.get_action_and_value(self.obs[:-1].make_batch(1))
+            # this one return batch leading tensors (batch, 1, ...)
+            packed_action, newlogprob, _, newvalue = self.agent_core.get_action_and_value(self.obs[:-1].make_batch(batch_led=True))
 
             self.packed_actions.append(packed_action[:, -1, ...])
             self.logprobs.append(newlogprob[:, -1, ...])
-            self.rewards.append(0)
-            self.next_dones.append(False)
+            self.rewards.append(np.array([0], dtype=np.float32))
+            self.next_dones.append([False])
             self.values.append(newvalue[:, -1, ...])
 
             # extract output here
-            ext_flag, action_data, position, content = self.agent_core.unpack_action(packed_action[:, -1, ...], self.obs[:-1].make_batch(1))
+            ext_flag, action_data, position, content = self.agent_core.unpack_action(packed_action[:, -1, ...], self.obs[:-1].make_batch(batch_led=True))
 
             if ext_flag[0].item() > 0.5:
                 self.last_position = position
+                self.last_content = content
                 break
             else:
                 self.obs.append(0, position, content)

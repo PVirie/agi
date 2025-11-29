@@ -17,8 +17,19 @@ class State_Sequence(Context_Collector):
             self.data = data
 
 
-    def append(self, reward, action, obs):
-        self.data.append(torch.concat([obs.flatten(), action.flatten(), torch.tensor([reward], device=obs.device)]))
+    def append(self, reward, action, content):
+        """
+            reward: np array of shape (batch_size)
+            action: tensor of shape (batch_size, action_size)
+            content: tensor of shape (batch_size, content_size) | np array of shape (batch_size, content_size)
+        """
+        if isinstance(content, np.ndarray):
+            content = torch.tensor(content, dtype=torch.float32).to(self.device)
+        if isinstance(action, np.ndarray):
+            action = torch.tensor(action, dtype=torch.float32).to(self.device)
+        reward = torch.tensor(reward, dtype=torch.float32).unsqueeze(-1).to(self.device)
+        
+        self.data.append(torch.cat([reward, action, content], dim=-1))
 
 
     def clear(self):
@@ -38,9 +49,11 @@ class State_Sequence(Context_Collector):
         return State_Sequence(self.max_history, self.data[start:stop], device=self.device)
     
 
-    def make_batch(self, batch_size=1):
-        # return tensor of shape (batch_size, len(data), :)
+    def make_batch(self, batch_led=True):
+        # return tensor of shape (batch_size, len(data), :) if batch_led else (len(data), batch_size, :)
         if len(self.data) == 0:
-            return torch.zeros((batch_size, 0, self.data[0].shape[0]), device=self.device)
-        data_tensor = torch.stack(self.data, dim=0).unsqueeze(0).repeat(batch_size, 1, 1)
-        return data_tensor.to(self.device)
+            return None
+        data_tensor = torch.stack(self.data, dim=0).to(self.device)
+        if not batch_led:
+            data_tensor = data_tensor.transpose(0, 1)
+        return data_tensor
