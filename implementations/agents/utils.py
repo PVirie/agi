@@ -30,6 +30,11 @@ import numpy as np
 def extract_frame(frame_data: FrameData) -> torch.Tensor:
     """Convert frame data to tensor format for the model."""
     # Convert frame to numpy array with color indices 0-15
+
+    if frame_data.is_empty():
+        # Return a zero tensor if frame is empty
+        return frame_data.state, np.zeros((64, 64), dtype=np.int64), frame_data.score
+
     frame = np.array(frame_data.frame, dtype=np.int64)
     
     # Take the last frame (in case of an animation of frames)

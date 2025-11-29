@@ -2,12 +2,15 @@ from agents.structs import FrameData, GameAction, GameState # Make sure to chang
 from .decorator import Instantiable_Agent
 import logging
 import random
+import numpy as np
 
 from interfaces.learning import Learner
 from interfaces.core import Core, Context_Collector
 
 from .utils import extract_frame
 
+
+game_actions = [GameAction.ACTION1, GameAction.ACTION2, GameAction.ACTION3, GameAction.ACTION4, GameAction.ACTION5, GameAction.ACTION6, GameAction.ACTION7]
 
 class Model_53(Instantiable_Agent):
     
@@ -36,12 +39,12 @@ class Model_53(Instantiable_Agent):
 
     def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> GameAction:
 
-        game_state, obs, score = extract_frame(latest_frame)
+        game_state, content_, score = extract_frame(latest_frame)
         reward = score - self.current_score
         self.current_score = score
         next_done = game_state in [GameState.GAME_OVER, GameState.WIN]
 
-        self.obs.append(reward, self.last_position, obs)
+        self.obs.append(reward, self.last_position, content_)
 
         # compute last value from the current context (past observation) and the recent observation
         last_value = self.agent_core.get_latest_value(self.obs)
@@ -89,16 +92,20 @@ class Model_53(Instantiable_Agent):
             else:
                 self.obs.append(0, position, content)
 
-        action = GameAction(action_data)
+        # action_data has shape (1, 7 + 64 + 64)
+        selected_action_idx = np.argmax(action_data[0, :7].cpu().numpy())
+        action = game_actions[selected_action_idx]
 
         # Add reasoning for simple actions
         if action.is_simple():
-            action.reasoning = f"Chose {action.value} randomly"
+            action.reasoning = f"Chose action {action.name}."
         # For complex actions, set coordinates
         elif action.is_complex():
+            max_x = np.argmax(action_data[0, 7:7+64].cpu().numpy())
+            max_y = np.argmax(action_data[0, 7+64:7+64+64].cpu().numpy())
             action.set_data({
-                "x": random.randint(0, 63),
-                "y": random.randint(0, 63),
+                "x": int(max_x),
+                "y": int(max_y)
             })
             action.reasoning = {"action": action.value, "reason": "Random choice"}
         

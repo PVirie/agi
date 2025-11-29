@@ -25,7 +25,10 @@ sys.path.append(os.path.join(arcagi_path))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from implementations.agents import register_agent_class, random_agent
+from implementations.agents import register_agent_class, random_agent, model_53
+from implementations.core.torch.transformer import Transformer_Core as Core
+from implementations.core.torch.states import State_Sequence as Collector
+from implementations.rl_algorithms.torch.ppo import PPO as Learner
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -46,9 +49,18 @@ if __name__ == "__main__":
     agent_001 = random_agent.Random_Agent("agent_001")
     register_agent_class("small_agent", agent_001)
 
+    agent_core = Core(action_size=7 + 64 + 64, position_size=16,
+        width=64, height=64, channel=3,
+        hidden_size=128, heads=8, layers=2,
+        device=device,
+    )
+    learner = Learner(agent=agent_core, device=device)
+    model_53_agent = model_53.Model_53(agent_core=agent_core, trainer=learner, context_collector=Collector(max_history=8, device=device))
+    register_agent_class("model_53", model_53_agent)
+
     from main import main
 
     # override system argument
-    sys.argv = [sys.argv[0], "--agent", "small_agent", "--game", "ls20"]
+    sys.argv = [sys.argv[0], "--agent", "model_53", "--game", "ls20"]
 
     main()

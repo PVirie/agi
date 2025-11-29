@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
-from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
 from interfaces.core import Core
