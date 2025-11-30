@@ -85,7 +85,7 @@ class Model_53(Instantiable_Agent):
 
             self.packed_actions.append(packed_action[:, -1, ...])
             self.logprobs.append(newlogprob[:, -1, ...])
-            self.rewards.append(np.array([0], dtype=np.float32))
+            self.rewards.append([0])
             self.next_dones.append([False])
             self.values.append(newvalue[:, -1, ...])
 

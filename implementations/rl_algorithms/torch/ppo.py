@@ -13,6 +13,10 @@ def convert_list_of_bool_to_float_tensor(bool_list: List[bool], device) -> torch
     return torch.tensor([1.0 if b else 0.0 for b in bool_list], dtype=torch.float32).to(device)
 
 
+def convert_list_of_float_to_float_tensor(float_list: List[float], device) -> torch.Tensor:
+    return torch.tensor(float_list, dtype=torch.float32).to(device)
+
+
 class PPO(Learner):
 
     def __init__(self, agent: Core, device):
@@ -42,31 +46,31 @@ class PPO(Learner):
         self.optimizer.param_groups[0]["lr"] = lrnow
 
 
-    def learn(self, obs: Context_Collector, actions: List[Any], logprobs: List[Any], rewards: List[Any], values: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool]):
+    def learn(self, obs: Context_Collector, actions: List[Any], logprobs: List[Any], rewards: List[List[float]], values: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool]):
         """
         obs: Context_Collector
-        actions: List: tensor of shape (batch_size, action_size)
-        logprobs: List: tensor of shape (batch_size)
-        rewards: List: np array of shape (batch_size)
-        values: List tensor of shape (batch_size)
-        next_dones: list of bool of length batch_size
+        actions: list of tensor of shape (batch_size, action_size)
+        logprobs: list of tensor of shape (batch_size)
+        rewards: list of floats of length batch_size
+        values: list tensor of shape (batch_size)
+        next_dones: list of bools of length batch_size
         last_value: tensor of shape (batch_size)
-        last_done: list of bool of length batch_size
+        last_done: list of bools of length batch_size
         """
         # Use dim 0 as context length dimension
         # obs = torch.stack(obs, dim=0)
         actions = torch.stack(actions, dim=0)
         logprobs = torch.stack(logprobs, dim=0)
-        rewards = torch.stack(torch.tensor(rewards, dtype=torch.float32).to(self.device), dim=0)
+        rewards = torch.stack([convert_list_of_float_to_float_tensor(r, self.device) for r in rewards], dim=0)
         values = torch.stack(values, dim=0)
 
         sequence_size = actions.shape[0]
         batch_size = actions.shape[1]
-        minibatch_size = sequence_size // self.num_minibatches
+        minibatch_size = max(sequence_size // self.num_minibatches, 8)
 
         with torch.no_grad():
-            advantages = torch.zeros_like(rewards).to(self.device)
-            lastgaelam = 0
+            advantages = []
+            lastgaelam = torch.zeros(batch_size).to(self.device)
             for t in reversed(range(sequence_size)):
                 if t == sequence_size - 1:
                     nextnonterminal = 1.0 - convert_list_of_bool_to_float_tensor(last_done, self.device)
@@ -75,7 +79,10 @@ class PPO(Learner):
                     nextnonterminal = 1.0 - convert_list_of_bool_to_float_tensor(next_dones[t], self.device)
                     nextvalues = values[t + 1]
                 delta = rewards[t] + self.gamma * nextvalues * nextnonterminal - values[t]
-                advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
+                lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
+                advantages.append(lastgaelam)
+            advantages.reverse()
+            advantages = torch.stack(advantages, dim=0)
             returns = advantages + values
 
         # Optimizing the policy and value network

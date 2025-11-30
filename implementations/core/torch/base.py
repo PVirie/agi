@@ -208,18 +208,21 @@ class Multilayer_CNN(nn.Module):
         super(Multilayer_CNN, self).__init__()
         self.device = device
         self.hidden_channels = hidden_channels
-        self.layers = nn.ModuleList()
-        self.layers.append(nn.Conv2d(input_channels, hidden_channels, kernel_size=kernel_size, padding=kernel_size//2, device=device))
-        for _ in range(n_layers - 1):
-            self.layers.append(nn.Conv2d(hidden_channels, hidden_channels, kernel_size=kernel_size, padding=kernel_size//2, device=device))
+        self.layers = nn.Sequential()
+        # add cnn blocks with group norm and relu
+        for i in range(n_layers):
+            in_channels = input_channels if i == 0 else hidden_channels
+            self.layers.add_module(f'conv_{i}', nn.Conv2d(in_channels, hidden_channels, kernel_size=kernel_size, padding=kernel_size//2, device=device))
+            self.layers.add_module(f'groupnorm_{i}', nn.GroupNorm(num_groups=1, num_channels=hidden_channels, device=device))
+            self.layers.add_module(f'relu_{i}', nn.ReLU())
+        # final fc layer
         self.fc = nn.Linear(hidden_channels, output_size, device=device)
 
     # output shape: (batch, output_size)
     def forward(self, x):
-        for layer in self.layers:
-            x = F.relu(layer(x))
-        # Global average pooling
-        x = torch.mean(x, dim=[2, 3])  # Assuming x is of shape (batch, channels, height, width)
+        x = self.layers(x)
+        # global average pooling
+        x = torch.mean(x, dim=(2, 3))
         x = self.fc(x)
         return x
     

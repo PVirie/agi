@@ -37,5 +37,7 @@ def extract_frame(frame_data: FrameData) -> torch.Tensor:
 
     frame = np.array(frame_data.frame, dtype=np.int64).astype(np.float32)  # shape (H, W, C)
     frame = np.reshape(frame, (-1))
+    # normalize
+    frame = frame / 15.0  # Normalize to [0, 1]
     
     return frame_data.state, frame, frame_data.score

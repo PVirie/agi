@@ -51,7 +51,7 @@ class State_Sequence(Context_Collector):
         start = slice.start if slice.start is not None else 0
         stop = slice.stop if slice.stop is not None else len(self.data)
         start = max(0, start - self.max_history)
-        return State_Sequence(self.max_history, self.data[start:stop], device=self.device)
+        return State_Sequence(self.position_size, self.max_history, self.data[start:stop], device=self.device)
     
 
     def make_batch(self, batch_led=True):
@@ -59,6 +59,6 @@ class State_Sequence(Context_Collector):
         if len(self.data) == 0:
             return None
         data_tensor = torch.stack(self.data, dim=0).to(self.device)
-        if not batch_led:
+        if batch_led:
             data_tensor = data_tensor.transpose(0, 1)
         return data_tensor

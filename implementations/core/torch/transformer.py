@@ -10,7 +10,7 @@ from .base import Multilayer_Relu, Multilayer_CNN, apply_transformer, causal_mas
 
 class Transformer_Core(Core, nn.Module):
 
-    def __init__(self, action_size, position_size, width, height, channel, hidden_size, heads, layers, device):
+    def __init__(self, action_size, position_size, width, height, channel, hidden_size, heads, layers):
         super().__init__()
         # content_size = channels x height x width
 
@@ -23,19 +23,18 @@ class Transformer_Core(Core, nn.Module):
         self.channel = channel
 
         self.hidden_size = hidden_size
-        self.device = device
 
-        decoder_layer = nn.TransformerDecoderLayer(d_model=hidden_size, nhead=heads, device=device)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=hidden_size, nhead=heads)
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=layers)
 
-        self.critic = Multilayer_Relu(hidden_size, 1, hidden_size, 2, device=device)
-        self.actor_mean = Multilayer_Relu(hidden_size, 1 + action_size + self.content_size, hidden_size, 2, device=device)
-        self.actor_logstd = nn.Parameter(torch.zeros(1, 1, 1 + action_size + self.content_size))
+        self.critic = Multilayer_Relu(hidden_size, 1, hidden_size, 2)
+        self.actor_mean = Multilayer_Relu(hidden_size, 1 + action_size + self.content_size, hidden_size, 2)
+        self.actor_logstd = nn.Parameter(torch.zeros(1, 1 + action_size + self.content_size))
 
-        self.image_projector = Multilayer_CNN(channel, hidden_size, hidden_size, 2, kernel_size=3, device=device)
-        self.projector = Multilayer_Relu(1 + position_size + hidden_size, hidden_size, hidden_size, 2, device=device)
+        self.image_projector = Multilayer_CNN(channel, hidden_size, hidden_size, 2, kernel_size=3)
+        self.projector = Multilayer_Relu(1 + position_size + hidden_size, hidden_size, hidden_size, 2)
 
-        self.position_step = Multilayer_Relu(position_size + action_size, position_size, hidden_size, 2, device=device)
+        self.position_step = Multilayer_Relu(position_size + action_size, position_size, hidden_size, 2)
 
         self.reset_parameters()
 
@@ -50,7 +49,7 @@ class Transformer_Core(Core, nn.Module):
         self.position_step.reset_parameters()
 
         # make sure actor_logstd is initialized to 0
-        nn.init.zeros_(self.actor_logstd)
+        nn.init.constant_(self.actor_logstd, 0.0)
 
 
     def __compute(self, x):
@@ -69,6 +68,11 @@ class Transformer_Core(Core, nn.Module):
         x = self.projector(torch.reshape(x, (-1, x.size(2))))
         x = torch.reshape(x, (batch_size, context_size, self.hidden_size))
         x = apply_transformer(self.decoder, x)
+        x = torch.nn.functional.sigmoid(x)
+        
+        # assert not nan
+        assert torch.isnan(x).sum().item() == 0, "NaN detected in transformer output"
+
         # x now has shape (batch, context_size, hidden_size)
         return x
     
@@ -78,8 +82,8 @@ class Transformer_Core(Core, nn.Module):
     
 
     def get_action_and_value(self, x, action=None):
-        x = self.__compute(x)
         batch_size = x.size(0)
+        x = self.__compute(x)
         action_size = 1 + self.action_size + self.content_size
         x = torch.reshape(x, (-1, self.hidden_size))
         action_mean = self.actor_mean(x)

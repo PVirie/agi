@@ -51,9 +51,8 @@ if __name__ == "__main__":
 
     agent_core = Core(action_size=7 + 64 + 64, position_size=16,
         width=64, height=64, channel=1,
-        hidden_size=128, heads=8, layers=2,
-        device=device,
-    )
+        hidden_size=128, heads=8, layers=2
+    ).to(device)
     learner = Learner(agent=agent_core, device=device)
     model_53_agent = model_53.Model_53(agent_core=agent_core, trainer=learner, context_collector=Collector(position_size=16, max_history=8, device=device))
     register_agent_class("model_53", model_53_agent)
