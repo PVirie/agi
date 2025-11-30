@@ -46,11 +46,11 @@ class Model_53(Instantiable_Agent):
         next_done = game_state in [GameState.GAME_OVER, GameState.WIN]
 
         # content must be batch leading tensor (1, ...)
-        self.obs.append([reward], self.last_position, content_)
+        self.obs.append([reward], self.last_position, np.reshape(content_, (1, -1)))
 
         # compute last value from the current context (past observation) and the recent observation
         # this one return batch leading tensors (batch)
-        last_value = self.agent_core.get_latest_value(self.obs)
+        last_value = self.agent_core.get_latest_value(self.obs.make_batch(batch_led=True))
 
         if self.last_position is not None:
             # learn RL and Supervised content

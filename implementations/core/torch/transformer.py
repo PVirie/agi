@@ -32,7 +32,7 @@ class Transformer_Core(Core, nn.Module):
         self.actor_mean = Multilayer_Relu(hidden_size, 1 + action_size + self.content_size, hidden_size, 2, device=device)
         self.actor_logstd = nn.Parameter(torch.zeros(1, 1, 1 + action_size + self.content_size))
 
-        self.image_projector = Multilayer_CNN(3, hidden_size, hidden_size, 2, kernel_size=3, device=device)
+        self.image_projector = Multilayer_CNN(channel, hidden_size, hidden_size, 2, kernel_size=3, device=device)
         self.projector = Multilayer_Relu(1 + position_size + hidden_size, hidden_size, hidden_size, 2, device=device)
 
         self.position_step = Multilayer_Relu(position_size + action_size, position_size, hidden_size, 2, device=device)
@@ -61,7 +61,7 @@ class Transformer_Core(Core, nn.Module):
         # first slice the image content
         image_content = x[:, :, 1 + self.position_size:]
         image_content = torch.reshape(image_content, (batch_size, context_size, self.channel, self.height, self.width))
-        image_part = self.projector(torch.reshape(image_content, (-1, self.channel, self.height, self.width)))
+        image_part = self.image_projector(torch.reshape(image_content, (-1, self.channel, self.height, self.width)))
         
         non_image_part = x[:, :, :1 + self.position_size]
 
@@ -95,7 +95,6 @@ class Transformer_Core(Core, nn.Module):
         batch_value = torch.reshape(self.critic(x), (batch_size, -1))
 
         return batch_action, batch_log_prob, batch_entropy, batch_value
-
 
 
     def unpack_action(self, packed_action, x):

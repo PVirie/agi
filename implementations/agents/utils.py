@@ -33,11 +33,9 @@ def extract_frame(frame_data: FrameData) -> torch.Tensor:
 
     if frame_data.is_empty():
         # Return a zero tensor if frame is empty
-        return frame_data.state, np.zeros((64, 64), dtype=np.int64), frame_data.score
+        return frame_data.state, np.zeros((64*64*1), dtype=np.float32), frame_data.score
 
-    frame = np.array(frame_data.frame, dtype=np.int64)
-    
-    # Take the last frame (in case of an animation of frames)
-    frame = frame[-1]
+    frame = np.array(frame_data.frame, dtype=np.int64).astype(np.float32)  # shape (H, W, C)
+    frame = np.reshape(frame, (-1))
     
     return frame_data.state, frame, frame_data.score
