@@ -89,10 +89,16 @@ class Transformer_Core(Core, nn.Module):
         action_mean = self.actor_mean(x)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
+        
         probs = Normal(action_mean, action_std)
         if action is None:
             action = probs.sample()
-        
+
+        # probs = Categorical(logits=logits)
+        # if action is None:
+        #     action = probs.sample()
+        # return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+
         batch_action = torch.reshape(action, (batch_size, -1, action_size))
         batch_log_prob = torch.reshape(probs.log_prob(action).sum(1), (batch_size, -1))
         batch_entropy = torch.reshape(probs.entropy().sum(1), (batch_size, -1))
