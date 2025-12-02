@@ -30,6 +30,8 @@ from implementations.core.torch.sfstct_core import SF_STCT_Core as Core
 from implementations.core.torch.states import State_Sequence as Collector
 from implementations.rl_algorithms.torch.ppo import PPO as Learner
 
+torch.autograd.set_detect_anomaly(True)
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
@@ -50,7 +52,7 @@ if __name__ == "__main__":
     register_agent_class("small_agent", agent_001)
 
     agent_core = Core(action_size=6, position_size=16,
-        width=64, height=64, channel=1,
+        width=64, height=64, channel=4,
         hidden_size=128, heads=8, layers=2
     ).to(device)
     learner = Learner(agent=agent_core, device=device)

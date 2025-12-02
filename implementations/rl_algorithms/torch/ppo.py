@@ -97,6 +97,9 @@ class PPO(Learner):
                     torch.transpose(actions[start:end, ...], 0, 1)
                     )
                 
+                # clip b_newlogprob to prevent nan issue
+                b_newlogprob = torch.clamp(b_newlogprob, -10, 0)
+                
                 mb_log_prob = torch.transpose(logprobs[start:end, ...], 0, 1)
                 mb_value = torch.transpose(values[start:end, ...], 0, 1)
                 mb_advantages = torch.transpose(advantages[start:end, ...], 0, 1)

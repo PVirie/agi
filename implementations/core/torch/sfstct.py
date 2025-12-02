@@ -11,7 +11,7 @@ except ImportError:
 
 class SpatialEncoder(nn.Module):
 
-    def __init__(self, img_size=64, patch_size=4, in_chans=3, embed_dim=512, depth=6, num_heads=8, mlp_ratio=4., dropout=0.1, vector_dim=128):
+    def __init__(self, img_size=64, patch_size=4, in_chans=4, embed_dim=512, depth=6, num_heads=8, mlp_ratio=4., dropout=0.1, vector_dim=128):
         super().__init__()
         
         # 1. Patch Embedding (Standard ViT logic) 
@@ -199,7 +199,7 @@ class SF_STCT(nn.Module):
 if __name__ == "__main__":
     # Batch of 4, 16 history + 1 current = 17 frames
     # Images should be floats (e.g., divided by 255.0)
-    dummy_img = torch.randn(4, 17, 3, 64, 64)
+    dummy_img = torch.randn(4, 17, 4, 64, 64)
     dummy_vec = torch.randn(4, 17, 128)
 
     model = SF_STCT()

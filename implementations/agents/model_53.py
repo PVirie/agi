@@ -78,7 +78,8 @@ class Model_53(Instantiable_Agent):
             self.last_content = None
             return action
     
-        while True:
+        # allow up to 4 thought steps to choose an action
+        for i in range(4):
             # Choose a random action (except RESET)
             # this one return batch leading tensors (batch, 1, ...)
             packed_action, newlogprob, _, newvalue = self.agent_core.get_action_and_value(self.obs[:-1].make_batch(batch_led=True))
@@ -90,30 +91,28 @@ class Model_53(Instantiable_Agent):
             self.values.append(newvalue[:, -1, ...])
 
             # extract output here
-            ext_flag, action_data, position, content = self.agent_core.unpack_action(packed_action[:, -1, ...], self.obs[:-1].make_batch(batch_led=True))
+            ext_flag, a, x, y, position, content = self.agent_core.unpack_action(packed_action[:, -1, ...], self.obs[:-1].make_batch(batch_led=True))
 
-            if ext_flag[0].item() > 0.5:
+            if ext_flag[0].item() < 0.5:
                 self.last_position = position
                 self.last_content = content
                 break
             else:
-                self.obs.append(0, position, content)
+                self.obs.append([0], position, content)
 
-        # action_data has shape (1, 7 + 64 + 64)
-        selected_action_idx = np.argmax(action_data[0, :7].cpu().numpy())
-        action = game_actions[selected_action_idx]
+        action = game_actions[a.cpu().numpy().astype(int).item()]
 
         # Add reasoning for simple actions
         if action.is_simple():
-            action.reasoning = f"Chose action {action.name}."
+            # action.reasoning = f"Chose action {action.name}."
+            pass
         # For complex actions, set coordinates
         elif action.is_complex():
-            max_x = np.argmax(action_data[0, 7:7+64].cpu().numpy())
-            max_y = np.argmax(action_data[0, 7+64:7+64+64].cpu().numpy())
+            x = x.cpu().numpy().astype(int).item()
+            y = y.cpu().numpy().astype(int).item()
             action.set_data({
-                "x": int(max_x),
-                "y": int(max_y)
+                "x": x,
+                "y": y
             })
-            action.reasoning = {"action": action.value, "reason": "Random choice"}
         
         return action

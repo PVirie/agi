@@ -20,7 +20,7 @@ class State_Sequence(Context_Collector):
 
     def append(self, reward, position, content):
         """
-            reward: np array of shape (batch_size)
+            reward: a list of shape (batch_size)
             position: tensor of shape (batch_size, position_size) | None
             content: tensor of shape (batch_size, content_size) | np array of shape (batch_size, content_size)
         """
