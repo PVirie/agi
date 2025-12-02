@@ -93,7 +93,7 @@ class Model_53(Instantiable_Agent):
             # extract output here
             ext_flag, a, x, y, position, content = self.agent_core.unpack_action(packed_action[:, -1, ...], self.obs[:-1].make_batch(batch_led=True))
 
-            if ext_flag[0].item() < 0.5:
+            if ext_flag[0].item() > 0.5:
                 self.last_position = position
                 self.last_content = content
                 break

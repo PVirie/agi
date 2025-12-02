@@ -197,6 +197,7 @@ class SF_STCT_Core(Core, nn.Module):
         action_onehot = torch.nn.functional.one_hot(action.long(), num_classes=self.action_size).float()
         x_onehot = torch.nn.functional.one_hot(x.long(), num_classes=self.width).float()
         y_onehot = torch.nn.functional.one_hot(y.long(), num_classes=self.height).float()
+
         position = self.position_step(torch.concat([last_position, action_onehot, x_onehot, y_onehot], dim=-1))
 
         return ext_part, action, x, y, position, content

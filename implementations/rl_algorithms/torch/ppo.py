@@ -97,9 +97,6 @@ class PPO(Learner):
                     torch.transpose(actions[start:end, ...], 0, 1)
                     )
                 
-                # clip b_newlogprob to prevent nan issue
-                b_newlogprob = torch.clamp(b_newlogprob, -10, 0)
-                
                 mb_log_prob = torch.transpose(logprobs[start:end, ...], 0, 1)
                 mb_value = torch.transpose(values[start:end, ...], 0, 1)
                 mb_advantages = torch.transpose(advantages[start:end, ...], 0, 1)
@@ -114,7 +111,7 @@ class PPO(Learner):
                     approx_kl = ((ratio - 1) - logratio).mean()
                     clipfracs += [((ratio - 1.0).abs() > self.clip_coef).float().mean().item()]
 
-                if self.norm_adv:
+                if self.norm_adv and torch.numel(mb_advantages) > 1:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
                 # Policy loss
