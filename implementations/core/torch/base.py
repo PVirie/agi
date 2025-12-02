@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
+from torch.nn.init import trunc_normal_
 
 
 def Sinusoidal_positional_encoding(seq_len, embed_dim):
@@ -170,14 +171,13 @@ class Multilayer_Relu(nn.Module):
     
 
     def reset_parameters(self):
-        for layer in self.layers:
-            if isinstance(layer, nn.Linear):
-                layer.reset_parameters()
+        self.apply(init_weights)
 
 
 class Res_Net(Multilayer_Relu):
     def __init__(self, input_size, output_size, hidden_size, n_layers=1, device=None):
         super(Res_Net, self).__init__(input_size, output_size, hidden_size, n_layers, device)
+
 
     def forward(self, x):
         for layer in self.layers[:-1]:
@@ -189,9 +189,7 @@ class Res_Net(Multilayer_Relu):
     
 
     def reset_parameters(self):
-        for layer in self.layers:
-            if isinstance(layer, nn.Linear):
-                layer.reset_parameters()
+        self.apply(init_weights)
 
 
 def reset_transformer_decoder(module):
@@ -201,6 +199,17 @@ def reset_transformer_decoder(module):
                 inner_module.reset_parameters()
             elif hasattr(inner_module, '_reset_parameters'):
                 inner_module._reset_parameters()
+
+
+def init_weights(m):
+    if isinstance(m, (nn.Linear, nn.Conv2d)):
+        trunc_normal_(m.weight, std=0.02)
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+    elif isinstance(m, nn.LayerNorm):
+        nn.init.constant_(m.bias, 0)
+        nn.init.constant_(m.weight, 1.0)
+
 
 
 class Multilayer_CNN(nn.Module):
@@ -228,7 +237,4 @@ class Multilayer_CNN(nn.Module):
     
 
     def reset_parameters(self):
-        for layer in self.layers:
-            if isinstance(layer, nn.Conv2d):
-                layer.reset_parameters()
-        self.fc.reset_parameters()
+        self.apply(init_weights)

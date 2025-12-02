@@ -26,7 +26,7 @@ sys.path.append(os.path.join(arcagi_path))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import register_agent_class, random_agent, model_53
-from implementations.core.torch.transformer import Transformer_Core as Core
+from implementations.core.torch.sfstct_core import SF_STCT_Core as Core
 from implementations.core.torch.states import State_Sequence as Collector
 from implementations.rl_algorithms.torch.ppo import PPO as Learner
 
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     agent_001 = random_agent.Random_Agent("agent_001")
     register_agent_class("small_agent", agent_001)
 
-    agent_core = Core(action_size=7 + 64 + 64, position_size=16,
+    agent_core = Core(action_size=6, position_size=16,
         width=64, height=64, channel=1,
         hidden_size=128, heads=8, layers=2
     ).to(device)

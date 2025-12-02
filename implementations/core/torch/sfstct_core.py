@@ -6,7 +6,7 @@ from torch.distributions.categorical import Categorical
 import numpy as np
 
 from interfaces.core import Core
-from .base import Multilayer_Relu, Multilayer_CNN, apply_transformer, causal_mask, reset_transformer_decoder
+from .base import Multilayer_Relu, init_weights
 from .sfstct import SpatialEncoder, TemporalEncoder
 
 
@@ -28,37 +28,37 @@ class SF_STCT_Core(Core, nn.Module):
 
         # Configuration matches the report specification
         self.spatial_encoder = SpatialEncoder(
-            img_size=64, patch_size=4, vector_dim=128, embed_dim=512, depth=6
+            img_size=width, patch_size=4, vector_dim=1 + position_size, embed_dim=hidden_size, depth=layers
         )
         
         self.temporal_encoder = TemporalEncoder(
-            embed_dim=512, depth=4
+            embed_dim=hidden_size, depth=layers
         )
 
         # Prediction Heads [10]
         # Decoupling MLP before projection is best practice
         self.head_x = nn.Sequential(
-            nn.Linear(512, 256),
+            nn.Linear(hidden_size, 256),
             nn.GELU(),
-            nn.Linear(256, 64) # 64 classes
+            nn.Linear(256, width) # width classes
         )
         self.head_y = nn.Sequential(
-            nn.Linear(512, 256),
+            nn.Linear(hidden_size, 256),
             nn.GELU(),
-            nn.Linear(256, 64) # 64 classes
+            nn.Linear(256, height) # height classes
         )
         self.head_action = nn.Sequential(
-            nn.Linear(512, 64),
+            nn.Linear(hidden_size, 64),
             nn.GELU(),
-            nn.Linear(64, 6)   # 6 classes
+            nn.Linear(64, action_size)   # action_size classes
         )
         self.head_flag = nn.Sequential(
-            nn.Linear(512, 64),
+            nn.Linear(hidden_size, 64),
             nn.GELU(),
             nn.Linear(64, 2)   # 2 classes
         )
         self.head_value = nn.Sequential(
-            nn.Linear(512, 64),
+            nn.Linear(hidden_size, 64),
             nn.GELU(),
             nn.Linear(64, 1)   # Regression output
         )
@@ -74,16 +74,11 @@ class SF_STCT_Core(Core, nn.Module):
         # Reset parameters of all layers
         self.spatial_encoder.reset_parameters()
         self.temporal_encoder.reset_parameters()
-        self.head_x[0].reset_parameters()
-        self.head_x[2].reset_parameters()
-        self.head_y[0].reset_parameters()
-        self.head_y[2].reset_parameters()
-        self.head_action[0].reset_parameters()
-        self.head_action[2].reset_parameters()
-        self.head_flag[0].reset_parameters()
-        self.head_flag[2].reset_parameters()
-        self.head_value[0].reset_parameters()
-        self.head_value[2].reset_parameters()
+        self.head_x.apply(init_weights)
+        self.head_y.apply(init_weights)
+        self.head_action.apply(init_weights)
+        self.head_flag.apply(init_weights)
+        self.head_value.apply(init_weights)
 
         # make sure value_logstd is initialized to 0
         nn.init.constant_(self.value_logstd, 0.0)
@@ -102,10 +97,10 @@ class SF_STCT_Core(Core, nn.Module):
         non_image_part = x[:, :, :1 + self.position_size]
 
         # 1. Spatial Processing (Independent per frame)
-        spatial_feats = self.spatial_encoder(image_part, non_image_part) # Output: (B, T, 512)
+        spatial_feats = self.spatial_encoder(image_part, non_image_part) # Output: (B, T, hidden_size)
         
         # 2. Temporal Processing (Across frames with causal mask)
-        temporal_feat = self.temporal_encoder(spatial_feats) # Output: (B, T, 512)
+        temporal_feat = self.temporal_encoder(spatial_feats) # Output: (B, T, hidden_size)
         
         return temporal_feat
     
@@ -149,16 +144,16 @@ class SF_STCT_Core(Core, nn.Module):
         # return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
         if action is None:
+            action_flag = props_flag.sample()
+            action_action = props_action.sample()
             action_x = props_x.sample()
             action_y = props_y.sample()
-            action_action = props_action.sample()
-            action_flag = props_flag.sample()
 
             action = torch.cat([
+                action_flag.unsqueeze(-1),
+                action_action.unsqueeze(-1),
                 action_x.unsqueeze(-1),
                 action_y.unsqueeze(-1),
-                action_action.unsqueeze(-1),
-                action_flag.unsqueeze(-1)
             ], dim=-1)
 
         # batch_log_prob = torch.reshape(probs.log_prob(action).sum(1), (batch_size, -1))
@@ -188,10 +183,9 @@ class SF_STCT_Core(Core, nn.Module):
 
         ext_part = packed_action[:, 0]
         action_data = packed_action[:, 1:1 + self.action_size]
+        content = packed_action[:, 1 + self.action_size:]
 
         last_position = x[:, -1, 1:1 + self.position_size]
         position = self.position_step(torch.concat([last_position, action_data], dim=1))
-
-        content = packed_action[:, 1 + self.action_size:]
 
         return ext_part, action_data, position, content

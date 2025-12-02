@@ -1,7 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
+from torch.nn.init import trunc_normal_
+
+try:
+    from .base import init_weights
+except ImportError:
+    from implementations.core.torch.base import init_weights
 
 
 class SpatialEncoder(nn.Module):
@@ -27,6 +32,18 @@ class SpatialEncoder(nn.Module):
                                                    dropout=dropout, batch_first=True, norm_first=True)
         self.blocks = nn.TransformerEncoder(encoder_layer, num_layers=depth)
         self.norm = nn.LayerNorm(embed_dim)
+        
+        # Initialize weights
+        self.reset_parameters()
+
+
+    def reset_parameters(self):
+        """
+        Initializes weights using Truncated Normal distribution (std=0.02)
+        following ViT best practices.
+        """
+        # Apply init to all sub-modules (Linear, Conv2d, LayerNorm)
+        self.apply(init_weights)
 
 
     def forward(self, x, vec):
@@ -74,6 +91,12 @@ class TemporalEncoder(nn.Module):
                                                    dropout=dropout, batch_first=True, norm_first=True)
         self.blocks = nn.TransformerEncoder(encoder_layer, num_layers=depth)
         self.norm = nn.LayerNorm(embed_dim)
+
+        self.reset_parameters()
+
+
+    def reset_parameters(self):
+        self.apply(init_weights)
 
 
     def forward(self, x):
@@ -138,6 +161,19 @@ class SF_STCT(nn.Module):
         )
 
 
+    def reset_parameters(self):
+        """
+        Public method to reset the entire model.
+        """
+        self.spatial_encoder.reset_parameters()
+        self.temporal_encoder.reset_parameters()
+        self.head_x.apply(init_weights)
+        self.head_y.apply(init_weights)
+        self.head_action.apply(init_weights)
+        self.head_flag.apply(init_weights)
+        self.head_value.apply(init_weights)
+
+
     def forward(self, img, vec):
         """
         img: (Batch, Frames, 3, 64, 64) - normalized floats
@@ -167,6 +203,7 @@ if __name__ == "__main__":
     dummy_vec = torch.randn(4, 17, 128)
 
     model = SF_STCT()
+    model.reset_parameters()
     x_out, y_out, action_out, flag_out, value_out = model(dummy_img, dummy_vec)
 
     print(f"X Logits: {x_out.shape}")
