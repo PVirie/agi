@@ -13,8 +13,19 @@ def convert_list_of_bool_to_float_tensor(bool_list: List[bool], device) -> torch
     return torch.tensor([1.0 if b else 0.0 for b in bool_list], dtype=torch.float32).to(device)
 
 
+def convert_np_array_to_float_tensor(np_array: np.ndarray, device) -> torch.Tensor:
+    return torch.tensor(np_array, dtype=torch.float32).to(device)
+
+
+def convert_list_of_np_array_to_float_tensor(np_array_list: List[np.ndarray], device) -> List[torch.Tensor]:
+    before_transpose = [torch.tensor(arr, dtype=torch.float32).to(device) for arr in np_array_list]
+    return torch.stack(before_transpose, dim=1)
+
+
 def convert_list_of_float_to_float_tensor(float_list: List[float], device) -> torch.Tensor:
-    return torch.tensor(float_list, dtype=torch.float32).to(device)
+    before_transpose = torch.tensor(float_list, dtype=torch.float32).to(device)
+    return torch.transpose(before_transpose, 0, 1)
+
 
 
 class PPO(Learner):
@@ -49,23 +60,23 @@ class PPO(Learner):
     def learn(self, obs: Context_Collector, actions: List[Any], logprobs: List[Any], rewards: List[List[float]], values: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool]):
         """
         obs: Context_Collector
-        actions: list of tensor of shape (batch_size, action_size)
-        logprobs: list of tensor of shape (batch_size)
+        actions: Context_Collector
+        logprobs: list of np array of shape (batch_size)
         rewards: list of floats of length batch_size
-        values: list tensor of shape (batch_size)
+        values: list np array of shape (batch_size)
         next_dones: list of bools of length batch_size
-        last_value: tensor of shape (batch_size)
+        last_value: np array of shape (batch_size)
         last_done: list of bools of length batch_size
         """
         # Use dim 0 as context length dimension
-        # obs = torch.stack(obs, dim=0)
-        actions = torch.stack(actions, dim=0)
-        logprobs = torch.stack(logprobs, dim=0)
-        rewards = torch.stack([convert_list_of_float_to_float_tensor(r, self.device) for r in rewards], dim=0)
-        values = torch.stack(values, dim=0)
+        obs = convert_np_array_to_float_tensor(obs.make_batch(batch_led=True), self.device)
+        actions = convert_np_array_to_float_tensor(actions.make_batch(batch_led=True), self.device)
+        logprobs = convert_list_of_np_array_to_float_tensor(logprobs, self.device)
+        rewards = convert_list_of_float_to_float_tensor(rewards, self.device)
+        values = convert_list_of_np_array_to_float_tensor(values, self.device)
 
-        sequence_size = actions.shape[0]
-        batch_size = actions.shape[1]
+        batch_size = actions.shape[0]
+        sequence_size = actions.shape[1]
         minibatch_size = max(sequence_size // self.num_minibatches, 8)
 
         with torch.no_grad():
@@ -74,15 +85,15 @@ class PPO(Learner):
             for t in reversed(range(sequence_size)):
                 if t == sequence_size - 1:
                     nextnonterminal = 1.0 - convert_list_of_bool_to_float_tensor(last_done, self.device)
-                    nextvalues = last_value
+                    nextvalues = convert_np_array_to_float_tensor(last_value, self.device)
                 else:
                     nextnonterminal = 1.0 - convert_list_of_bool_to_float_tensor(next_dones[t], self.device)
-                    nextvalues = values[t + 1]
-                delta = rewards[t] + self.gamma * nextvalues * nextnonterminal - values[t]
+                    nextvalues = values[:, t + 1]
+                delta = rewards[:, t] + self.gamma * nextvalues * nextnonterminal - values[:, t]
                 lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
                 advantages.append(lastgaelam)
             advantages.reverse()
-            advantages = torch.stack(advantages, dim=0)
+            advantages = torch.stack(advantages, dim=1)
             returns = advantages + values
 
         # Optimizing the policy and value network
@@ -92,15 +103,16 @@ class PPO(Learner):
             for start in range(0, sequence_size, minibatch_size):
                 end = start + minibatch_size
 
-                _, b_newlogprob, b_entropy, b_newvalue = self.agent.get_action_and_value(
-                    obs[start:end].make_batch(batch_led=True),
-                    torch.transpose(actions[start:end, ...], 0, 1)
-                    )
+                _, _, b_newlogprob, b_entropy, b_newvalue = self.agent.get_action_and_value(
+                    obs[:, start:end, ...], 
+                    actions[:, start:end, ...],
+                    use_action=True
+                )
                 
-                mb_log_prob = torch.transpose(logprobs[start:end, ...], 0, 1)
-                mb_value = torch.transpose(values[start:end, ...], 0, 1)
-                mb_advantages = torch.transpose(advantages[start:end, ...], 0, 1)
-                mb_returns = torch.transpose(returns[start:end, ...], 0, 1)
+                mb_log_prob = logprobs[:, start:end, ...]
+                mb_value = values[:, start:end, ...]
+                mb_advantages = advantages[:, start:end, ...] 
+                mb_returns = returns[:, start:end, ...]
                 
                 logratio = b_newlogprob - mb_log_prob
                 ratio = logratio.exp()

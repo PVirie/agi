@@ -77,11 +77,11 @@ class Transformer_Core(Core, nn.Module):
         return x
     
 
-    def get_latest_value(self, x):
+    def get_latest_value(self, x, action):
         return self.critic(self.__compute(x))[:, -1]
     
 
-    def get_action_and_value(self, x, action=None):
+    def get_action_and_value(self, context, action, use_action=False):
         batch_size = x.size(0)
         x = self.__compute(x)
         action_size = 1 + self.action_size + self.content_size

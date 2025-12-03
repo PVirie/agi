@@ -73,7 +73,7 @@ def extract_frame(frame_data: FrameData) -> torch.Tensor:
 
     if frame_data.is_empty():
         # Return a zero tensor if frame is empty
-        return frame_data.state, np.zeros((4*64*64), dtype=np.float32), frame_data.score
+        return frame_data.state, np.zeros((4*64*64), dtype=float), frame_data.score
 
     frame = np.array(frame_data.frame, dtype=np.int64)  # shape (C, H, W)
     frame = convert_chw_to_4bit(frame)  # shape (4, H, W)

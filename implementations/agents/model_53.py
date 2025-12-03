@@ -14,14 +14,15 @@ game_actions = [GameAction.ACTION1, GameAction.ACTION2, GameAction.ACTION3, Game
 
 class Model_53(Instantiable_Agent):
     
-    def __init__(self, agent_core: Core, trainer: Learner, context_collector: Context_Collector):
+    def __init__(self, agent_core: Core, trainer: Learner, context_collector: Context_Collector, action_collector: Context_Collector):
         self.agent_core = agent_core
         self.trainer = trainer
         self.obs = context_collector
+        self.actions = action_collector
 
         self.trainer.reset(time=0.0)
         self.obs.clear()
-        self.packed_actions = []
+        self.actions.clear()
         self.logprobs = []
         self.rewards = []
         self.next_dones = []
@@ -46,17 +47,24 @@ class Model_53(Instantiable_Agent):
         next_done = game_state in [GameState.GAME_OVER, GameState.WIN]
 
         # content must be batch leading tensor (1, ...)
-        self.obs.append([reward], self.last_position, np.reshape(content_, (1, -1)))
-
-        # compute last value from the current context (past observation) and the recent observation
-        # this one return batch leading tensors (batch)
-        last_value = self.agent_core.get_latest_value(self.obs.make_batch(batch_led=True))
+        last_position = self.last_position
+        if last_position is None:
+            last_position = np.zeros((1, 16), dtype=np.float32)
+        self.obs.append(np.array([[reward]], dtype=np.float32), last_position, np.reshape(content_, (1, -1)))
 
         if self.last_position is not None:
+
+            # compute last value from the current context (past observation) and the recent observation
+            # this one return batch leading tensors (batch)
+            last_value = self.agent_core.get_latest_value(
+                self.obs.make_batch(batch_led=True),
+                self.actions.make_batch(batch_led=True),
+            )
+            
             # learn RL and Supervised content
             self.trainer.learn(
                 self.obs[:-1], 
-                self.packed_actions, 
+                self.actions[:-1], 
                 self.logprobs, 
                 self.rewards, 
                 self.values, 
@@ -65,7 +73,7 @@ class Model_53(Instantiable_Agent):
             
             self.trainer.reset(time=0.0)
             self.obs.reset()
-            self.packed_actions = []
+            self.actions.reset()
             self.logprobs = []
             self.rewards = []
             self.next_dones = []
@@ -82,25 +90,29 @@ class Model_53(Instantiable_Agent):
         for i in range(4):
             # Choose a random action (except RESET)
             # this one return batch leading tensors (batch, 1, ...)
-            packed_action, newlogprob, _, newvalue = self.agent_core.get_action_and_value(self.obs[:-1].make_batch(batch_led=True))
+            packed_action, position, newlogprob, _, newvalue = self.agent_core.get_action_and_value(
+                self.obs[:-1].make_batch(batch_led=True),
+                self.actions.make_batch(batch_led=True),
+                use_action=False
+            )
 
-            self.packed_actions.append(packed_action[:, -1, ...])
+            self.actions.append(packed_action[:, -1, ...])
             self.logprobs.append(newlogprob[:, -1, ...])
             self.rewards.append([0])
             self.next_dones.append([False])
             self.values.append(newvalue[:, -1, ...])
 
             # extract output here
-            ext_flag, a, x, y, position, content = self.agent_core.unpack_action(packed_action[:, -1, ...], self.obs[:-1].make_batch(batch_led=True))
+            ext_flag, a, x, y, content = self.agent_core.unpack_action(packed_action[:, -1, ...])
 
-            if ext_flag[0].item() > 0.5:
+            if ext_flag.item() > 0.5:
                 self.last_position = position
                 self.last_content = content
                 break
             else:
-                self.obs.append([0], position, content)
+                self.obs.append(np.zeros((1, 1), dtype=np.float32), position, content)
 
-        action = game_actions[a.cpu().numpy().astype(int).item()]
+        action = game_actions[a.item()]
 
         # Add reasoning for simple actions
         if action.is_simple():
@@ -108,11 +120,9 @@ class Model_53(Instantiable_Agent):
             pass
         # For complex actions, set coordinates
         elif action.is_complex():
-            x = x.cpu().numpy().astype(int).item()
-            y = y.cpu().numpy().astype(int).item()
             action.set_data({
-                "x": x,
-                "y": y
+                "x": x.item(),
+                "y": y.item()
             })
         
         return action

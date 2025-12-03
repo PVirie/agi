@@ -3,22 +3,22 @@ import abc
 class Core(abc.ABC):
 
     @abc.abstractmethod
-    def get_latest_value(self, x):
+    def get_latest_value(self, context, action):
         pass
 
     @abc.abstractmethod
-    def get_action_and_value(self, x, action=None):
+    def get_action_and_value(self, context, action, use_action=False):
         pass
 
     @abc.abstractmethod
-    def unpack_action(packed_action):
+    def unpack_action(self, packed_action):
         pass
 
 
 class Context_Collector(abc.ABC):
     
     @abc.abstractmethod
-    def append(self, obs, action, reward):
+    def append(self, *args, **kwargs):
         pass
 
     @abc.abstractmethod
