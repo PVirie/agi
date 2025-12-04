@@ -69,17 +69,17 @@ class Model_53(Instantiable_Agent):
                 self.rewards, 
                 self.values, 
                 self.next_dones, 
-                last_value, [next_done],
+                np.reshape(last_value, (-1)), [next_done],
                 masks=self.actions.make_mask(batch_led=True)
             )
             
             self.trainer.reset(time=0.0)
             self.obs.mark(skip_last=True)
-            self.actions.mark()
-            # self.logprobs = []
-            # self.rewards = []
-            # self.next_dones = []
-            # self.values = []
+            left_over_slide = self.actions.mark()
+            self.logprobs = self.logprobs[left_over_slide]
+            self.rewards = self.rewards[left_over_slide]
+            self.next_dones = self.next_dones[left_over_slide]
+            self.values = self.values[left_over_slide]
 
         if game_state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             action = GameAction.RESET
@@ -97,7 +97,8 @@ class Model_53(Instantiable_Agent):
             packed_action, position, newlogprob, _, newvalue = self.agent_core.get_action_and_value(
                 self.obs.make_batch(batch_led=True),
                 self.actions.make_batch(batch_led=True, append_last=True),
-                use_action=False
+                use_action=False,
+                use_grad=False
             )
 
             position = position[:, -1, ...]
@@ -114,7 +115,7 @@ class Model_53(Instantiable_Agent):
             self.last_content = content
         
             # Decide whether to execute action or think more
-            if ext_flag.item() > 0.5 or thought_steps >= 4:
+            if ext_flag.item() > 0.5 or thought_steps >= 2:
                 break
 
             self.obs.append(np.zeros((1, 1), dtype=np.float32), position, content)

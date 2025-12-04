@@ -33,7 +33,8 @@ def masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim=None, keepdim=Fals
         total_elements = mask.numel()
     else:
         total_elements = mask.sum(dim=dim, keepdim=keepdim)
-    return masked_tensor.sum(dim=dim, keepdim=keepdim) / total_elements.clamp_min(1e-8)
+    
+    return masked_tensor.sum(dim=dim, keepdim=keepdim) / (total_elements + 1e-8)
 
 
 def masked_std(tensor: torch.Tensor, mask: torch.Tensor, dim=None, keepdim=False) -> torch.Tensor:
@@ -120,21 +121,25 @@ class PPO(Learner):
             for start in range(0, sequence_size, minibatch_size):
                 end = start + minibatch_size
 
-                _, _, b_newlogprob, b_entropy, b_newvalue = self.agent.get_action_and_value(
-                    obs, 
-                    actions,
-                    use_action=True
-                )
-
-                b_newlogprob = b_newlogprob[:, start:end, ...]
-                b_entropy = b_entropy[:, start:end, ...]
-                b_newvalue = b_newvalue[:, start:end, ...]
-                
                 mb_log_prob = logprobs[:, start:end, ...]
                 mb_value = values[:, start:end, ...]
                 mb_advantages = advantages[:, start:end, ...] 
                 mb_returns = returns[:, start:end, ...]
                 mb_masks = masks[:, start:end, ...]
+
+                if torch.sum(mb_masks) < 1e-8:
+                    continue
+
+                _, _, b_newlogprob, b_entropy, b_newvalue = self.agent.get_action_and_value(
+                    obs, 
+                    actions,
+                    use_action=True,
+                    use_grad=True
+                )
+
+                b_newlogprob = b_newlogprob[:, start:end, ...]
+                b_entropy = b_entropy[:, start:end, ...]
+                b_newvalue = b_newvalue[:, start:end, ...]
                 
                 logratio = b_newlogprob - mb_log_prob
                 ratio = logratio.exp()

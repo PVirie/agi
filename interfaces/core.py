@@ -7,7 +7,7 @@ class Core(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_action_and_value(self, context, action, use_action=False):
+    def get_action_and_value(self, context, action, use_action=False, use_grad=True):
         pass
 
     @abc.abstractmethod
@@ -26,7 +26,7 @@ class Context_Collector(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def mark(self, skip_last=False):
+    def mark(self, skip_last=False) -> slice:
         pass
 
     @abc.abstractmethod

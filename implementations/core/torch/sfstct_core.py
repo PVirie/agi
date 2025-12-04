@@ -149,10 +149,10 @@ class SF_STCT_Core(Core, nn.Module):
             temporal_feat = self.__compute(context, action)
             logits_value = self.head_value(temporal_feat)    # (B, T, 1)
             
-        return logits_value[:, -1].cpu().numpy()
+        return logits_value[:, -1, ...].cpu().numpy()
     
 
-    def get_action_and_value(self, context, action, use_action=False):
+    def get_action_and_value(self, context, action, use_action=False, use_grad=True):
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
         if isinstance(action, np.ndarray):
@@ -211,6 +211,9 @@ class SF_STCT_Core(Core, nn.Module):
         log_prob_content = props_content.log_prob(action_content).sum(-1)
         log_prob_flag = props_flag.log_prob(action_flag)
         batch_log_prob = log_prob_x + log_prob_y + log_prob_action + log_prob_content + log_prob_flag
+        
+        # clamp batch_log_prob to avoid too large negatives
+        batch_log_prob = torch.clamp(batch_log_prob, min=-10, max=0)
 
         entropy_x = props_x.entropy()
         entropy_y = props_y.entropy()
@@ -226,6 +229,11 @@ class SF_STCT_Core(Core, nn.Module):
 
         action = action.cpu().numpy().astype(int)
         position = position.cpu().numpy().astype(float)
+
+        if not use_grad:
+            batch_log_prob = batch_log_prob.detach().cpu().numpy()
+            batch_entropy = batch_entropy.detach().cpu().numpy()
+            batch_value = batch_value.detach().cpu().numpy()
 
         return action, position, batch_log_prob, batch_entropy, batch_value
 

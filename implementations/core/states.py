@@ -37,13 +37,28 @@ class State_Sequence(Context_Collector):
         self.mask = []
 
 
-    def mark(self, skip_last=False):
-        # assign zeroes to all elements, skipping last if specified
-        length = len(self.mask)
-        end = length - 1 if skip_last else length
-        for i in range(end):
-            self.mask[i] = 0.0
+    def mark(self, skip_last=False) -> slice:
+        """
+        Clear memory (data and mask), only keep upto last max_history items 
+        If skip_last is True, only keep upto last max_history + 1 items
 
+        set the current mask elements to zero, except the last one if skip_last is True
+
+        :return: the slice representing the left over data after marking
+        :rtype: slice[Any, Any, Any]
+        """
+        end_index = len(self.data)
+        if skip_last:
+            start_index = max(0, len(self.data) - self.max_history - 1)
+            self.data = self.data[start_index:]
+            self.mask = [0.0] * (len(self.data) - 1) + [1.0]
+        else:
+            start_index = max(0, len(self.data) - self.max_history)
+            self.data = self.data[start_index:]
+            self.mask = [0.0] * len(self.data)
+        
+        return slice(start_index, end_index)
+        
 
     def __getitem__(self, slice):
         # get (start-max_history):stop slice
@@ -76,13 +91,20 @@ class State_Sequence(Context_Collector):
         if len(self.mask) == 0:
             return None
         
+        batch_size = self.data[0].shape[0]
+
         if append_last:
             mask_to_stack = self.mask + [0.0]
         else:
             mask_to_stack = self.mask
         
+        mask_tensor = np.stack(mask_to_stack, axis=0)
+        # expand dims to match data shape
         if batch_led:
-            mask_tensor = np.stack(mask_to_stack, axis=1)
+            mask_tensor = np.expand_dims(mask_tensor, axis=0)
+            mask_tensor = np.repeat(mask_tensor, batch_size, axis=0)
         else:
-            mask_tensor = np.stack(mask_to_stack, axis=0)
+            mask_tensor = np.expand_dims(mask_tensor, axis=1)
+            mask_tensor = np.repeat(mask_tensor, batch_size, axis=1)
+
         return mask_tensor
