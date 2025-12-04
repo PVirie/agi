@@ -58,44 +58,49 @@ class Model_53(Instantiable_Agent):
             # this one return batch leading tensors (batch)
             last_value = self.agent_core.get_latest_value(
                 self.obs.make_batch(batch_led=True),
-                self.actions.make_batch(batch_led=True),
+                self.actions.make_batch(batch_led=True, append_last=True),
             )
             
             # learn RL and Supervised content
             self.trainer.learn(
-                self.obs[:-1], 
-                self.actions[:-1], 
+                self.obs[:-1].make_batch(batch_led=True), 
+                self.actions.make_batch(batch_led=True), 
                 self.logprobs, 
                 self.rewards, 
                 self.values, 
                 self.next_dones, 
-                last_value, [next_done])
+                last_value, [next_done],
+                masks=self.actions.make_mask(batch_led=True)
+            )
             
             self.trainer.reset(time=0.0)
-            self.obs.reset()
-            self.actions.reset()
-            self.logprobs = []
-            self.rewards = []
-            self.next_dones = []
-            self.values = []
+            self.obs.mark(skip_last=True)
+            self.actions.mark()
+            # self.logprobs = []
+            # self.rewards = []
+            # self.next_dones = []
+            # self.values = []
 
         if game_state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             action = GameAction.RESET
             action.reasoning = f"Game is over or not played, choosing RESET"
+            self.obs.clear()
+            self.actions.clear()
             self.last_position = None
             self.last_content = None
             return action
     
-        # allow up to 4 thought steps to choose an action
-        for i in range(4):
+        thought_steps = 1
+        while True:
             # Choose a random action (except RESET)
             # this one return batch leading tensors (batch, 1, ...)
             packed_action, position, newlogprob, _, newvalue = self.agent_core.get_action_and_value(
-                self.obs[:-1].make_batch(batch_led=True),
-                self.actions.make_batch(batch_led=True),
+                self.obs.make_batch(batch_led=True),
+                self.actions.make_batch(batch_led=True, append_last=True),
                 use_action=False
             )
 
+            position = position[:, -1, ...]
             self.actions.append(packed_action[:, -1, ...])
             self.logprobs.append(newlogprob[:, -1, ...])
             self.rewards.append([0])
@@ -105,12 +110,16 @@ class Model_53(Instantiable_Agent):
             # extract output here
             ext_flag, a, x, y, content = self.agent_core.unpack_action(packed_action[:, -1, ...])
 
-            if ext_flag.item() > 0.5:
-                self.last_position = position
-                self.last_content = content
+            self.last_position = position
+            self.last_content = content
+        
+            # Decide whether to execute action or think more
+            if ext_flag.item() > 0.5 or thought_steps >= 4:
                 break
-            else:
-                self.obs.append(np.zeros((1, 1), dtype=np.float32), position, content)
+
+            self.obs.append(np.zeros((1, 1), dtype=np.float32), position, content)
+            thought_steps += 1
+
 
         action = game_actions[a.item()]
 

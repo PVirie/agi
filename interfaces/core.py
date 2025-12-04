@@ -26,7 +26,7 @@ class Context_Collector(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def reset(self):
+    def mark(self, skip_last=False):
         pass
 
     @abc.abstractmethod
@@ -34,5 +34,9 @@ class Context_Collector(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def make_batch(self, batch_led=True):
+    def make_batch(self, batch_led=True, append_last=False):
+        pass
+
+    @abc.abstractmethod
+    def make_mask(self, batch_led=True, append_last=False):
         pass

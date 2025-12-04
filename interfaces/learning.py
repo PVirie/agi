@@ -10,5 +10,5 @@ class Learner(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def learn(self, obs: Context_Collector, actions: List[Any], logprobs: List[Any], rewards: List[List[float]], values: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool]):
+    def learn(self, obs: Any, actions: Any, logprobs: List[Any], rewards: List[List[float]], values: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool], masks: Any = None):
         pass

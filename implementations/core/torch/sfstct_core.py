@@ -145,8 +145,10 @@ class SF_STCT_Core(Core, nn.Module):
         elif action is None:
             action = torch.zeros((context.size(0), context.size(1), 1 + 3 + self.content_size), dtype=torch.int64).to(self.device)
 
-        temporal_feat = self.__compute(context, action)
-        logits_value = self.head_value(temporal_feat)    # (B, T, 1)
+        with torch.no_grad():
+            temporal_feat = self.__compute(context, action)
+            logits_value = self.head_value(temporal_feat)    # (B, T, 1)
+            
         return logits_value[:, -1].cpu().numpy()
     
 
@@ -154,9 +156,9 @@ class SF_STCT_Core(Core, nn.Module):
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
         if isinstance(action, np.ndarray):
-            action = torch.tensor(action, dtype=torch.int64).to(self.device)
+            action = torch.tensor(action, dtype=torch.float32).to(self.device)
         elif action is None:
-            action = torch.zeros((context.size(0), context.size(1), 1 + 3 + self.content_size), dtype=torch.int64).to(self.device)
+            action = torch.zeros((context.size(0), context.size(1), 1 + 3 + self.content_size), dtype=torch.float32).to(self.device)
 
         batch_size = context.size(0)
         temporal_feat = self.__compute(context, action)
@@ -195,12 +197,13 @@ class SF_STCT_Core(Core, nn.Module):
             action_y = action[:, :, 3]
             action_content = action[:, :, 4:]
 
-        last_position = context[:, :, 1:1 + self.position_size]
-        # make one hot encoding for action, x, y
-        action_onehot = torch.nn.functional.one_hot(action_action.long(), num_classes=self.action_size).float()
-        x_onehot = torch.nn.functional.one_hot(action_x.long(), num_classes=self.width).float()
-        y_onehot = torch.nn.functional.one_hot(action_y.long(), num_classes=self.height).float()
-        position = self.position_step(torch.concat([last_position, action_onehot, x_onehot, y_onehot], dim=-1))
+        with torch.no_grad():
+            last_position = context[:, :, 1:1 + self.position_size]
+            # make one hot encoding for action, x, y
+            action_onehot = torch.nn.functional.one_hot(action_action.long(), num_classes=self.action_size).float()
+            x_onehot = torch.nn.functional.one_hot(action_x.long(), num_classes=self.width).float()
+            y_onehot = torch.nn.functional.one_hot(action_y.long(), num_classes=self.height).float()
+            position = self.position_step(torch.concat([last_position, action_onehot, x_onehot, y_onehot], dim=-1))
 
         log_prob_x = props_x.log_prob(action_x)
         log_prob_y = props_y.log_prob(action_y)
@@ -231,10 +234,10 @@ class SF_STCT_Core(Core, nn.Module):
         # packed_action has shape (batch, 1 + 3 + content_size)
         # return ext_flag, action_data... , content
 
-        ext_part = packed_action[:, 0].cpu().numpy().astype(float)
-        action = packed_action[:, 1].cpu().numpy().astype(int)
-        x = packed_action[:, 2].cpu().numpy().astype(int)
-        y = packed_action[:, 3].cpu().numpy().astype(int)
-        content = packed_action[:, 4:].cpu().numpy().astype(float)
+        ext_part = packed_action[:, 0].astype(float)
+        action = packed_action[:, 1].astype(int)
+        x = packed_action[:, 2].astype(int)
+        y = packed_action[:, 3].astype(int)
+        content = packed_action[:, 4:].astype(float)
 
         return ext_part, action, x, y, content

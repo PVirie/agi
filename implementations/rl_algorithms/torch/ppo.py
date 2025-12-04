@@ -27,6 +27,21 @@ def convert_list_of_float_to_float_tensor(float_list: List[float], device) -> to
     return torch.transpose(before_transpose, 0, 1)
 
 
+def masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim=None, keepdim=False) -> torch.Tensor:
+    masked_tensor = tensor * mask
+    if dim is None:
+        total_elements = mask.numel()
+    else:
+        total_elements = mask.sum(dim=dim, keepdim=keepdim)
+    return masked_tensor.sum(dim=dim, keepdim=keepdim) / total_elements.clamp_min(1e-8)
+
+
+def masked_std(tensor: torch.Tensor, mask: torch.Tensor, dim=None, keepdim=False) -> torch.Tensor:
+    masked_tensor = tensor * mask
+    mean = masked_mean(tensor, mask, dim=dim, keepdim=True)
+    variance = masked_mean((masked_tensor - mean) ** 2, mask, dim=dim, keepdim=keepdim)
+    return torch.sqrt(variance + 1e-8)
+
 
 class PPO(Learner):
 
@@ -57,23 +72,25 @@ class PPO(Learner):
         self.optimizer.param_groups[0]["lr"] = lrnow
 
 
-    def learn(self, obs: Context_Collector, actions: List[Any], logprobs: List[Any], rewards: List[List[float]], values: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool]):
+    def learn(self, obs: Any, actions: Any, logprobs: List[Any], rewards: List[List[float]], values: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool], masks: Any = None):
         """
-        obs: Context_Collector
-        actions: Context_Collector
+        obs: np array of shape (batch_size, context_length, ...)
+        actions: np array of shape (batch_size, context_length, ...)
         logprobs: list of np array of shape (batch_size)
         rewards: list of floats of length batch_size
         values: list np array of shape (batch_size)
         next_dones: list of bools of length batch_size
         last_value: np array of shape (batch_size)
         last_done: list of bools of length batch_size
+        masks: np array of shape (batch_size, context_length)
         """
         # Use dim 0 as context length dimension
-        obs = convert_np_array_to_float_tensor(obs.make_batch(batch_led=True), self.device)
-        actions = convert_np_array_to_float_tensor(actions.make_batch(batch_led=True), self.device)
+        obs = convert_np_array_to_float_tensor(obs, self.device)
+        actions = convert_np_array_to_float_tensor(actions, self.device)
         logprobs = convert_list_of_np_array_to_float_tensor(logprobs, self.device)
         rewards = convert_list_of_float_to_float_tensor(rewards, self.device)
         values = convert_list_of_np_array_to_float_tensor(values, self.device)
+        masks = torch.ones_like(rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
 
         batch_size = actions.shape[0]
         sequence_size = actions.shape[1]
@@ -104,32 +121,39 @@ class PPO(Learner):
                 end = start + minibatch_size
 
                 _, _, b_newlogprob, b_entropy, b_newvalue = self.agent.get_action_and_value(
-                    obs[:, start:end, ...], 
-                    actions[:, start:end, ...],
+                    obs, 
+                    actions,
                     use_action=True
                 )
+
+                b_newlogprob = b_newlogprob[:, start:end, ...]
+                b_entropy = b_entropy[:, start:end, ...]
+                b_newvalue = b_newvalue[:, start:end, ...]
                 
                 mb_log_prob = logprobs[:, start:end, ...]
                 mb_value = values[:, start:end, ...]
                 mb_advantages = advantages[:, start:end, ...] 
                 mb_returns = returns[:, start:end, ...]
+                mb_masks = masks[:, start:end, ...]
                 
                 logratio = b_newlogprob - mb_log_prob
                 ratio = logratio.exp()
 
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                    old_approx_kl = (-logratio).mean()
-                    approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > self.clip_coef).float().mean().item()]
+                    old_approx_kl = masked_mean(-logratio, mb_masks)
+                    approx_kl = masked_mean((ratio - 1) - logratio, mb_masks)
+                    clipfracs += [masked_mean(((ratio - 1.0).abs() > self.clip_coef).float(), mb_masks).item()]
 
                 if self.norm_adv and torch.numel(mb_advantages) > 1:
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                    mb_adv_mean = masked_mean(mb_advantages, mb_masks)
+                    mb_adv_std = masked_std(mb_advantages, mb_masks)
+                    mb_advantages = (mb_advantages - mb_adv_mean) / (mb_adv_std + 1e-8)
 
                 # Policy loss
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - self.clip_coef, 1 + self.clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                pg_loss = masked_mean(torch.max(pg_loss1, pg_loss2), mb_masks)
 
                 # Value loss
                 if self.clip_vloss:
@@ -141,11 +165,11 @@ class PPO(Learner):
                     )
                     v_loss_clipped = (v_clipped - mb_returns) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = 0.5 * v_loss_max.mean()
+                    v_loss = 0.5 * masked_mean(v_loss_max, mb_masks)
                 else:
-                    v_loss = 0.5 * ((b_newvalue - mb_returns) ** 2).mean()
+                    v_loss = 0.5 * masked_mean((b_newvalue - mb_returns) ** 2, mb_masks)
 
-                entropy_loss = b_entropy.mean()
+                entropy_loss = masked_mean(b_entropy, mb_masks)
                 loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
 
                 self.optimizer.zero_grad()
