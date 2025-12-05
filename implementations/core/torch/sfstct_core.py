@@ -200,6 +200,12 @@ class SF_STCT_Core(Core, nn.Module):
         props_flag = Categorical(logits=logits_flag)
 
         if use_action:
+            action_flag = action[:, :, 0]
+            action_action = action[:, :, 1]
+            action_x = action[:, :, 2]
+            action_y = action[:, :, 3]
+            action_content = action[:, :, 4:]
+        else:
             action_flag = props_flag.sample()
             action_action = props_action.sample()
             action_x = props_x.sample()
@@ -213,12 +219,6 @@ class SF_STCT_Core(Core, nn.Module):
                 action_y.unsqueeze(-1),
                 action_content
             ], dim=-1)
-        else:
-            action_flag = action[:, :, 0]
-            action_action = action[:, :, 1]
-            action_x = action[:, :, 2]
-            action_y = action[:, :, 3]
-            action_content = action[:, :, 4:]
 
         with torch.no_grad():
             last_position = context[:, :, 1:1 + self.position_size]

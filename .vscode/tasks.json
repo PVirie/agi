@@ -4,7 +4,7 @@
         {
             "label": "Current file: reset",
             "type": "shell",
-            "command": "docker compose -f docker_compose.yaml --profile python run --rm -d --build --service-ports python-service python3 -m debugpy --listen 0.0.0.0:43690 --wait-for-client ${relativeFile} --reset",
+            "command": "docker compose -f docker_compose.yaml --profile ${input:configuration} run --rm -d --build --service-ports ${input:configuration}-service python3 -m debugpy --listen 0.0.0.0:43690 --wait-for-client ${relativeFile} --reset",
             "dependsOn": ["docker-compose-stop: python"],
             "isBackground": true,
             "problemMatcher": [
