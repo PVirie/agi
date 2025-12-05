@@ -5,6 +5,7 @@ import logging
 import random
 import argparse
 import numpy as np
+import shutil
 
 import torch
 
@@ -48,15 +49,30 @@ if __name__ == "__main__":
     np.random.seed(20251118)
     torch.use_deterministic_algorithms(True)
 
+    experiment_path = f"{APP_ROOT}/experiments/arcagi3"
+    if args.reset:
+        # clear the experiment path
+        if os.path.exists(experiment_path):
+            shutil.rmtree(experiment_path)
+        exit()
+    os.makedirs(experiment_path, exist_ok=True)
+
     agent_001 = random_agent.Random_Agent("agent_001")
     register_agent_class("small_agent", agent_001)
 
-    agent_core = Core(action_size=6, position_size=16,
+    parameters_path = f"{experiment_path}/parameters"
+    os.makedirs(parameters_path, exist_ok=True)
+    agent_core = Core(
+        action_size=6, position_size=16,
         width=64, height=64, channel=4,
         hidden_size=128, heads=8, layers=2,
-        device=device
+        device=device, 
+        persistence_path=parameters_path
     ).to(device)
-    learner = Learner(agent=agent_core, device=device)
+    learner = Learner(
+        agent=agent_core, device=device,
+        persistence_path=parameters_path
+    )
     model_53_agent = model_53.Model_53(
         agent_core=agent_core, trainer=learner, 
         context_collector=Collector(max_history=8),

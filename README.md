@@ -19,3 +19,10 @@ An attempt to solve AGI.
     export ARC_API_KEY="your_arc_api_key_here"
     export AGENTOPS_API_KEY="your_agentops_api_key_here"
 ```
+
+## To do
+
+-   [x] Implement core AGI algorithms
+-   [x] Save and load model checkpoints
+-   [ ] Supervised learning module (Teacher forcing)
+-   [ ] Padding environment (for variable input lengths)

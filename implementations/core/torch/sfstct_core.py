@@ -5,6 +5,7 @@ from torch.distributions.normal import Normal
 from torch.distributions.categorical import Categorical
 from torch.distributions import Bernoulli
 import numpy as np
+import logging
 
 from interfaces.core import Core
 from .base import Multilayer_Relu, init_weights
@@ -13,7 +14,7 @@ from .sfstct import SpatialEncoder, TemporalEncoder
 
 class SF_STCT_Core(Core, nn.Module):
 
-    def __init__(self, action_size, position_size, width, height, channel, hidden_size, heads, layers, device=None):
+    def __init__(self, action_size, position_size, width, height, channel, hidden_size, heads, layers, device=None, persistence_path=None):
         super().__init__()
         # content_size = channels x height x width
 
@@ -80,6 +81,10 @@ class SF_STCT_Core(Core, nn.Module):
 
         self.reset_parameters()
 
+        self.persistence_path = persistence_path
+        if self.persistence_path is not None:
+            self.load()
+
 
     def reset_parameters(self):
         # Reset parameters of all layers
@@ -96,6 +101,24 @@ class SF_STCT_Core(Core, nn.Module):
         nn.init.constant_(self.value_logstd, 0.0)
 
         self.position_step.reset_parameters()
+
+
+    def load(self):
+        if self.persistence_path is not None:
+            try:
+                checkpoint = torch.load(f"{self.persistence_path}/core_checkpoint.pth", map_location=self.device)
+                self.load_state_dict(checkpoint["model_state_dict"])
+                logging.info(f"Core: Loaded checkpoint from {self.persistence_path}/core_checkpoint.pth")
+            except FileNotFoundError:
+                logging.info(f"Core: No checkpoint found at {self.persistence_path}/core_checkpoint.pth")
+
+
+    def save(self):
+        if self.persistence_path is not None:
+            torch.save({
+                "model_state_dict": self.state_dict(),
+            }, f"{self.persistence_path}/core_checkpoint.pth")
+            print("Core: Saved checkpoint to", f"{self.persistence_path}/core_checkpoint.pth")
 
 
     def __compute_position(self, last_position, action):

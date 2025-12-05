@@ -72,6 +72,9 @@ class Model_53(Instantiable_Agent):
                 np.reshape(last_value, (-1)), [next_done],
                 masks=self.actions.make_mask(batch_led=True)
             )
+
+            self.trainer.save()
+            self.agent_core.save()
             
             self.trainer.reset(time=0.0)
             self.obs.mark(skip_last=True)
