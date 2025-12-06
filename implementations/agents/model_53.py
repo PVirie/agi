@@ -17,13 +17,16 @@ class Model_53(Instantiable_Agent):
     def __init__(self, 
                  agent_core: Core, 
                  trainer: PPO_Learner, supervised_trainer: Supervised_Learner, 
-                 context_collector: Context_Collector, action_collector: Context_Collector
+                 context_collector: Context_Collector, action_collector: Context_Collector,
+                 do_supervision: bool = False
                  ):
         self.agent_core = agent_core
         self.trainer = trainer
         self.supervised_trainer = supervised_trainer
         self.obs = context_collector
         self.actions = action_collector
+
+        self.do_supervision = do_supervision
 
         self.trainer.reset(time=0.0)
         self.obs.clear()
@@ -56,7 +59,7 @@ class Model_53(Instantiable_Agent):
             last_position = np.zeros((1, self.agent_core.position_size), dtype=np.float32)
         self.obs.append(np.array([[reward]], dtype=np.float32), last_position, np.reshape(content_, (1, -1)))
 
-        if self.last_position is not None:
+        if reward != 0:
 
             # compute last value from the current context (past observation) and the recent observation
             # this one return batch leading tensors (batch)
@@ -66,17 +69,18 @@ class Model_53(Instantiable_Agent):
             )
 
             # learn Supervise content
-            target_actions, last_mask = self.agent_core.make_batch_actions(
-                b_content=np.reshape(content_, (1, -1))
-            )
-            target_actions = pad(np.expand_dims(target_actions, axis=1), len(self.rewards), pad_value=0, append_to_front=True)
-            last_mask = pad(np.expand_dims(last_mask, axis=1), len(self.rewards), pad_value=0.0, append_to_front=True)
-            self.supervised_trainer.train(
-                obs=self.obs[:-1].make_batch(batch_led=True),
-                actions=self.actions.make_batch(batch_led=True),
-                target_actions=target_actions,
-                masks=last_mask
-            )
+            if self.do_supervision:
+                target_actions, last_mask = self.agent_core.make_batch_actions(
+                    b_content=np.reshape(content_, (1, -1))
+                )
+                target_actions = pad(np.expand_dims(target_actions, axis=1), len(self.rewards), pad_value=0, append_to_front=True)
+                last_mask = pad(np.expand_dims(last_mask, axis=1), len(self.rewards), pad_value=0.0, append_to_front=True)
+                self.supervised_trainer.train(
+                    obs=self.obs[:-1].make_batch(batch_led=True),
+                    actions=self.actions.make_batch(batch_led=True),
+                    target_actions=target_actions,
+                    masks=last_mask
+                )
             
             # learn RL
             self.trainer.learn(

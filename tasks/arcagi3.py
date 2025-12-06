@@ -40,6 +40,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--reset",                  "-r",   action="store_true")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
+    parser.add_argument("--with-supervision",       "-svl", action="store_true",                help="Enable supervised learning along with PPO.")
     parser.add_argument("--no-thought",             "-nth", action="store_true",                help="Disable thoughts in favor of fixed steps.")
     parser.add_argument("--no-reference",           "-nrf", action="store_true",                help="Disable reference and use traditional PE.")
     args = parser.parse_args()
@@ -82,7 +83,8 @@ if __name__ == "__main__":
         agent_core=agent_core, 
         trainer=ppo_learner, supervised_trainer=supervised_learner,
         context_collector=Collector(max_history=8),
-        action_collector=Collector(max_history=8)
+        action_collector=Collector(max_history=8),
+        do_supervision=args.with_supervision
     )
     register_agent_class("model_53", model_53_agent)
 
