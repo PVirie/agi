@@ -24,5 +24,5 @@ An attempt to solve AGI.
 
 -   [x] Implement core AGI algorithms
 -   [x] Save and load model checkpoints
--   [ ] Supervised learning module (Teacher forcing)
+-   [x] Supervised learning module (Teacher forcing)
 -   [ ] Padding environment (for variable input lengths)

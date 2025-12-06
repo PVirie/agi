@@ -66,17 +66,17 @@ class Model_53(Instantiable_Agent):
             )
 
             # learn Supervise content
-            # target_actions, last_mask = self.agent_core.make_batch_actions(
-            #     b_content=np.reshape(content_, (1, -1))
-            # )
-            # target_actions = pad(target_actions, len(self.rewards), pad_value=0, append_to_front=True)
-            # last_mask = pad(last_mask, len(self.rewards), pad_value=0.0, append_to_front=True)
-            # self.supervised_trainer.train(
-            #     obs=self.obs[:-1].make_batch(batch_led=True), 
-            #     actions=self.actions.make_batch(batch_led=True), 
-            #     target_actions=target_actions,
-            #     masks=last_mask
-            # )
+            target_actions, last_mask = self.agent_core.make_batch_actions(
+                b_content=np.reshape(content_, (1, -1))
+            )
+            target_actions = pad(np.expand_dims(target_actions, axis=1), len(self.rewards), pad_value=0, append_to_front=True)
+            last_mask = pad(np.expand_dims(last_mask, axis=1), len(self.rewards), pad_value=0.0, append_to_front=True)
+            self.supervised_trainer.train(
+                obs=self.obs[:-1].make_batch(batch_led=True),
+                actions=self.actions.make_batch(batch_led=True),
+                target_actions=target_actions,
+                masks=last_mask
+            )
             
             # learn RL
             self.trainer.learn(
@@ -90,6 +90,7 @@ class Model_53(Instantiable_Agent):
                 masks=self.actions.make_mask(batch_led=True)
             )
 
+            self.supervised_trainer.save()
             self.trainer.save()
             self.agent_core.save()
             

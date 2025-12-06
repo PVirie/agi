@@ -180,26 +180,27 @@ class SF_STCT_Core(Core, nn.Module):
     def get_action_and_value(self, context, action, use_action=False, use_grad=True):
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
-        if isinstance(action, np.ndarray):
-            action = torch.tensor(action, dtype=torch.float32).to(self.device)
-        elif action is None:
+
+        if action is None:
             action = torch.zeros((context.size(0), context.size(1), 1 + 3 + self.content_size), dtype=torch.float32).to(self.device)
+        elif isinstance(action, np.ndarray):
+            action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
         batch_size = context.size(0)
         temporal_feat = self.__compute(context, action)
 
+        logits_flag = self.head_flag(temporal_feat)    # (B, T, 2)
+        logits_action = self.head_action(temporal_feat) # (B, T, 6)
         logits_x = self.head_x(temporal_feat)      # (B, T, 64)
         logits_y = self.head_y(temporal_feat)      # (B, T, 64)
-        logits_action = self.head_action(temporal_feat) # (B, T, 6)
         pprobs_content = self.head_content(temporal_feat) # (B, T, content_size)
-        logits_flag = self.head_flag(temporal_feat)    # (B, T, 2)
         value = self.head_value(temporal_feat)    # (B, T, 1)
 
+        props_flag = Categorical(logits=logits_flag)
+        props_action = Categorical(logits=logits_action)
         props_x = Categorical(logits=logits_x)
         props_y = Categorical(logits=logits_y)
-        props_action = Categorical(logits=logits_action)
         props_content = Bernoulli(probs=pprobs_content)
-        props_flag = Categorical(logits=logits_flag)
 
         if use_action:
             action_flag = action[:, :, 0]
@@ -263,6 +264,60 @@ class SF_STCT_Core(Core, nn.Module):
         return action, position, batch_log_prob, batch_entropy, batch_value
 
 
+    def get_log_probability(self, context, action, target_action=None, mask=None):
+        """
+        Mask has shape (batch, context_size, 5) see make_batch_actions
+        """
+
+        if isinstance(context, np.ndarray):
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
+
+        if action is None:
+            action = torch.zeros((context.size(0), context.size(1), 1 + 3 + self.content_size), dtype=torch.float32).to(self.device)
+        elif isinstance(action, np.ndarray):
+            action = torch.tensor(action, dtype=torch.float32).to(self.device)
+
+        if mask is None:
+            mask = torch.ones((context.size(0), context.size(1), 5), dtype=torch.float32).to(self.device)
+        elif isinstance(mask, np.ndarray):
+            mask = torch.tensor(mask, dtype=torch.float32).to(self.device)
+
+        temporal_feat = self.__compute(context, action)
+
+        logits_flag = self.head_flag(temporal_feat)    # (B, T, 2)
+        logits_action = self.head_action(temporal_feat) # (B, T, 6)
+        logits_x = self.head_x(temporal_feat)      # (B, T, 64)
+        logits_y = self.head_y(temporal_feat)      # (B, T, 64)
+        pprobs_content = self.head_content(temporal_feat) # (B, T, content_size)
+
+        props_flag = Categorical(logits=logits_flag)
+        props_action = Categorical(logits=logits_action)
+        props_x = Categorical(logits=logits_x)
+        props_y = Categorical(logits=logits_y)
+        props_content = Bernoulli(probs=pprobs_content)
+
+        if target_action is None:
+            target_action = action
+
+        action_flag = target_action[:, :, 0]
+        action_action = target_action[:, :, 1]
+        action_x = target_action[:, :, 2]
+        action_y = target_action[:, :, 3]
+        action_content = target_action[:, :, 4:]
+
+        log_prob_flag = props_flag.log_prob(action_flag)
+        log_prob_action = props_action.log_prob(action_action)
+        log_prob_x = props_x.log_prob(action_x)
+        log_prob_y = props_y.log_prob(action_y)
+        log_prob_content = props_content.log_prob(action_content).sum(-1)
+
+        log_prob = torch.stack([log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content], dim=-1)
+        masked_log_prob = log_prob * mask
+        sum_log_prob = torch.sum(masked_log_prob, dim=-1)
+
+        return sum_log_prob
+
+
     def unpack_action(self, packed_action):
         # packed_action has shape (batch, 1 + 3 + content_size)
         # return ext_flag, action_data... , content
@@ -278,7 +333,8 @@ class SF_STCT_Core(Core, nn.Module):
 
     def make_batch_actions(self, b_ext=None, b_action=None, b_x=None, b_y=None, b_content=None):
         # b_xxx has shape (batch, ...)
-        # return packed_action_seq of shape (batch, 1 + 3 + content_size) of type int along with a float mask
+        # return packed_action_seq of shape (batch, 1 + 3 + content_size) of type int
+        # return mask of shape (batch, 5) of type float
         # replace none with zeros
 
         batch_size = None
@@ -295,21 +351,28 @@ class SF_STCT_Core(Core, nn.Module):
         else:
             raise ValueError("At least one of b_ext, b_action, b_x, b_y, b_content must be provided")
         
+        mask = np.zeros((batch_size, 5), dtype=float)
         if b_ext is None:
             b_ext = np.zeros((batch_size,), dtype=int)
-            b_ext_mask = np.zeros((batch_size,), dtype=float)
         if b_action is None:
             b_action = np.zeros((batch_size,), dtype=int)
-            b_action_mask = np.zeros((batch_size,), dtype=float)
         if b_x is None:
             b_x = np.zeros((batch_size,), dtype=int)
-            b_x_mask = np.zeros((batch_size,), dtype=float)
         if b_y is None:
             b_y = np.zeros((batch_size,), dtype=int)
-            b_y_mask = np.zeros((batch_size,), dtype=float)
         if b_content is None:
             b_content = np.zeros((batch_size, self.content_size), dtype=float)
-            b_content_mask = np.zeros((batch_size, self.content_size), dtype=float)
+
+        if b_ext is not None:
+            mask[:, 0] = 1.0
+        if b_action is not None:
+            mask[:, 1] = 1.0
+        if b_x is not None:
+            mask[:, 2] = 1.0
+        if b_y is not None:
+            mask[:, 3] = 1.0
+        if b_content is not None:
+            mask[:, 4] = 1.0
 
         packed_action = np.concatenate([
             b_ext.reshape((batch_size, 1)),
@@ -318,14 +381,6 @@ class SF_STCT_Core(Core, nn.Module):
             b_y.reshape((batch_size, 1)),
             b_content
         ], axis=-1).astype(int)
-
-        mask = np.concatenate([
-            b_ext_mask.reshape((batch_size, 1)),
-            b_action_mask.reshape((batch_size, 1)), 
-            b_x_mask.reshape((batch_size, 1)),
-            b_y_mask.reshape((batch_size, 1)),
-            b_content_mask
-        ], axis=-1).astype(float)
 
         return packed_action, mask
     

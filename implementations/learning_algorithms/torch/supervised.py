@@ -21,7 +21,6 @@ class Basic_Learner(Supervised_Learner):
         self.max_grad_norm = 0.5
 
         self.update_epochs = 10
-        self.num_minibatches = 32
 
         self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
         
@@ -54,36 +53,24 @@ class Basic_Learner(Supervised_Learner):
             logging.info(f"Saved Basic Learner to {self.persistence_path}/basic_learner_checkpoint.pth")
 
 
-    def train(self, obs: Any, target_actions: Any, masks: Any = None):
+    def train(self, obs: Any, actions: Any, target_actions: Any, masks: Any = None):
         obs = convert_np_array_to_float_tensor(obs, self.device)
+        actions = convert_np_array_to_float_tensor(actions, self.device)
         target_actions = convert_np_array_to_float_tensor(target_actions, self.device)
 
-        batch_size = target_actions.shape[0]
-        sequence_size = target_actions.shape[1]
-        minibatch_size = max(sequence_size // self.num_minibatches, 8)
-
         for epoch in range(self.update_epochs):
-            for start in range(0, batch_size, minibatch_size):
-                end = start + minibatch_size
+            newlogprob = self.agent.get_log_probability(
+                context=obs, 
+                action=actions,
+                target_action=target_actions,
+                mask=masks
+            )
 
-                mb_target_actions = target_actions[:, start:end]
-                mb_masks = masks[:, start:end, ...]
+            # now attempt to minimize negative log likelihood
+            loss = -newlogprob.mean()
 
-                if torch.sum(mb_masks) < 1e-8:
-                    continue
-
-                _, _, b_newlogprob, _, _ = self.agent.get_action_and_value(
-                    obs, 
-                    target_actions,
-                    use_action=True,
-                    use_grad=True
-                )
-
-                # now attempt to minimize negative log likelihood
-
-
-                # self.optimizer.zero_grad()
-                # loss.backward()
-                # nn.utils.clip_grad_norm_(self.agent.parameters(), self.max_grad_norm)
-                # self.optimizer.step()
+            self.optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(self.agent.parameters(), self.max_grad_norm)
+            self.optimizer.step()
 

@@ -11,6 +11,10 @@ class Core(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def get_log_probability(self, context, action, target_action=None, mask=None):
+        pass
+
+    @abc.abstractmethod
     def unpack_action(self, packed_action):
         pass
 
