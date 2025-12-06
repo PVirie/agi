@@ -4,19 +4,24 @@ import logging
 import random
 import numpy as np
 
-from interfaces.learning import Learner
+from interfaces.learning import PPO_Learner, Supervised_Learner
 from interfaces.core import Core, Context_Collector
 
-from .utils import extract_frame
+from .utils import extract_frame, pad
 
 
 game_actions = [GameAction.ACTION1, GameAction.ACTION2, GameAction.ACTION3, GameAction.ACTION4, GameAction.ACTION5, GameAction.ACTION6, GameAction.ACTION7]
 
 class Model_53(Instantiable_Agent):
     
-    def __init__(self, agent_core: Core, trainer: Learner, context_collector: Context_Collector, action_collector: Context_Collector):
+    def __init__(self, 
+                 agent_core: Core, 
+                 trainer: PPO_Learner, supervised_trainer: Supervised_Learner, 
+                 context_collector: Context_Collector, action_collector: Context_Collector
+                 ):
         self.agent_core = agent_core
         self.trainer = trainer
+        self.supervised_trainer = supervised_trainer
         self.obs = context_collector
         self.actions = action_collector
 
@@ -31,7 +36,6 @@ class Model_53(Instantiable_Agent):
         self.current_score = 0
 
         self.last_position = None
-        self.last_content = None
 
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
@@ -49,7 +53,7 @@ class Model_53(Instantiable_Agent):
         # content must be batch leading tensor (1, ...)
         last_position = self.last_position
         if last_position is None:
-            last_position = np.zeros((1, 16), dtype=np.float32)
+            last_position = np.zeros((1, self.agent_core.position_size), dtype=np.float32)
         self.obs.append(np.array([[reward]], dtype=np.float32), last_position, np.reshape(content_, (1, -1)))
 
         if self.last_position is not None:
@@ -60,8 +64,21 @@ class Model_53(Instantiable_Agent):
                 self.obs.make_batch(batch_led=True),
                 self.actions.make_batch(batch_led=True, append_last=True),
             )
+
+            # learn Supervise content
+            # target_actions, last_mask = self.agent_core.make_batch_actions(
+            #     b_content=np.reshape(content_, (1, -1))
+            # )
+            # target_actions = pad(target_actions, len(self.rewards), pad_value=0, append_to_front=True)
+            # last_mask = pad(last_mask, len(self.rewards), pad_value=0.0, append_to_front=True)
+            # self.supervised_trainer.train(
+            #     obs=self.obs[:-1].make_batch(batch_led=True), 
+            #     actions=self.actions.make_batch(batch_led=True), 
+            #     target_actions=target_actions,
+            #     masks=last_mask
+            # )
             
-            # learn RL and Supervised content
+            # learn RL
             self.trainer.learn(
                 self.obs[:-1].make_batch(batch_led=True), 
                 self.actions.make_batch(batch_led=True), 
@@ -90,7 +107,6 @@ class Model_53(Instantiable_Agent):
             self.obs.clear()
             self.actions.clear()
             self.last_position = None
-            self.last_content = None
             return action
     
         thought_steps = 1
@@ -115,7 +131,6 @@ class Model_53(Instantiable_Agent):
             ext_flag, a, x, y, content = self.agent_core.unpack_action(packed_action[:, -1, ...])
 
             self.last_position = position
-            self.last_content = content
         
             # Decide whether to execute action or think more
             if ext_flag.item() > 0.5 or thought_steps >= 2:

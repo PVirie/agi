@@ -81,3 +81,23 @@ def extract_frame(frame_data: FrameData) -> torch.Tensor:
     frame = np.reshape(frame, (4*64*64))  # flatten to (4*64*64)
     
     return frame_data.state, frame, frame_data.score
+
+
+def pad(array: np.ndarray, target_length: int, pad_value: float = 0.0, append_to_front: bool = False) -> np.ndarray:
+    """
+    Pad a 2D array along the context dimension (1) to the target length
+    array has shape (batch_size, context_length, feature_size)
+    """
+
+    current_length = array.shape[1]
+    if current_length >= target_length:
+        return array
+    pad_length = target_length - current_length
+    pad_shape = (array.shape[0], pad_length, array.shape[2])
+    pad_array = np.full(pad_shape, pad_value, dtype=array.dtype)
+    if append_to_front:
+        padded_array = np.concatenate((pad_array, array), axis=1)
+    else:
+        padded_array = np.concatenate((array, pad_array), axis=1)
+    return padded_array
+    

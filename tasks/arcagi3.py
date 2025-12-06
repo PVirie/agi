@@ -29,7 +29,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from implementations.agents import register_agent_class, random_agent, model_53
 from implementations.core.torch.sfstct_core import SF_STCT_Core as Core
 from implementations.core.states import State_Sequence as Collector
-from implementations.rl_algorithms.torch.ppo import PPO as Learner
+from implementations.learning_algorithms.torch.ppo import PPO
+from implementations.learning_algorithms.torch.supervised import Basic_Learner
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -69,12 +70,17 @@ if __name__ == "__main__":
         device=device, 
         persistence_path=parameters_path
     ).to(device)
-    learner = Learner(
+    ppo_learner = PPO(
+        agent=agent_core, device=device,
+        persistence_path=parameters_path
+    )
+    supervised_learner = Basic_Learner(
         agent=agent_core, device=device,
         persistence_path=parameters_path
     )
     model_53_agent = model_53.Model_53(
-        agent_core=agent_core, trainer=learner, 
+        agent_core=agent_core, 
+        trainer=ppo_learner, supervised_trainer=supervised_learner,
         context_collector=Collector(max_history=8),
         action_collector=Collector(max_history=8)
     )

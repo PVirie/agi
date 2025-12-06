@@ -24,6 +24,8 @@ class SF_STCT_Core(Core, nn.Module):
         self.position_size = position_size
         self.content_size = channel * width * height
 
+        self.packed_action_size = 1 + 3 + self.content_size  # ext_flag + action + x + y + content
+
         self.width = width
         self.height = height
         self.channel = channel
@@ -228,21 +230,21 @@ class SF_STCT_Core(Core, nn.Module):
             y_onehot = torch.nn.functional.one_hot(action_y.long(), num_classes=self.height).float()
             position = self.position_step(torch.concat([last_position, action_onehot, x_onehot, y_onehot], dim=-1))
 
+        log_prob_flag = props_flag.log_prob(action_flag)
+        log_prob_action = props_action.log_prob(action_action)
         log_prob_x = props_x.log_prob(action_x)
         log_prob_y = props_y.log_prob(action_y)
-        log_prob_action = props_action.log_prob(action_action)
         log_prob_content = props_content.log_prob(action_content).sum(-1)
-        log_prob_flag = props_flag.log_prob(action_flag)
         batch_log_prob = log_prob_x + log_prob_y + log_prob_action + log_prob_content + log_prob_flag
         
         # clamp batch_log_prob to avoid too large negatives
         batch_log_prob = torch.clamp(batch_log_prob, min=-10, max=0)
 
+        entropy_flag = props_flag.entropy()
+        entropy_action = props_action.entropy()
         entropy_x = props_x.entropy()
         entropy_y = props_y.entropy()
-        entropy_action = props_action.entropy()
         entropy_content = props_content.entropy().sum(-1)
-        entropy_flag = props_flag.entropy()
         batch_entropy = entropy_x + entropy_y + entropy_action + entropy_content + entropy_flag
 
         # collapse last dimension
@@ -265,10 +267,65 @@ class SF_STCT_Core(Core, nn.Module):
         # packed_action has shape (batch, 1 + 3 + content_size)
         # return ext_flag, action_data... , content
 
-        ext_part = packed_action[:, 0].astype(float)
+        ext_part = packed_action[:, 0].astype(int)
         action = packed_action[:, 1].astype(int)
         x = packed_action[:, 2].astype(int)
         y = packed_action[:, 3].astype(int)
         content = packed_action[:, 4:].astype(float)
 
         return ext_part, action, x, y, content
+    
+
+    def make_batch_actions(self, b_ext=None, b_action=None, b_x=None, b_y=None, b_content=None):
+        # b_xxx has shape (batch, ...)
+        # return packed_action_seq of shape (batch, 1 + 3 + content_size) of type int along with a float mask
+        # replace none with zeros
+
+        batch_size = None
+        if b_ext is not None:
+            batch_size = b_ext.shape[0]
+        elif b_action is not None:
+            batch_size = b_action.shape[0]
+        elif b_x is not None:
+            batch_size = b_x.shape[0]
+        elif b_y is not None:
+            batch_size = b_y.shape[0]
+        elif b_content is not None:
+            batch_size = b_content.shape[0]
+        else:
+            raise ValueError("At least one of b_ext, b_action, b_x, b_y, b_content must be provided")
+        
+        if b_ext is None:
+            b_ext = np.zeros((batch_size,), dtype=int)
+            b_ext_mask = np.zeros((batch_size,), dtype=float)
+        if b_action is None:
+            b_action = np.zeros((batch_size,), dtype=int)
+            b_action_mask = np.zeros((batch_size,), dtype=float)
+        if b_x is None:
+            b_x = np.zeros((batch_size,), dtype=int)
+            b_x_mask = np.zeros((batch_size,), dtype=float)
+        if b_y is None:
+            b_y = np.zeros((batch_size,), dtype=int)
+            b_y_mask = np.zeros((batch_size,), dtype=float)
+        if b_content is None:
+            b_content = np.zeros((batch_size, self.content_size), dtype=float)
+            b_content_mask = np.zeros((batch_size, self.content_size), dtype=float)
+
+        packed_action = np.concatenate([
+            b_ext.reshape((batch_size, 1)),
+            b_action.reshape((batch_size, 1)),
+            b_x.reshape((batch_size, 1)),
+            b_y.reshape((batch_size, 1)),
+            b_content
+        ], axis=-1).astype(int)
+
+        mask = np.concatenate([
+            b_ext_mask.reshape((batch_size, 1)),
+            b_action_mask.reshape((batch_size, 1)), 
+            b_x_mask.reshape((batch_size, 1)),
+            b_y_mask.reshape((batch_size, 1)),
+            b_content_mask
+        ], axis=-1).astype(float)
+
+        return packed_action, mask
+    
