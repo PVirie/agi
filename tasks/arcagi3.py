@@ -19,7 +19,7 @@ from utilities.arcagi3.environments import Action_Type, Game_State_Type, ARCAGI3
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# from implementations.agents import random_agent, model_53
+from implementations.agents import random_agent, model_53
 from implementations.core.torch.sfstct_core import SF_STCT_Core as Core
 from implementations.core.states import State_Sequence as Collector
 from implementations.learning_algorithms.torch.ppo import PPO
@@ -30,13 +30,27 @@ torch.autograd.set_detect_anomaly(True)
 
 async def run():
     env = ARCAGI3_Environment()
+
+    agent_001 = random_agent.Random_Agent("agent_001")
+
     all_games_info = await env.list_games()
+    actions = [(Action_Type.RESET, ) for _ in range(3)]
 
-    await env.start(selected_game_ids=[game["game_id"] for game in all_games_info[:3]])
+    await env.start(selected_game_ids=[game["game_id"] for game in all_games_info[:4]])
 
-    states = await env.execute([(Action_Type.RESET, ) for _ in range(3)])
+    for _ in range(200):
+        states = await env.execute(actions)
+        actions = agent_001.choose_action(
+            latest_frames=[state.frame for state in states],
+            dones=[state.state != Game_State_Type.NOT_FINISHED for state in states],
+            scores=[state.score for state in states],
+            next_available_actions=[state.next_available_actions for state in states]
+        )
+        actions = [(a[0] if a[0] >= 0 else Action_Type.RESET, a[1], a[2]) for a in actions]
+        await asyncio.sleep(1)
 
     await env.close()
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -72,10 +86,6 @@ if __name__ == "__main__":
     os.makedirs(experiment_path, exist_ok=True)
 
     asyncio.run(run())
-
-
-    # agent_001 = random_agent.Random_Agent("agent_001")
-    # register_agent_class("small_agent", agent_001)
 
     # parameters_path = f"{experiment_path}/parameters"
     # os.makedirs(parameters_path, exist_ok=True)

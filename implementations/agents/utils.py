@@ -1,4 +1,3 @@
-from agents.structs import FrameData, GameAction, GameState # Make sure to change from `..` imports
 import torch
 import numpy as np
 
@@ -67,7 +66,7 @@ def convert_chw_to_4bit(frame_input):
     return output.astype(np.float32)
 
 
-def extract_frame(frame_data: FrameData) -> torch.Tensor:
+def extract_frame(frame_data) -> torch.Tensor:
     """Convert frame data to tensor format for the model."""
     # Convert frame to numpy array with color indices 0-15
 

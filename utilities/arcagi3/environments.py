@@ -31,15 +31,15 @@ class Action_Type(Enum):
                 Y coordinate (0-63)
             Action 7: Undo
     """
-    RESET = 8
-    RESTART = 9
-    A1 = 1
-    A2 = 2
-    A3 = 3
-    A4 = 4
-    A5 = 5
-    A6 = 6
-    A7 = 7
+    RESET = 7
+    RESTART = 8
+    A1 = 0
+    A2 = 1
+    A3 = 2
+    A4 = 3
+    A5 = 4
+    A6 = 5
+    A7 = 6
 
 
 action_type_to_str = {
@@ -150,7 +150,7 @@ class ARCAGI3_Environment:
         return_states = []
 
         for i, at in enumerate(actions):
-            action_type = at[0]
+            action_type = Action_Type(at[0])
             if action_type == Action_Type.RESET or action_type == Action_Type.RESTART:
                 response = self.request_session.post(
                     base_url + cmd_format_endpoint.format(cmd="RESET"),

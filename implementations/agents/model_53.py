@@ -1,18 +1,10 @@
-from agents.structs import FrameData, GameAction, GameState # Make sure to change from `..` imports
-from .decorator import Instantiable_Agent
-import logging
-import random
 import numpy as np
-
 from interfaces.learning import PPO_Learner, Supervised_Learner
 from interfaces.core import Core, Context_Collector
 
 from .utils import extract_frame, pad
 
-
-game_actions = [GameAction.ACTION1, GameAction.ACTION2, GameAction.ACTION3, GameAction.ACTION4, GameAction.ACTION5, GameAction.ACTION6, GameAction.ACTION7]
-
-class Model_53(Instantiable_Agent):
+class Model_53:
     
     def __init__(self, 
                  agent_core: Core, 
@@ -41,12 +33,7 @@ class Model_53(Instantiable_Agent):
         self.last_position = None
 
 
-    def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
-        # Your logic to determine if the game is finished
-        return latest_frame.state is GameState.WIN
-
-
-    def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> GameAction:
+    def choose_action(self, latest_frames, states, scores, next_available_actions):
 
         game_state, content_, score = extract_frame(latest_frame)
         reward = score - self.current_score
