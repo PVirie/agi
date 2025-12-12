@@ -6,6 +6,7 @@ import random
 import argparse
 import numpy as np
 import shutil
+import asyncio
 
 import torch
 
@@ -14,25 +15,28 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 APP_ROOT = os.getenv("APP_ROOT", "/app")
 
 import utilities
-
-arcagi_path = f"{APP_ROOT}/cache/ARC-AGI-3-Agents"
-os.makedirs(arcagi_path, exist_ok=True)
-if len(os.listdir(arcagi_path)) == 0:
-    subprocess.run(["git", "clone", "https://github.com/arcprize/ARC-AGI-3-Agents.git", f"{arcagi_path}"])
-    utilities.install_pyproject_toml(f"{arcagi_path}/pyproject.toml")
-    utilities.install("langchain-openai")
-
-sys.path.append(os.path.join(arcagi_path))
+from utilities.arcagi3.environments import Action_Type, Game_State_Type, ARCAGI3_Environment
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from implementations.agents import register_agent_class, random_agent, model_53
+# from implementations.agents import random_agent, model_53
 from implementations.core.torch.sfstct_core import SF_STCT_Core as Core
 from implementations.core.states import State_Sequence as Collector
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
 
 torch.autograd.set_detect_anomaly(True)
+
+
+async def run():
+    env = ARCAGI3_Environment()
+    all_games_info = await env.list_games()
+
+    await env.start(selected_game_ids=[game["game_id"] for game in all_games_info[:3]])
+
+    states = await env.execute([(Action_Type.RESET, ) for _ in range(3)])
+
+    await env.close()
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -44,6 +48,14 @@ if __name__ == "__main__":
     parser.add_argument("--no-thought",             "-nth", action="store_true",                help="Disable thoughts in favor of fixed steps.")
     parser.add_argument("--no-reference",           "-nrf", action="store_true",                help="Disable reference and use traditional PE.")
     args = parser.parse_args()
+
+    # print summary of arguments that are not default
+    logging.info("With arguments:")
+    for arg in vars(args):
+        value = getattr(args, arg)
+        default = parser.get_default(arg)
+        if value != default:
+            logging.info(f"  --{arg}: {value} (default: {default})")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
     random.seed(20251118)  
@@ -59,38 +71,33 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
-    agent_001 = random_agent.Random_Agent("agent_001")
-    register_agent_class("small_agent", agent_001)
+    asyncio.run(run())
 
-    parameters_path = f"{experiment_path}/parameters"
-    os.makedirs(parameters_path, exist_ok=True)
-    agent_core = Core(
-        action_size=6, position_size=16,
-        width=64, height=64, channel=4,
-        hidden_size=128, heads=8, layers=2,
-        device=device, 
-        persistence_path=parameters_path
-    ).to(device)
-    ppo_learner = PPO(
-        agent=agent_core, device=device,
-        persistence_path=parameters_path
-    )
-    supervised_learner = Basic_Learner(
-        agent=agent_core, device=device,
-        persistence_path=parameters_path
-    )
-    model_53_agent = model_53.Model_53(
-        agent_core=agent_core, 
-        trainer=ppo_learner, supervised_trainer=supervised_learner,
-        context_collector=Collector(max_history=8),
-        action_collector=Collector(max_history=8),
-        do_supervision=args.with_supervision
-    )
-    register_agent_class("model_53", model_53_agent)
 
-    from main import main
+    # agent_001 = random_agent.Random_Agent("agent_001")
+    # register_agent_class("small_agent", agent_001)
 
-    # override system argument
-    sys.argv = [sys.argv[0], "--agent", "model_53", "--game", "ls20"]
-
-    main()
+    # parameters_path = f"{experiment_path}/parameters"
+    # os.makedirs(parameters_path, exist_ok=True)
+    # agent_core = Core(
+    #     action_size=6, position_size=16,
+    #     width=64, height=64, channel=4,
+    #     hidden_size=128, heads=8, layers=2,
+    #     device=device, 
+    #     persistence_path=parameters_path
+    # ).to(device)
+    # ppo_learner = PPO(
+    #     agent=agent_core, device=device,
+    #     persistence_path=parameters_path
+    # )
+    # supervised_learner = Basic_Learner(
+    #     agent=agent_core, device=device,
+    #     persistence_path=parameters_path
+    # )
+    # model_53_agent = model_53.Model_53(
+    #     agent_core=agent_core, 
+    #     trainer=ppo_learner, supervised_trainer=supervised_learner,
+    #     context_collector=Collector(max_history=8),
+    #     action_collector=Collector(max_history=8),
+    #     do_supervision=args.with_supervision
+    # )

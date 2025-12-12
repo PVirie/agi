@@ -59,7 +59,7 @@ class Model_53(Instantiable_Agent):
             last_position = np.zeros((1, self.agent_core.position_size), dtype=np.float32)
         self.obs.append(np.array([[reward]], dtype=np.float32), last_position, np.reshape(content_, (1, -1)))
 
-        if reward != 0:
+        if reward != 0 or len(self.rewards) % 10 == 9 or next_done:
 
             # compute last value from the current context (past observation) and the recent observation
             # this one return batch leading tensors (batch)
