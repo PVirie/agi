@@ -20,6 +20,10 @@ class Model_53:
 
         self.do_supervision = do_supervision
 
+        self.reset()
+
+
+    def reset(self):
         self.trainer.reset(time=0.0)
         self.obs.clear()
         self.actions.clear()
@@ -28,25 +32,29 @@ class Model_53:
         self.next_dones = []
         self.values = []
 
-        self.current_score = 0
-
+        self.current_score = None
         self.last_position = None
 
 
-    def choose_action(self, latest_frames, states, scores, next_available_actions):
+    def choose_action(self, latest_frames, dones, scores, next_available_actions):
 
-        game_state, content_, score = extract_frame(latest_frame)
-        reward = score - self.current_score
-        self.current_score = score
-        next_done = game_state in [GameState.GAME_OVER, GameState.WIN]
+        batch_size = len(scores)
 
-        # content must be batch leading tensor (1, ...)
+        if self.current_score is None:
+            self.current_score = [0 for _ in scores]
+
+        content_ = extract_frame(latest_frames)
+        reward = np.array([score - self.current_score[i] for i, score in enumerate(scores)])
+        self.current_score = [score for score in scores]
+        next_done = [done for done in dones]
+
+        # content must be batch leading tensor (batch_size, ...)
         last_position = self.last_position
         if last_position is None:
-            last_position = np.zeros((1, self.agent_core.position_size), dtype=np.float32)
-        self.obs.append(np.array([[reward]], dtype=np.float32), last_position, np.reshape(content_, (1, -1)))
+            last_position = np.zeros((batch_size, self.agent_core.position_size), dtype=np.float32)
+        self.obs.append(np.reshape(reward, (-1, 1)), last_position, np.reshape(content_, (batch_size, -1)))
 
-        if reward != 0 or len(self.rewards) % 10 == 9 or next_done:
+        if any(dones) or any([r != 0 for r in reward]):
 
             # compute last value from the current context (past observation) and the recent observation
             # this one return batch leading tensors (batch)
@@ -58,7 +66,7 @@ class Model_53:
             # learn Supervise content
             if self.do_supervision:
                 target_actions, last_mask = self.agent_core.make_batch_actions(
-                    b_content=np.reshape(content_, (1, -1))
+                    b_content=np.reshape(content_, (batch_size, -1))
                 )
                 target_actions = pad(np.expand_dims(target_actions, axis=1), len(self.rewards), pad_value=0, append_to_front=True)
                 last_mask = pad(np.expand_dims(last_mask, axis=1), len(self.rewards), pad_value=0.0, append_to_front=True)
@@ -93,13 +101,6 @@ class Model_53:
             self.next_dones = self.next_dones[left_over_slide]
             self.values = self.values[left_over_slide]
 
-        if game_state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
-            action = GameAction.RESET
-            action.reasoning = f"Game is over or not played, choosing RESET"
-            self.obs.clear()
-            self.actions.clear()
-            self.last_position = None
-            return action
     
         thought_steps = 1
         while True:
@@ -115,8 +116,8 @@ class Model_53:
             position = position[:, -1, ...]
             self.actions.append(packed_action[:, -1, ...])
             self.logprobs.append(newlogprob[:, -1, ...])
-            self.rewards.append([0])
-            self.next_dones.append([False])
+            self.rewards.append([0 for _ in range(batch_size)])
+            self.next_dones.append([False for _ in range(batch_size)])
             self.values.append(newvalue[:, -1, ...])
 
             # extract output here
@@ -125,24 +126,13 @@ class Model_53:
             self.last_position = position
         
             # Decide whether to execute action or think more
-            if ext_flag.item() > 0.5 or thought_steps >= 2:
+            # right now fixed for all
+            if thought_steps >= 1:
                 break
 
-            self.obs.append(np.zeros((1, 1), dtype=np.float32), position, content)
+            self.obs.append(np.zeros((batch_size, 1), dtype=np.float32), position, content)
             thought_steps += 1
 
 
-        action = game_actions[a.item()]
-
-        # Add reasoning for simple actions
-        if action.is_simple():
-            # action.reasoning = f"Chose action {action.name}."
-            pass
-        # For complex actions, set coordinates
-        elif action.is_complex():
-            action.set_data({
-                "x": x.item(),
-                "y": y.item()
-            })
-        
+        action = [(a[i].item(), x[i].item(), y[i].item()) for i in range(batch_size)]
         return action

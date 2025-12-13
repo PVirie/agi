@@ -66,20 +66,19 @@ def convert_chw_to_4bit(frame_input):
     return output.astype(np.float32)
 
 
-def extract_frame(frame_data) -> torch.Tensor:
+def extract_frame(frame_data) -> np.ndarray:
     """Convert frame data to tensor format for the model."""
     # Convert frame to numpy array with color indices 0-15
 
-    if frame_data.is_empty():
-        # Return a zero tensor if frame is empty
-        return frame_data.state, np.zeros((4*64*64), dtype=float), frame_data.score
-
-    last_frame = frame_data.frame[-1] # get only last frame
-    frame = np.array(last_frame, dtype=np.int64)  # shape (H, W)
-    frame = convert_chw_to_4bit(frame)  # shape (4, H, W)
-    frame = np.reshape(frame, (4*64*64))  # flatten to (4*64*64)
+    out_frames = []
+    for frames in frame_data:
+        last_frame = frames[-1] # get only last frame
+        frame = np.array(last_frame, dtype=np.int64)  # shape (H, W)
+        frame = convert_chw_to_4bit(frame)  # shape (4, H, W)
+        frame = np.reshape(frame, (4*64*64))  # flatten to (4*64*64)
+        out_frames.append(frame)
     
-    return frame_data.state, frame, frame_data.score
+    return np.stack(out_frames, axis=0)  # shape (batch_size, 4*64*64)
 
 
 def pad(array: np.ndarray, target_length: int, pad_value: float = 0.0, append_to_front: bool = False) -> np.ndarray:

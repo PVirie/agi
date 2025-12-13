@@ -28,10 +28,7 @@ from implementations.learning_algorithms.torch.supervised import Basic_Learner
 torch.autograd.set_detect_anomaly(True)
 
 
-async def run():
-    env = ARCAGI3_Environment()
-
-    agent_001 = random_agent.Random_Agent("agent_001")
+async def run(env, agent):
 
     all_games_info = await env.list_games()
     actions = [(Action_Type.RESET, ) for _ in range(3)]
@@ -40,13 +37,13 @@ async def run():
 
     for _ in range(200):
         states = await env.execute(actions)
-        actions = agent_001.choose_action(
+        actions = agent.choose_action(
             latest_frames=[state.frame for state in states],
             dones=[state.state != Game_State_Type.NOT_FINISHED for state in states],
             scores=[state.score for state in states],
             next_available_actions=[state.next_available_actions for state in states]
         )
-        actions = [(a[0] if a[0] >= 0 else Action_Type.RESET, a[1], a[2]) for a in actions]
+        actions = [(a[0] if s.state == Game_State_Type.NOT_FINISHED else Action_Type.RESET, a[1], a[2]) for a,s in zip(actions, states)]
         await asyncio.sleep(1)
 
     await env.close()
@@ -85,29 +82,33 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
-    asyncio.run(run())
+    env = ARCAGI3_Environment()
 
-    # parameters_path = f"{experiment_path}/parameters"
-    # os.makedirs(parameters_path, exist_ok=True)
-    # agent_core = Core(
-    #     action_size=6, position_size=16,
-    #     width=64, height=64, channel=4,
-    #     hidden_size=128, heads=8, layers=2,
-    #     device=device, 
-    #     persistence_path=parameters_path
-    # ).to(device)
-    # ppo_learner = PPO(
-    #     agent=agent_core, device=device,
-    #     persistence_path=parameters_path
-    # )
-    # supervised_learner = Basic_Learner(
-    #     agent=agent_core, device=device,
-    #     persistence_path=parameters_path
-    # )
-    # model_53_agent = model_53.Model_53(
-    #     agent_core=agent_core, 
-    #     trainer=ppo_learner, supervised_trainer=supervised_learner,
-    #     context_collector=Collector(max_history=8),
-    #     action_collector=Collector(max_history=8),
-    #     do_supervision=args.with_supervision
-    # )
+    random_agent = random_agent.Random_Agent("agent_001")
+
+    parameters_path = f"{experiment_path}/parameters"
+    os.makedirs(parameters_path, exist_ok=True)
+    agent_core = Core(
+        action_size=6, position_size=16,
+        width=64, height=64, channel=4,
+        hidden_size=128, heads=8, layers=2,
+        device=device, 
+        persistence_path=parameters_path
+    ).to(device)
+    ppo_learner = PPO(
+        agent=agent_core, device=device,
+        persistence_path=parameters_path
+    )
+    supervised_learner = Basic_Learner(
+        agent=agent_core, device=device,
+        persistence_path=parameters_path
+    )
+    model_53_agent = model_53.Model_53(
+        agent_core=agent_core, 
+        trainer=ppo_learner, supervised_trainer=supervised_learner,
+        context_collector=Collector(max_history=8),
+        action_collector=Collector(max_history=8),
+        do_supervision=args.with_supervision
+    )
+
+    asyncio.run(run(env, model_53_agent))
