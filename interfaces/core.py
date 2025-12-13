@@ -26,6 +26,14 @@ class Context_Collector(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def update_last(self, *args, **kwargs):
+        pass
+
+    @abc.abstractmethod
+    def get_last(self):
+        pass
+
+    @abc.abstractmethod
     def clear(self):
         pass
 

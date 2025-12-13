@@ -32,6 +32,23 @@ class State_Sequence(Context_Collector):
         self.mask.append(1.0)
 
 
+    def update_last(self, *args, **kwargs):
+        """
+            all arguments are np arrays of shape (batch_size, -1)
+        """
+        all_args = []
+        for arg in args:
+            all_args.append(arg)
+        for key in kwargs:
+            all_args.append(kwargs[key])
+
+        self.data[-1] =  np.concatenate(all_args, axis=1)
+
+
+    def get_last(self):
+        return self.data[-1]
+
+
     def clear(self):
         self.data = []
         self.mask = []

@@ -20,3 +20,4 @@ An attempt to solve AGI.
 -   [x] Save and load model checkpoints
 -   [x] Supervised learning module (Teacher forcing)
 -   [ ] Padding environment (for variable input lengths)
+-   [x] Asynchronous external action handle

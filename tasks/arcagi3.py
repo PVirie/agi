@@ -31,19 +31,26 @@ torch.autograd.set_detect_anomaly(True)
 async def run(env, agent):
 
     all_games_info = await env.list_games()
-    actions = [(Action_Type.RESET, ) for _ in range(3)]
+    actions = [(Action_Type.RESET, ) for _ in range(4)]
 
     await env.start(selected_game_ids=[game["game_id"] for game in all_games_info[:4]])
 
     for _ in range(200):
         states = await env.execute(actions)
+        next_done = [
+            s.state == Game_State_Type.WIN or s.state == Game_State_Type.GAME_OVER for s in states
+        ]
         actions = agent.choose_action(
+            idles=[s.state == Game_State_Type.IDLE for s in states],
             latest_frames=[state.frame for state in states],
-            dones=[state.state != Game_State_Type.NOT_FINISHED for state in states],
+            dones=next_done,
             scores=[state.score for state in states],
             next_available_actions=[state.next_available_actions for state in states]
         )
-        actions = [(a[0] if s.state == Game_State_Type.NOT_FINISHED else Action_Type.RESET, a[1], a[2]) for a,s in zip(actions, states)]
+        actions = [
+            (Action_Type.RESET if d else a[0], a[1], a[2]) if a is not None else None
+            for a,d in zip(actions, next_done)
+        ]
         await asyncio.sleep(1)
 
     await env.close()

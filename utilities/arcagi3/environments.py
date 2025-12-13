@@ -54,6 +54,7 @@ action_type_to_str = {
 
 
 class Game_State_Type(str, Enum):
+    IDLE = "IDLE"
     NOT_FINISHED = "NOT_FINISHED"
     NOT_STARTED = "NOT_STARTED"
     GAME_OVER = "GAME_OVER"
@@ -81,6 +82,8 @@ class ARCAGI3_Environment:
         self.is_started = False
         self.selected_game_ids = None
         self.guids = None
+
+        self.return_states = None
 
 
     async def list_games(self):
@@ -120,6 +123,9 @@ class ARCAGI3_Environment:
 
         # set flag
         self.is_started = True
+        self.return_states = [
+            Game_State(frame=None, state=Game_State_Type.NOT_STARTED.value, score=0, win_score=0, next_available_actions=[]) for _ in selected_game_ids
+        ]
     
 
     async def close(self):
@@ -134,6 +140,7 @@ class ARCAGI3_Environment:
 
         # set flag
         self.is_started = False
+        self.return_states = None
 
         # return report
         return response.json()
@@ -143,13 +150,16 @@ class ARCAGI3_Environment:
         """
         actions is a list of tuple [(action_type: Action_Type, x: int, y: int)]
         allowing executing multiple games in one call
+        if the i-th action is None, skip executing that game and return its last state
         """
         if not self.is_started:
             raise Exception("Environment not started. Call start() before execute().")
 
-        return_states = []
-
         for i, at in enumerate(actions):
+            if at is None:
+                self.return_states[i].state = Game_State_Type.IDLE
+                continue
+            
             action_type = Action_Type(at[0])
             if action_type == Action_Type.RESET or action_type == Action_Type.RESTART:
                 response = self.request_session.post(
@@ -188,7 +198,7 @@ class ARCAGI3_Environment:
                 win_score=response_json.get("win_score", 0),
                 next_available_actions=response_json.get("next_available_actions", [])
             )
-            return_states.append(game_state)
+            self.return_states[i] = game_state
         
-        return return_states
+        return self.return_states
     
