@@ -7,6 +7,7 @@ import argparse
 import numpy as np
 import shutil
 import asyncio
+import time
 
 import torch
 
@@ -35,7 +36,9 @@ async def run(env, agent):
 
     await env.start(selected_game_ids=[game["game_id"] for game in all_games_info[:4]])
 
-    for _ in range(200):
+    start_time = time.perf_counter()
+    steps = 0
+    while True:
         states = await env.execute(actions)
         next_done = [
             s.state == Game_State_Type.WIN or s.state == Game_State_Type.GAME_OVER for s in states
@@ -53,6 +56,22 @@ async def run(env, agent):
         ]
         await asyncio.sleep(1)
 
+        elapsed_time = time.perf_counter() - start_time
+        if elapsed_time > max_running_time:  # run for 5 minutes
+            logging.info("Max running time reached, stopping the experiment.")
+            break
+
+        steps += 1
+        if steps % 10 == 0:
+            logging.info(f"{steps}| Selected actions: {actions}")
+
+        if steps % 100 == 0:
+            # compute estimated time left
+            logging.info(f"Completed {steps} steps.")
+            logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
+            logging.info(f"Expected time left: {max_running_time - elapsed_time:.2f} seconds.")
+
+
     await env.close()
 
 
@@ -61,6 +80,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--reset",                  "-r",   action="store_true")
+    parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
     parser.add_argument("--with-supervision",       "-svl", action="store_true",                help="Enable supervised learning along with PPO.")
     parser.add_argument("--no-thought",             "-nth", action="store_true",                help="Disable thoughts in favor of fixed steps.")
@@ -74,6 +94,12 @@ if __name__ == "__main__":
         default = parser.get_default(arg)
         if value != default:
             logging.info(f"  --{arg}: {value} (default: {default})")
+
+    max_running_time = int(args.hours * 3600.0)  # in seconds
+    hours = max_running_time // 3600
+    minutes = (max_running_time % 3600) // 60
+    seconds = max_running_time % 60
+    logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
     random.seed(20251118)  
