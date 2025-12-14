@@ -8,7 +8,7 @@ class Random_Agent:
         self.id = id
 
 
-    def choose_action(self, idles, latest_frames, dones, scores, next_available_actions):
+    def choose_action(self, idles, dones, truncates, latest_frames, scores, next_available_actions):
         logging.info(f"Random agent {self.id} choosing action...")
         actions = []
         for d in dones:

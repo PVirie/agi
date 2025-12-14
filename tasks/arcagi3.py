@@ -43,10 +43,14 @@ async def run(env, agent):
         next_done = [
             s.state == Game_State_Type.WIN or s.state == Game_State_Type.GAME_OVER for s in states
         ]
+        next_truncate = [
+            s.state == Game_State_Type.TRUNCATE for s in states
+        ]
         actions = agent.choose_action(
             idles=[s.state == Game_State_Type.IDLE for s in states],
-            latest_frames=[state.frame for state in states],
             dones=next_done,
+            truncates=next_truncate,
+            latest_frames=[state.frame for state in states],
             scores=[state.score for state in states],
             next_available_actions=[state.next_available_actions for state in states]
         )
@@ -57,13 +61,13 @@ async def run(env, agent):
         await asyncio.sleep(1)
 
         elapsed_time = time.perf_counter() - start_time
-        if elapsed_time > max_running_time:  # run for 5 minutes
+        if elapsed_time > max_running_time:  # run for the specified max time
             logging.info("Max running time reached, stopping the experiment.")
             break
 
         steps += 1
         if steps % 10 == 0:
-            logging.info(f"{steps}| Selected actions: {actions}")
+            logging.info(f"{steps}| Selected actions: {actions}; Scores: {[s.score for s in states]}")
 
         if steps % 100 == 0:
             # compute estimated time left

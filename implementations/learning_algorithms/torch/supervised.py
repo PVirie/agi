@@ -20,7 +20,7 @@ class Basic_Learner(Supervised_Learner):
         self.lr = 3e-4
         self.max_grad_norm = 0.5
 
-        self.update_epochs = 10
+        self.update_epochs = 1
 
         self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
         

@@ -36,7 +36,7 @@ class Model_53:
         self.thought_steps = None
 
 
-    def choose_action(self, idles, latest_frames, dones, scores, next_available_actions):
+    def choose_action(self, idles, dones, truncates, latest_frames, scores, next_available_actions):
 
         batch_size = len(scores)
 
@@ -53,6 +53,7 @@ class Model_53:
         reward = np.array([score - self.current_score[i] for i, score in enumerate(scores)])
         self.current_score = [score for score in scores] # copy
         next_done = [done for done in dones] # copy
+        truncated = [truncate for truncate in truncates] # copy
 
         for i, idle in enumerate(idles):
             if not idle:
@@ -63,29 +64,30 @@ class Model_53:
                     np.reshape(content, (batch_size, -1))
                 )
 
-        if any(next_done) or any([r != 0 for r in reward]):
+        # learn Supervise content
+        if self.do_supervision and len(self.rewards) > 0:
+            target_actions, last_mask = self.agent_core.make_batch_actions(
+                b_content=np.reshape(content, (batch_size, -1))
+            )
+            non_idle_mask = np.array([[0.0] if idle else [1.0] for idle in idles], dtype=np.float32)
+            target_actions = pad(np.expand_dims(target_actions, axis=1), len(self.rewards), pad_value=0, append_to_front=True)
+            supervised_mask = pad(np.expand_dims(last_mask * non_idle_mask, axis=1), len(self.rewards), pad_value=0.0, append_to_front=True)
+            self.supervised_trainer.train(
+                obs=self.obs[:-1].make_batch(batch_led=True),
+                actions=self.actions.make_batch(batch_led=True),
+                target_actions=target_actions,
+                masks=supervised_mask
+            )
 
+        if (any(next_done) or any(truncated) or any([r != 0 for r in reward])) and len(self.rewards) > 0:
+            
             # compute last value from the current context (past observation) and the recent observation
-            # this one return batch leading tensors (batch)
+            # this one return batch leading tensors (batch, 1)
             last_value = self.agent_core.get_latest_value(
                 self.obs.make_batch(batch_led=True),
                 self.actions.make_batch(batch_led=True, append_last=True),
             )
 
-            # learn Supervise content
-            if self.do_supervision:
-                target_actions, last_mask = self.agent_core.make_batch_actions(
-                    b_content=np.reshape(content, (batch_size, -1))
-                )
-                target_actions = pad(np.expand_dims(target_actions, axis=1), len(self.rewards), pad_value=0, append_to_front=True)
-                last_mask = pad(np.expand_dims(last_mask, axis=1), len(self.rewards), pad_value=0.0, append_to_front=True)
-                self.supervised_trainer.train(
-                    obs=self.obs[:-1].make_batch(batch_led=True),
-                    actions=self.actions.make_batch(batch_led=True),
-                    target_actions=target_actions,
-                    masks=last_mask
-                )
-            
             # learn RL
             self.trainer.learn(
                 self.obs[:-1].make_batch(batch_led=True), 
@@ -94,7 +96,7 @@ class Model_53:
                 self.rewards, 
                 self.values, 
                 self.next_dones, 
-                np.reshape(last_value, (-1)), [next_done],
+                np.reshape(last_value, (-1)), next_done,
                 masks=self.actions.make_mask(batch_led=True)
             )
 
@@ -135,8 +137,8 @@ class Model_53:
         
         # if next done, reset score and thought steps
         action = []
-        for i, d in enumerate(dones):
-            if d:
+        for i, (d, t) in enumerate(zip(dones, truncates)):
+            if d or t:
                 self.current_score[i] = 0
                 self.thought_steps[i] = 0
             else:
@@ -144,6 +146,7 @@ class Model_53:
 
             if ext_flag[i].item() == 1 or self.thought_steps[i] >= 2:
                 action.append((a[i].item(), x[i].item(), y[i].item()))
+                self.thought_steps[i] = 0
             else:
                 action.append(None)
 

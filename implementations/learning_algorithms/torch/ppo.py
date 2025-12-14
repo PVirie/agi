@@ -72,7 +72,7 @@ class PPO(PPO_Learner):
         values: list np array of shape (batch_size)
         next_dones: list of bools of length batch_size
         last_value: np array of shape (batch_size)
-        last_done: list of bools of length batch_size
+        last_done: bools of length batch_size
         masks: np array of shape (batch_size, context_length)
         """
         # Use dim 0 as context length dimension

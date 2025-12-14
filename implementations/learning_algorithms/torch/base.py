@@ -17,7 +17,7 @@ def convert_list_of_np_array_to_float_tensor(np_array_list: List[np.ndarray], de
     return torch.stack(before_transpose, dim=1)
 
 
-def convert_list_of_float_to_float_tensor(float_list: List[float], device) -> torch.Tensor:
+def convert_list_of_float_to_float_tensor(float_list: List[List[float]], device) -> torch.Tensor:
     before_transpose = torch.tensor(float_list, dtype=torch.float32).to(device)
     return torch.transpose(before_transpose, 0, 1)
 

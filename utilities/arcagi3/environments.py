@@ -55,10 +55,11 @@ action_type_to_str = {
 
 class Game_State_Type(str, Enum):
     IDLE = "IDLE"
-    NOT_FINISHED = "NOT_FINISHED"
-    NOT_STARTED = "NOT_STARTED"
+    TRUNCATE = "TRUNCATE"
     GAME_OVER = "GAME_OVER"
     WIN = "WIN"
+    NOT_FINISHED = "NOT_FINISHED"
+    NOT_STARTED = "NOT_STARTED"
 
 
 class Game_State:
