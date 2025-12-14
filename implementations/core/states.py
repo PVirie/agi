@@ -79,6 +79,7 @@ class State_Sequence(Context_Collector):
 
     def __getitem__(self, slice):
         # get (start-max_history):stop slice
+        # WARNING: if you do this [x:y], the returned sequence will be [x - max_history : y] !!!
         start = slice.start if slice.start is not None else 0
         stop = slice.stop if slice.stop is not None else len(self.data)
         start = max(0, start - self.max_history)

@@ -63,7 +63,7 @@ class Basic_Learner(Supervised_Learner):
                 context=obs, 
                 action=actions,
                 target_action=target_actions,
-                mask=masks
+                f_mask=masks
             )
 
             # now attempt to minimize negative log likelihood

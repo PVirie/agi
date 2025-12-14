@@ -66,35 +66,57 @@ class Model_53:
         last_truncated = [t for t in last_truncates] # copy
         last_idle = [idle for idle in last_idles] # copy
 
-        for i, (idle, t, idle) in enumerate(zip(last_idles, last_truncates, last_idles)):
+        update_mask = np.zeros((batch_size, 1 + self.agent_core.position_size + self.agent_core.content_size), dtype=np.float32)
+        for i, (idle, t) in enumerate(zip(last_idles, last_truncates)):
             if not idle:
-                # replace the reward and content
-                self.obs.update_last(
-                    np.reshape(reward, (-1, 1)), 
-                    self.obs.get_last()[:, 1:1 + self.agent_core.position_size],
-                    np.reshape(content, (batch_size, -1))
-                )
-
+                # update only reward and content
+                update_mask[i, 0] = 1.0
+                update_mask[i, 1 + self.agent_core.position_size:] = 1.0
             self.last_truncates[-1][i] = t
             self.last_idles[-1][i] = idle
 
-        # learn Supervise content
-        if self.do_supervision and current_cl > 0:
-            target_actions, last_mask = self.agent_core.make_batch_actions(
-                b_content=np.reshape(content, (batch_size, -1))
-            )
-            non_idle_mask = np.array([[0.0] if idle else [1.0] for idle in last_idles], dtype=np.float32)
-            target_actions = pad(np.expand_dims(target_actions, axis=1), current_cl, pad_value=0, append_to_front=True)
-            supervised_mask = pad(np.expand_dims(last_mask * non_idle_mask, axis=1), current_cl, pad_value=0.0, append_to_front=True)
-            self.supervised_trainer.train(
-                obs=self.obs[:-1].make_batch(batch_led=True),
-                actions=self.actions.make_batch(batch_led=True),
-                target_actions=target_actions,
-                masks=supervised_mask
-            )
+        # replace the reward and content
+        new_value = np.concatenate([
+            np.reshape(reward, (-1, 1)), 
+            np.zeros((batch_size, self.agent_core.position_size), dtype=np.float32), 
+            np.reshape(content, (batch_size, -1))], axis=1)
+        update_value = self.obs.get_last() * (1.0 - update_mask) + new_value * update_mask
+        self.obs.update_last(update_value)
+
 
         if (any(next_done) or any(last_truncated) or any([r != 0 for r in reward]) or force_train) and current_cl > 1:
             
+            if self.do_supervision:
+                 # learn Supervise content
+
+                # make action format
+                recorded_actions = self.actions.make_batch(batch_led=True)
+                last_actions = self.agent_core.pack_action(
+                    b_content=np.reshape(content, (batch_size, -1))
+                )
+                target_actions = np.concatenate([
+                    recorded_actions[:, 1:, :],
+                    np.reshape(last_actions, (batch_size, 1, -1))
+                ], axis=1)
+                
+                # masks has shape (batch_size, context_length)
+                masks = self.actions.make_mask(batch_led=True)
+                masks = masks * (1.0 - np.stack(self.last_idles[1:], axis=1, dtype=np.float32))
+                # make feature mask of shape (batch_size, context_length, 5)
+                # and filter only content part
+                masks = np.expand_dims(masks, axis=-1)
+                masks = np.concatenate([
+                    np.zeros((batch_size, masks.shape[1], 4), dtype=np.float32),
+                    masks
+                ], axis=-1)
+
+                self.supervised_trainer.train(
+                    obs=self.obs[:-1].make_batch(batch_led=True),
+                    actions=recorded_actions,
+                    target_actions=target_actions,
+                    masks=masks
+                )
+
             # compute last value from the current context (past observation) and the recent observation
             # this one return batch leading tensors (batch, 1)
             last_value = self.agent_core.get_latest_value(

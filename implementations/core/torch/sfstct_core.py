@@ -264,23 +264,29 @@ class SF_STCT_Core(Core, nn.Module):
         return action, position, batch_log_prob, batch_entropy, batch_value
 
 
-    def get_log_probability(self, context, action, target_action=None, mask=None):
+    def get_log_probability(self, context, action, target_action=None, f_mask=None):
         """
-        Mask has shape (batch, context_size, 5) see make_batch_actions
+        context has shape (batch, context_size, ...)
+        action has shape (batch, context_size, 1 + 3 + content_size)
+        target_action has shape (batch, context_size, 1 + 3 + content_size)
+        f_mask has shape (batch, context_size, 5)
         """
+
+        batch_size = context.size(0)
+        context_size = context.size(1)
 
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
         if action is None:
-            action = torch.zeros((context.size(0), context.size(1), 1 + 3 + self.content_size), dtype=torch.float32).to(self.device)
+            action = torch.zeros((batch_size, context_size, 1 + 3 + self.content_size), dtype=torch.float32).to(self.device)
         elif isinstance(action, np.ndarray):
             action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
-        if mask is None:
-            mask = torch.ones((context.size(0), context.size(1), 5), dtype=torch.float32).to(self.device)
-        elif isinstance(mask, np.ndarray):
-            mask = torch.tensor(mask, dtype=torch.float32).to(self.device)
+        if f_mask is None:
+            f_mask = torch.ones((batch_size, context_size, 5), dtype=torch.float32).to(self.device)
+        elif isinstance(f_mask, np.ndarray):
+            f_mask = torch.tensor(f_mask, dtype=torch.float32).to(self.device)
 
         temporal_feat = self.__compute(context, action)
 
@@ -312,7 +318,7 @@ class SF_STCT_Core(Core, nn.Module):
         log_prob_content = props_content.log_prob(action_content).sum(-1)
 
         log_prob = torch.stack([log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content], dim=-1)
-        masked_log_prob = log_prob * mask
+        masked_log_prob = log_prob * f_mask
         sum_log_prob = torch.sum(masked_log_prob, dim=-1)
 
         return sum_log_prob
@@ -331,10 +337,9 @@ class SF_STCT_Core(Core, nn.Module):
         return ext_part, action, x, y, content
     
 
-    def make_batch_actions(self, b_ext=None, b_action=None, b_x=None, b_y=None, b_content=None):
+    def pack_action(self, b_ext=None, b_action=None, b_x=None, b_y=None, b_content=None):
         # b_xxx has shape (batch, ...)
         # return packed_action_seq of shape (batch, 1 + 3 + content_size) of type int
-        # return mask of shape (batch, 5) of type float
         # replace none with zeros
 
         batch_size = None
@@ -351,7 +356,6 @@ class SF_STCT_Core(Core, nn.Module):
         else:
             raise ValueError("At least one of b_ext, b_action, b_x, b_y, b_content must be provided")
         
-        mask = np.zeros((batch_size, 5), dtype=float)
         if b_ext is None:
             b_ext = np.zeros((batch_size,), dtype=int)
         if b_action is None:
@@ -363,17 +367,6 @@ class SF_STCT_Core(Core, nn.Module):
         if b_content is None:
             b_content = np.zeros((batch_size, self.content_size), dtype=float)
 
-        if b_ext is not None:
-            mask[:, 0] = 1.0
-        if b_action is not None:
-            mask[:, 1] = 1.0
-        if b_x is not None:
-            mask[:, 2] = 1.0
-        if b_y is not None:
-            mask[:, 3] = 1.0
-        if b_content is not None:
-            mask[:, 4] = 1.0
-
         packed_action = np.concatenate([
             b_ext.reshape((batch_size, 1)),
             b_action.reshape((batch_size, 1)),
@@ -382,5 +375,5 @@ class SF_STCT_Core(Core, nn.Module):
             b_content
         ], axis=-1).astype(int)
 
-        return packed_action, mask
+        return packed_action
     
