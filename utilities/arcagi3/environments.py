@@ -2,6 +2,7 @@ import os
 import requests
 from enum import Enum
 from typing import List
+import logging
 
 API_KEY = os.getenv("ARC_API_KEY", "")
 HOST = os.getenv("HOST", "three.arcprize.org")
@@ -186,11 +187,28 @@ class ARCAGI3_Environment:
                     json_payload["x"] = x
                     json_payload["y"] = y
 
-                response = self.request_session.post(
-                    base_url + cmd_format_endpoint.format(cmd=action_type_to_str[action_type]),
-                    json=json_payload
-                )
-                response_json = response.json()
+                try:
+                    response = self.request_session.post(
+                        base_url + cmd_format_endpoint.format(cmd=action_type_to_str[action_type]),
+                        json=json_payload
+                    )
+                    response.raise_for_status()
+                    response_json = response.json()
+                except Exception as e:
+                    logging.warning(f"Error executing action {action_type} for game {self.selected_game_ids[i]}: {e}")
+                    logging.info(f"Reset and set state to TRUNCATED.")
+                    response = self.request_session.post(
+                        base_url + cmd_format_endpoint.format(cmd="RESET"),
+                        json={
+                            "card_id": self.score_card_id,
+                            "game_id": self.selected_game_ids[i],
+                            "guid": self.guids[i]
+                        }
+                    )
+                    response.raise_for_status()
+                    response_json = response.json()
+                    response_json["state"] = Game_State_Type.TRUNCATED
+                    continue
 
             game_state = Game_State(
                 frame=response_json.get("frame", None),
