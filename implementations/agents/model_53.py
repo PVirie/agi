@@ -32,6 +32,7 @@ class Model_53:
         self.rewards = []
         self.next_dones = []
         self.last_truncates = []
+        self.last_idles = []
 
         self.current_score = None
         self.thought_steps = None
@@ -50,7 +51,8 @@ class Model_53:
                 np.zeros((batch_size, self.agent_core.position_size), dtype=np.float32), 
                 np.zeros((batch_size, self.agent_core.content_size), dtype=np.float32)
             )
-            self.last_truncates.append([False for _ in range(batch_size)])
+            self.last_truncates.append([True for _ in range(batch_size)])
+            self.last_idles.append([False for _ in range(batch_size)])
 
         for i, t in enumerate(last_truncates):
             if t:
@@ -62,8 +64,9 @@ class Model_53:
         self.current_score = [s for s in scores] # copy
         next_done = [d for d in next_dones] # copy
         last_truncated = [t for t in last_truncates] # copy
+        last_idle = [idle for idle in last_idles] # copy
 
-        for i, (idle, t) in enumerate(zip(last_idles, last_truncates)):
+        for i, (idle, t, idle) in enumerate(zip(last_idles, last_truncates, last_idles)):
             if not idle:
                 # replace the reward and content
                 self.obs.update_last(
@@ -73,6 +76,7 @@ class Model_53:
                 )
 
             self.last_truncates[-1][i] = t
+            self.last_idles[-1][i] = idle
 
         # learn Supervise content
         if self.do_supervision and current_cl > 0:
@@ -100,11 +104,8 @@ class Model_53:
 
             # masks has shape (batch_size, context_length)
             masks = self.actions.make_mask(batch_led=True)
-            masks = masks * (1.0 - np.stack(self.last_truncates[:-1], axis=1, dtype=np.float32))
-            # handle last truncated episodes
-            for i, t in enumerate(last_truncated):
-                if t:
-                    masks[i, -1] = 0.0
+            # need to shift last_truncates by 1 to the left, because t signals whether t-1 is truncated
+            masks = masks * (1.0 - np.stack(self.last_truncates[1:], axis=1, dtype=np.float32))
 
             # learn RL
             self.trainer.learn(
@@ -133,6 +134,7 @@ class Model_53:
 
             left_over_slide = self.obs.mark(skip_last=True)
             self.last_truncates = self.last_truncates[left_over_slide]
+            self.last_idles = self.last_idles[left_over_slide]
 
 
         # Choose a random action
@@ -157,6 +159,7 @@ class Model_53:
         position = position[:, -1, ...]
         self.obs.append(np.zeros((batch_size, 1), dtype=np.float32), position, content)
         self.last_truncates.append([False for _ in range(batch_size)])
+        self.last_idles.append([ext_flag[i].item() == 0 for i in range(batch_size)])
         
         # if next done, reset score and thought steps
         action = []
