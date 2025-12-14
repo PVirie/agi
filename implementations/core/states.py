@@ -104,7 +104,7 @@ class State_Sequence(Context_Collector):
     
 
     def make_mask(self, batch_led=True, append_last=False):
-        # return tensor of shape (batch_size, len(data), :) if batch_led else (len(data), batch_size, :)
+        # return tensor of shape (batch_size, len(data)) if batch_led else (len(data), batch_size)
         if len(self.mask) == 0:
             return None
         

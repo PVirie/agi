@@ -63,13 +63,13 @@ class PPO(PPO_Learner):
             logging.info(f"Saved PPO learner to {self.persistence_path}/ppo_checkpoint.pth")
 
 
-    def learn(self, obs: Any, actions: Any, logprobs: List[Any], rewards: List[List[float]], values: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool], masks: Any = None):
+    def learn(self, obs: Any, actions: Any, logprobs: List[Any], values: List[Any], rewards: List[List[float]], next_dones: List[List[bool]], last_value: Any, last_done: List[bool], masks: Any = None):
         """
         obs: np array of shape (batch_size, context_length, ...)
         actions: np array of shape (batch_size, context_length, ...)
         logprobs: list of np array of shape (batch_size)
-        rewards: list of floats of length batch_size
         values: list np array of shape (batch_size)
+        rewards: list of floats of length batch_size
         next_dones: list of bools of length batch_size
         last_value: np array of shape (batch_size)
         last_done: bools of length batch_size
@@ -79,8 +79,8 @@ class PPO(PPO_Learner):
         obs = convert_np_array_to_float_tensor(obs, self.device)
         actions = convert_np_array_to_float_tensor(actions, self.device)
         logprobs = convert_list_of_np_array_to_float_tensor(logprobs, self.device)
-        rewards = convert_list_of_float_to_float_tensor(rewards, self.device)
         values = convert_list_of_np_array_to_float_tensor(values, self.device)
+        rewards = convert_list_of_float_to_float_tensor(rewards, self.device)
         masks = torch.ones_like(rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
 
         batch_size = actions.shape[0]

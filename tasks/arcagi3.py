@@ -43,16 +43,17 @@ async def run(env, agent):
         next_done = [
             s.state == Game_State_Type.WIN or s.state == Game_State_Type.GAME_OVER for s in states
         ]
-        next_truncate = [
-            s.state == Game_State_Type.TRUNCATE for s in states
+        last_truncated = [
+            s.state == Game_State_Type.TRUNCATED for s in states
         ]
         actions = agent.choose_action(
-            idles=[s.state == Game_State_Type.IDLE for s in states],
-            dones=next_done,
-            truncates=next_truncate,
+            last_idles=[s.state == Game_State_Type.IDLE for s in states],
+            next_dones=next_done,
+            last_truncates=last_truncated,
             latest_frames=[state.frame for state in states],
             scores=[state.score for state in states],
-            next_available_actions=[state.next_available_actions for state in states]
+            next_available_actions=[state.next_available_actions for state in states],
+            force_train=steps % 10 == 9
         )
         actions = [
             (Action_Type.RESET if d else a[0], a[1], a[2]) if a is not None else None

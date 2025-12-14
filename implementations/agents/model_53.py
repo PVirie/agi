@@ -28,17 +28,19 @@ class Model_53:
         self.obs.clear()
         self.actions.clear()
         self.logprobs = []
+        self.values = []
         self.rewards = []
         self.next_dones = []
-        self.values = []
+        self.next_truncates = []
 
         self.current_score = None
         self.thought_steps = None
 
 
-    def choose_action(self, idles, dones, truncates, latest_frames, scores, next_available_actions):
+    def choose_action(self, last_idles, next_dones, last_truncates, latest_frames, scores, next_available_actions, force_train=False):
 
         batch_size = len(scores)
+        current_cl = len(self.rewards)
 
         if self.current_score is None:
             self.current_score = [0 for _ in scores]
@@ -52,10 +54,10 @@ class Model_53:
         content = extract_frame(latest_frames) # content must be batch leading tensor (batch_size, ...)
         reward = np.array([score - self.current_score[i] for i, score in enumerate(scores)])
         self.current_score = [score for score in scores] # copy
-        next_done = [done for done in dones] # copy
-        truncated = [truncate for truncate in truncates] # copy
+        next_done = [done for done in next_dones] # copy
+        next_truncated = [truncate for truncate in last_truncates] # copy
 
-        for i, idle in enumerate(idles):
+        for i, idle in enumerate(last_idles):
             if not idle:
                 # replace the reward and content
                 self.obs.update_last(
@@ -65,13 +67,13 @@ class Model_53:
                 )
 
         # learn Supervise content
-        if self.do_supervision and len(self.rewards) > 0:
+        if self.do_supervision and current_cl > 0:
             target_actions, last_mask = self.agent_core.make_batch_actions(
                 b_content=np.reshape(content, (batch_size, -1))
             )
-            non_idle_mask = np.array([[0.0] if idle else [1.0] for idle in idles], dtype=np.float32)
-            target_actions = pad(np.expand_dims(target_actions, axis=1), len(self.rewards), pad_value=0, append_to_front=True)
-            supervised_mask = pad(np.expand_dims(last_mask * non_idle_mask, axis=1), len(self.rewards), pad_value=0.0, append_to_front=True)
+            non_idle_mask = np.array([[0.0] if idle else [1.0] for idle in last_idles], dtype=np.float32)
+            target_actions = pad(np.expand_dims(target_actions, axis=1), current_cl, pad_value=0, append_to_front=True)
+            supervised_mask = pad(np.expand_dims(last_mask * non_idle_mask, axis=1), current_cl, pad_value=0.0, append_to_front=True)
             self.supervised_trainer.train(
                 obs=self.obs[:-1].make_batch(batch_led=True),
                 actions=self.actions.make_batch(batch_led=True),
@@ -79,7 +81,7 @@ class Model_53:
                 masks=supervised_mask
             )
 
-        if (any(next_done) or any(truncated) or any([r != 0 for r in reward])) and len(self.rewards) > 0:
+        if (any(next_done) or any(next_truncated) or any([r != 0 for r in reward]) or force_train) and current_cl > 0:
             
             # compute last value from the current context (past observation) and the recent observation
             # this one return batch leading tensors (batch, 1)
@@ -88,16 +90,24 @@ class Model_53:
                 self.actions.make_batch(batch_led=True, append_last=True),
             )
 
+            # masks has shape (batch_size, context_length)
+            masks = self.actions.make_mask(batch_led=True)
+            masks = masks * (1.0 - np.stack(self.next_truncates, axis=1, dtype=np.float32))
+            # handle last truncated episodes
+            for i, t in enumerate(next_truncated):
+                if t:
+                    masks[i, -1] = 0.0
+
             # learn RL
             self.trainer.learn(
                 self.obs[:-1].make_batch(batch_led=True), 
                 self.actions.make_batch(batch_led=True), 
                 self.logprobs, 
-                self.rewards, 
                 self.values, 
+                self.rewards, 
                 self.next_dones, 
                 np.reshape(last_value, (-1)), next_done,
-                masks=self.actions.make_mask(batch_led=True)
+                masks=masks
             )
 
             self.supervised_trainer.save()
@@ -108,9 +118,10 @@ class Model_53:
             self.obs.mark(skip_last=True)
             left_over_slide = self.actions.mark()
             self.logprobs = self.logprobs[left_over_slide]
+            self.values = self.values[left_over_slide]
             self.rewards = self.rewards[left_over_slide]
             self.next_dones = self.next_dones[left_over_slide]
-            self.values = self.values[left_over_slide]
+            self.next_truncates = self.next_truncates[left_over_slide]
 
 
         # Choose a random action
@@ -125,9 +136,10 @@ class Model_53:
         # store last states
         self.actions.append(packed_action[:, -1, ...])
         self.logprobs.append(newlogprob[:, -1, ...])
-        self.rewards.append([0 for _ in range(batch_size)])
-        self.next_dones.append([False for _ in range(batch_size)])
         self.values.append(newvalue[:, -1, ...])
+        self.rewards.append(reward)
+        self.next_dones.append(next_done)
+        self.next_truncates.append(next_truncated)
 
         # extract output here
         ext_flag, a, x, y, content = self.agent_core.unpack_action(packed_action[:, -1, ...])
@@ -137,7 +149,7 @@ class Model_53:
         
         # if next done, reset score and thought steps
         action = []
-        for i, (d, t) in enumerate(zip(dones, truncates)):
+        for i, (d, t) in enumerate(zip(next_dones, last_truncates)):
             if d or t:
                 self.current_score[i] = 0
                 self.thought_steps[i] = 0
