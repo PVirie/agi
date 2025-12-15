@@ -36,5 +36,5 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 -   [x] Implement core AGI algorithms
 -   [x] Save and load model checkpoints
 -   [x] Supervised learning module (Teacher forcing)
--   [ ] Padding environment (for variable input lengths)
 -   [x] Asynchronous external action handle
+-   [ ] External memory module

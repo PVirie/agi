@@ -1,6 +1,7 @@
 import numpy as np
 from interfaces.learning import PPO_Learner, Supervised_Learner
-from interfaces.core import Core, Context_Collector
+from interfaces.core import Core
+from interfaces.data_structure import Context_Collector
 
 from .utils import extract_frame, pad
 

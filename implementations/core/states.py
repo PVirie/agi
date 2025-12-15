@@ -1,6 +1,6 @@
 import numpy as np
 
-from interfaces.core import Context_Collector
+from interfaces.data_structure import Context_Collector
 
 
 class State_Sequence(Context_Collector):

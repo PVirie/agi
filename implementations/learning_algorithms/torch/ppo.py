@@ -7,7 +7,8 @@ import time
 import logging
 
 from interfaces.learning import PPO_Learner
-from interfaces.core import Core, Context_Collector
+from interfaces.core import Core
+from interfaces.data_structure import Context_Collector
 
 from .base import convert_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, convert_list_of_float_to_float_tensor, masked_mean, masked_std
 
