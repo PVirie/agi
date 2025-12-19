@@ -4,7 +4,7 @@ import abc
 class Memory(abc.ABC):
 
     @abc.abstractmethod
-    def reset(self):
+    def reset(self, flags):
         pass
 
     @abc.abstractmethod
