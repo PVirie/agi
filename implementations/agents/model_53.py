@@ -88,7 +88,7 @@ class Model_53:
         if (any(next_done) or any(last_truncated) or any([r != 0 for r in reward]) or force_train) and current_cl > 1:
             
             if self.do_supervision:
-                 # learn Supervise content
+                # learn Supervise content
 
                 # make action format
                 recorded_actions = self.actions.make_batch(batch_led=True)

@@ -14,7 +14,7 @@ from .sfstct import SpatialEncoder, TemporalEncoder
 
 class SF_STCT_Core(Core, nn.Module):
 
-    def __init__(self, action_size, position_size, width, height, channel, hidden_size, heads, layers, device=None, persistence_path=None):
+    def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, device=None, persistence_path=None):
         super().__init__()
         # content_size = channels x height x width
 
@@ -45,6 +45,16 @@ class SF_STCT_Core(Core, nn.Module):
 
         # Prediction Heads [10]
         # Decoupling MLP before projection is best practice
+        self.head_flag = nn.Sequential(
+            nn.Linear(hidden_size, 64),
+            nn.GELU(),
+            nn.Linear(64, 2)   # 2 classes
+        )
+        self.head_action = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, action_size)   # action_size classes
+        )
         self.head_x = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
@@ -55,21 +65,11 @@ class SF_STCT_Core(Core, nn.Module):
             nn.GELU(),
             nn.Linear(hidden_size, height) # height classes
         )
-        self.head_action = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, action_size)   # action_size classes
-        )
         self.head_content = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, self.content_size), # content_size classes
             nn.Sigmoid()
-        )
-        self.head_flag = nn.Sequential(
-            nn.Linear(hidden_size, 64),
-            nn.GELU(),
-            nn.Linear(64, 2)   # 2 classes
         )
         self.head_value = nn.Sequential(
             nn.Linear(hidden_size, 64),
@@ -92,11 +92,11 @@ class SF_STCT_Core(Core, nn.Module):
         # Reset parameters of all layers
         self.spatial_encoder.reset_parameters()
         self.temporal_encoder.reset_parameters()
+        self.head_flag.apply(init_weights)
+        self.head_action.apply(init_weights)
         self.head_x.apply(init_weights)
         self.head_y.apply(init_weights)
-        self.head_action.apply(init_weights)
         self.head_content.apply(init_weights)
-        self.head_flag.apply(init_weights)
         self.head_value.apply(init_weights)
 
         # make sure value_logstd is initialized to 0
@@ -125,7 +125,7 @@ class SF_STCT_Core(Core, nn.Module):
 
     def __compute_position(self, last_position, action):
         # last_position has shape (batch, context_size, position_size)
-        # action has shape (batch, context_size, 1 + 3 + content_size)
+        # action has shape (batch, context_size, self.packed_action_size)
 
         # make one hot encoding for action, x, y
         action_onehot = torch.nn.functional.one_hot(action[:, :, 1].long(), num_classes=self.action_size).float()
@@ -141,7 +141,7 @@ class SF_STCT_Core(Core, nn.Module):
 
     def __compute(self, context, action):
         # context has shape (batch, context_size, 1 + position_size + content_size)
-        # action has shape (batch, context_size, 1 + 3 + content_size)
+        # action has shape (batch, context_size, self.packed_action_size)
         batch_size = context.size(0)
         context_size = context.size(1)
 
@@ -168,7 +168,7 @@ class SF_STCT_Core(Core, nn.Module):
         if isinstance(action, np.ndarray):
             action = torch.tensor(action, dtype=torch.int64).to(self.device)
         elif action is None:
-            action = torch.zeros((context.size(0), context.size(1), 1 + 3 + self.content_size), dtype=torch.int64).to(self.device)
+            action = torch.zeros((context.size(0), context.size(1), self.packed_action_size), dtype=torch.int64).to(self.device)
 
         with torch.no_grad():
             temporal_feat = self.__compute(context, action)
@@ -182,7 +182,7 @@ class SF_STCT_Core(Core, nn.Module):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
         if action is None:
-            action = torch.zeros((context.size(0), context.size(1), 1 + 3 + self.content_size), dtype=torch.float32).to(self.device)
+            action = torch.zeros((context.size(0), context.size(1), self.packed_action_size), dtype=torch.float32).to(self.device)
         elif isinstance(action, np.ndarray):
             action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
@@ -267,8 +267,8 @@ class SF_STCT_Core(Core, nn.Module):
     def get_log_probability(self, context, action, target_action=None, f_mask=None):
         """
         context has shape (batch, context_size, ...)
-        action has shape (batch, context_size, 1 + 3 + content_size)
-        target_action has shape (batch, context_size, 1 + 3 + content_size)
+        action has shape (batch, context_size, self.packed_action_size)
+        target_action has shape (batch, context_size, self.packed_action_size)
         f_mask has shape (batch, context_size, 5)
         """
 
@@ -325,7 +325,7 @@ class SF_STCT_Core(Core, nn.Module):
 
 
     def unpack_action(self, packed_action):
-        # packed_action has shape (batch, 1 + 3 + content_size)
+        # packed_action has shape (batch, self.packed_action_size)
         # return ext_flag, action_data... , content
 
         ext_part = packed_action[:, 0].astype(int)
@@ -339,7 +339,7 @@ class SF_STCT_Core(Core, nn.Module):
 
     def pack_action(self, b_ext=None, b_action=None, b_x=None, b_y=None, b_content=None):
         # b_xxx has shape (batch, ...)
-        # return packed_action_seq of shape (batch, 1 + 3 + content_size) of type int
+        # return packed_action_seq of shape (batch, self.packed_action_size) of type int
         # replace none with zeros
 
         batch_size = None

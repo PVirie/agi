@@ -85,7 +85,7 @@ class Energy_Memory(Memory):
         return: content with shape (batch_size, content_size)
         """
         batch_size = position.shape[0]
-        best_positions = np.zeros((batch_size, self.position_size))
+        best_positions = position
         best_contents = np.zeros((batch_size, self.content_size))
         for i in range(batch_size):
             if i >= len(self.data):
@@ -112,7 +112,7 @@ class Energy_Memory(Memory):
         """
         batch_size = content.shape[0]
         best_positions = np.zeros((batch_size, self.position_size))
-        best_contents = np.zeros((batch_size, self.content_size))
+        best_contents = content
         for i in range(batch_size):
             if i >= len(self.data):
                 continue

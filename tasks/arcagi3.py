@@ -129,7 +129,7 @@ if __name__ == "__main__":
     agent_core = Core(
         action_size=6, position_size=16,
         width=64, height=64, channel=4,
-        hidden_size=128, heads=8, layers=2,
+        hidden_size=128, layers=2,
         device=device, 
         persistence_path=parameters_path
     ).to(device)
