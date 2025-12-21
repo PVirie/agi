@@ -1,6 +1,7 @@
 import numpy as np
 from interfaces.learning import PPO_Learner, Supervised_Learner
 from interfaces.core import Core
+from interfaces.memory import Memory
 from interfaces.data_structure import Context_Collector
 
 from .utils import extract_frame, pad
@@ -11,6 +12,7 @@ class Model_53:
                  agent_core: Core, 
                  trainer: PPO_Learner, supervised_trainer: Supervised_Learner, 
                  context_collector: Context_Collector, action_collector: Context_Collector,
+                 memory: Memory,
                  do_supervision: bool = False
                  ):
         self.agent_core = agent_core
@@ -18,6 +20,7 @@ class Model_53:
         self.supervised_trainer = supervised_trainer
         self.obs = context_collector
         self.actions = action_collector
+        self.memory = memory
 
         self.do_supervision = do_supervision
 
@@ -55,10 +58,13 @@ class Model_53:
             self.last_truncates.append([True for _ in range(batch_size)])
             self.last_idles.append([False for _ in range(batch_size)])
 
+        memory_reset_flags = [False for _ in range(batch_size)]
         for i, t in enumerate(last_truncates):
             if t:
                 self.current_score[i] = 0
                 self.thought_steps[i] = 0
+                memory_reset_flags[i] = True
+        self.memory.reset(memory_reset_flags)
 
         content = extract_frame(latest_frames) # content must be batch leading tensor (batch_size, ...)
         reward = np.array([score - self.current_score[i] for i, score in enumerate(scores)])
@@ -178,25 +184,43 @@ class Model_53:
 
         # extract output here
         ext_flag, a, x, y, content = self.agent_core.unpack_action(packed_action[:, -1, ...])
-
         position = position[:, -1, ...]
+
+        action = []
+        for i in range(batch_size):
+            flag = ext_flag[i].item()
+            if flag == 0 or self.thought_steps[i] >= 2:
+                # observe external
+                action.append((a[i].item(), x[i].item(), y[i].item()))
+                self.thought_steps[i] = 0
+            elif flag == 1:
+                # position based retrieve
+                action.append(None)
+                position, content = self.memory.fetch_by_position(position=position)
+            elif flag == 2:
+                # content based retrieve
+                action.append(None)
+                position, content = self.memory.fetch_by_content(content=content)
+            elif flag == 3:
+                # record node
+                action.append(None)
+                self.memory.cache(position=position, content=content)
+            elif flag == 4:
+                # new thought
+                action.append(None)
+
         self.obs.append(np.zeros((batch_size, 1), dtype=np.float32), position, content)
         self.last_truncates.append([False for _ in range(batch_size)])
-        self.last_idles.append([ext_flag[i].item() == 0 for i in range(batch_size)])
+        self.last_idles.append([action[i] is None for i in range(batch_size)])
         
         # if next done, reset score and thought steps
-        action = []
         for i, d in enumerate(next_dones):
             if d:
                 self.current_score[i] = 0
                 self.thought_steps[i] = 0
+                memory_reset_flags[i] = True
             else:
                 self.thought_steps[i] += 1
-
-            if ext_flag[i].item() == 1 or self.thought_steps[i] >= 2:
-                action.append((a[i].item(), x[i].item(), y[i].item()))
-                self.thought_steps[i] = 0
-            else:
-                action.append(None)
+        self.memory.reset(memory_reset_flags)
 
         return action

@@ -37,4 +37,5 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 -   [x] Save and load model checkpoints
 -   [x] Supervised learning module (Teacher forcing)
 -   [x] Asynchronous external action handle
--   [ ] External memory module
+-   [x] External memory module
+-   [ ] Record memory of the external action

@@ -48,7 +48,7 @@ class SF_STCT_Core(Core, nn.Module):
         self.head_flag = nn.Sequential(
             nn.Linear(hidden_size, 64),
             nn.GELU(),
-            nn.Linear(64, 2)   # 2 classes
+            nn.Linear(64, 5)   # 5 classes
         )
         self.head_action = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
@@ -189,7 +189,7 @@ class SF_STCT_Core(Core, nn.Module):
         batch_size = context.size(0)
         temporal_feat = self.__compute(context, action)
 
-        logits_flag = self.head_flag(temporal_feat)    # (B, T, 2)
+        logits_flag = self.head_flag(temporal_feat)    # (B, T, 5)
         logits_action = self.head_action(temporal_feat) # (B, T, 6)
         logits_x = self.head_x(temporal_feat)      # (B, T, 64)
         logits_y = self.head_y(temporal_feat)      # (B, T, 64)
@@ -290,7 +290,7 @@ class SF_STCT_Core(Core, nn.Module):
 
         temporal_feat = self.__compute(context, action)
 
-        logits_flag = self.head_flag(temporal_feat)    # (B, T, 2)
+        logits_flag = self.head_flag(temporal_feat)    # (B, T, 5)
         logits_action = self.head_action(temporal_feat) # (B, T, 6)
         logits_x = self.head_x(temporal_feat)      # (B, T, 64)
         logits_y = self.head_y(temporal_feat)      # (B, T, 64)
