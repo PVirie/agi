@@ -1,7 +1,7 @@
 import numpy as np
 from interfaces.learning import PPO_Learner, Supervised_Learner
 from interfaces.core import Core
-from interfaces.memory import Memory
+from interfaces.memory import Memory, Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
 
 from .utils import extract_frame, pad
@@ -58,15 +58,12 @@ class Model_53:
             self.last_truncates.append([True for _ in range(batch_size)])
             self.last_idles.append([False for _ in range(batch_size)])
 
-        memory_reset_flags = [False for _ in range(batch_size)]
         for i, t in enumerate(last_truncates):
             if t:
                 self.current_score[i] = 0
                 self.thought_steps[i] = 0
-                memory_reset_flags[i] = True
-        self.memory.reset(memory_reset_flags)
 
-        content = extract_frame(latest_frames) # content must be batch leading tensor (batch_size, ...)
+        content = np.reshape(extract_frame(latest_frames), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
         reward = np.array([score - self.current_score[i] for i, score in enumerate(scores)])
         self.current_score = [s for s in scores] # copy
         next_done = [d for d in next_dones] # copy
@@ -74,22 +71,30 @@ class Model_53:
         last_idle = [idle for idle in last_idles] # copy
 
         update_mask = np.zeros((batch_size, 1 + self.agent_core.position_size + self.agent_core.content_size), dtype=np.float32)
+        memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         for i, (idle, t) in enumerate(zip(last_idles, last_truncates)):
+            if t:
+                memory_action[i] = Memory_Operation_Type.RESET
             if not idle:
                 # update only reward and content
                 update_mask[i, 0] = 1.0
                 update_mask[i, 1 + self.agent_core.position_size:] = 1.0
+                memory_action[i] = Memory_Operation_Type.CACHE
             self.last_truncates[-1][i] = t
             self.last_idles[-1][i] = idle
 
         # replace the reward and content
+        last_obs = self.obs.get_last()
         new_value = np.concatenate([
             np.reshape(reward, (-1, 1)), 
             np.zeros((batch_size, self.agent_core.position_size), dtype=np.float32), 
-            np.reshape(content, (batch_size, -1))], axis=1)
-        update_value = self.obs.get_last() * (1.0 - update_mask) + new_value * update_mask
+            content], axis=1)
+        update_value = last_obs * (1.0 - update_mask) + new_value * update_mask
         self.obs.update_last(update_value)
 
+        # cache new observation into memory
+        position = last_obs[:, 1:1 + self.agent_core.position_size]
+        self.memory.operate(position=position, content=content, operations=memory_action)
 
         if (any(next_done) or any(last_truncated) or any([r != 0 for r in reward]) or force_train) and current_cl > 1:
             
@@ -98,9 +103,7 @@ class Model_53:
 
                 # make action format
                 recorded_actions = self.actions.make_batch(batch_led=True)
-                last_actions = self.agent_core.pack_action(
-                    b_content=np.reshape(content, (batch_size, -1))
-                )
+                last_actions = self.agent_core.pack_action(b_content=content)
                 target_actions = np.concatenate([
                     recorded_actions[:, 1:, :],
                     np.reshape(last_actions, (batch_size, 1, -1))
@@ -186,41 +189,43 @@ class Model_53:
         ext_flag, a, x, y, content = self.agent_core.unpack_action(packed_action[:, -1, ...])
         position = position[:, -1, ...]
 
-        action = []
-        for i in range(batch_size):
+        # if next done, reset score and thought steps
+        ext_action = []
+        memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
+        for i, d in enumerate(next_dones):
             flag = ext_flag[i].item()
             if flag == 0 or self.thought_steps[i] >= 2:
                 # observe external
-                action.append((a[i].item(), x[i].item(), y[i].item()))
+                ext_action.append((a[i].item(), x[i].item(), y[i].item()))
                 self.thought_steps[i] = 0
+                memory_action[i] = Memory_Operation_Type.IDLE
             elif flag == 1:
                 # position based retrieve
-                action.append(None)
-                position, content = self.memory.fetch_by_position(position=position)
+                ext_action.append(None)
+                memory_action[i] = Memory_Operation_Type.FETCH_BY_POSITION
             elif flag == 2:
                 # content based retrieve
-                action.append(None)
-                position, content = self.memory.fetch_by_content(content=content)
+                ext_action.append(None)
+                memory_action[i] = Memory_Operation_Type.FETCH_BY_CONTENT
             elif flag == 3:
                 # record node
-                action.append(None)
-                self.memory.cache(position=position, content=content)
+                ext_action.append(None)
+                memory_action[i] = Memory_Operation_Type.CACHE
             elif flag == 4:
-                # new thought
-                action.append(None)
+                ext_action.append(None)
+                memory_action[i] = Memory_Operation_Type.IDLE
 
-        self.obs.append(np.zeros((batch_size, 1), dtype=np.float32), position, content)
-        self.last_truncates.append([False for _ in range(batch_size)])
-        self.last_idles.append([action[i] is None for i in range(batch_size)])
-        
-        # if next done, reset score and thought steps
-        for i, d in enumerate(next_dones):
             if d:
                 self.current_score[i] = 0
                 self.thought_steps[i] = 0
-                memory_reset_flags[i] = True
+                memory_action[i] = Memory_Operation_Type.RESET
             else:
                 self.thought_steps[i] += 1
-        self.memory.reset(memory_reset_flags)
 
-        return action
+        position, content = self.memory.operate(position=position, content=content, operations=memory_action)
+
+        self.obs.append(np.zeros((batch_size, 1), dtype=np.float32), position, content)
+        self.last_truncates.append([False for _ in range(batch_size)])
+        self.last_idles.append([ext_action[i] is None for i in range(batch_size)])
+        
+        return ext_action

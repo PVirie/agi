@@ -1,6 +1,7 @@
 import numpy as np
+from typing import List
 
-from interfaces.memory import Memory
+from interfaces.memory import Memory, Memory_Operation_Type
 
 
 class Energy_Memory(Memory):
@@ -11,16 +12,6 @@ class Energy_Memory(Memory):
         self.position_size = position_size
         self.content_size = content_size
         self.max_slot_size = max_slot_size
-
-
-    def reset(self, flags):
-        # flags is a list of boolean values indicating which batches to reset
-        for i in range(len(flags)):
-            if flags[i]:
-                self.data[i] = {
-                    "positions": np.zeros((self.max_slot_size, self.position_size)),
-                    "contents": np.zeros((self.max_slot_size, self.content_size)),
-                }
 
 
     def __infer(self, o1, o2):
@@ -48,13 +39,15 @@ class Energy_Memory(Memory):
         return content
 
 
-    def cache(self, position, content):
+    def operate(self, position, content, operations: List[Memory_Operation_Type]):
         """
-        Append last (shift)
         position has shape (batch_size, position_size)
         content has shape (batch_size, content_size)
+        operations is a list of Memory_Operation_Type with length batch_size
         """
         batch_size = position.shape[0]
+        best_positions = position
+        best_contents = content
         for i in range(batch_size):
             if i >= len(self.data):
                 # initialize new slot
@@ -63,68 +56,53 @@ class Energy_Memory(Memory):
                     "contents": np.zeros((self.max_slot_size, self.content_size)),
                 })
 
-            slot_positions = self.data[i]["positions"]  # (slot_size, position_size)
-            slot_contents = self.data[i]["contents"]    # (slot_size, content_size)
-
-            # shift left
-            slot_positions[:-1, :] = slot_positions[1:, :]
-            slot_contents[:-1, :] = slot_contents[1:, :]
-
-            # append new
-            slot_positions[-1, :] = position[i, :]
-            slot_contents[-1, :] = content[i, :]
-
-            self.data[i]["positions"] = slot_positions
-            self.data[i]["contents"] = slot_contents
-
-
-    def fetch_by_position(self, position):
-        """
-        position has shape (batch_size, position_size)
-        return: position with shape (batch_size, position_size)
-        return: content with shape (batch_size, content_size)
-        """
-        batch_size = position.shape[0]
-        best_positions = position
-        best_contents = np.zeros((batch_size, self.content_size))
-        for i in range(batch_size):
-            if i >= len(self.data):
+            flag = operations[i]
+            if flag == Memory_Operation_Type.IDLE:
+                # no operation
                 continue
+            elif flag == Memory_Operation_Type.RESET:
+                # reset
+                self.data[i] = {
+                    "positions": np.zeros((self.max_slot_size, self.position_size)),
+                    "contents": np.zeros((self.max_slot_size, self.content_size)),
+                }
+            elif flag == Memory_Operation_Type.FETCH_BY_POSITION:
+                # fetch by position
+                slot_positions = self.data[i]["positions"]  # (slot_size, position_size)
+                slot_contents = self.data[i]["contents"]    # (slot_size, content_size)
 
-            slot_positions = self.data[i]["positions"]  # (slot_size, position_size)
-            slot_contents = self.data[i]["contents"]    # (slot_size, content_size)
+                prob = self.__infer(slot_positions, position[i])  # (slot_size)
+                best_position = self.__fetch(slot_positions, prob)  # (position_size)
+                best_content = self.__fetch(slot_contents, prob)    # (content_size)
 
-            prob = self.__infer(slot_positions, position[i])  # (slot_size)
-            best_position = self.__fetch(slot_positions, prob)  # (position_size)
-            best_content = self.__fetch(slot_contents, prob)    # (content_size)
+                best_positions[i, :] = best_position
+                best_contents[i, :] = best_content
+            elif flag == Memory_Operation_Type.FETCH_BY_CONTENT:
+                # fetch by content
+                slot_positions = self.data[i]["positions"]  # (slot_size, position_size)
+                slot_contents = self.data[i]["contents"]    # (slot_size, content_size)
 
-            best_positions[i, :] = best_position
-            best_contents[i, :] = best_content
+                prob = self.__infer(slot_contents, content[i])  # (slot_size)
+                best_position = self.__fetch(slot_positions, prob)  # (position_size)
+                best_content = self.__fetch(slot_contents, prob)    # (content_size)
 
-        return best_positions, best_contents
+                best_positions[i, :] = best_position
+                best_contents[i, :] = best_content
+            elif flag == Memory_Operation_Type.CACHE:
+                # cache (append last)
 
+                slot_positions = self.data[i]["positions"]  # (slot_size, position_size)
+                slot_contents = self.data[i]["contents"]    # (slot_size, content_size)
 
-    def fetch_by_content(self, content):
-        """
-        content has shape (batch_size, content_size)
-        return: position with shape (batch_size, position_size)
-        return: content with shape (batch_size, content_size)
-        """
-        batch_size = content.shape[0]
-        best_positions = np.zeros((batch_size, self.position_size))
-        best_contents = content
-        for i in range(batch_size):
-            if i >= len(self.data):
-                continue
+                # shift left
+                slot_positions[:-1, :] = slot_positions[1:, :]
+                slot_contents[:-1, :] = slot_contents[1:, :]
 
-            slot_positions = self.data[i]["positions"]  # (slot_size, position_size)
-            slot_contents = self.data[i]["contents"]    # (slot_size, content_size)
+                # append new
+                slot_positions[-1, :] = position[i, :]
+                slot_contents[-1, :] = content[i, :]
 
-            prob = self.__infer(slot_contents, content[i])  # (slot_size)
-            best_position = self.__fetch(slot_positions, prob)  # (position_size)
-            best_content = self.__fetch(slot_contents, prob)    # (content_size)
-
-            best_positions[i, :] = best_position
-            best_contents[i, :] = best_content
+                self.data[i]["positions"] = slot_positions
+                self.data[i]["contents"] = slot_contents
 
         return best_positions, best_contents
