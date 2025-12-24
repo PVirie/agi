@@ -42,7 +42,7 @@ class Model_53:
         self.thought_steps = None
 
 
-    def choose_action(self, last_idles, next_dones, last_truncates, latest_frames, scores, next_available_actions, force_train=False):
+    def choose_action(self, last_idles, next_dones, last_truncates, last_resets, latest_frames, scores, next_available_actions, force_train=False):
 
         batch_size = len(scores)
         current_cl = len(self.rewards)
@@ -72,8 +72,8 @@ class Model_53:
 
         update_mask = np.zeros((batch_size, 1 + self.agent_core.position_size + self.agent_core.content_size), dtype=np.float32)
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
-        for i, (idle, t) in enumerate(zip(last_idles, last_truncates)):
-            if t:
+        for i, (idle, t, r) in enumerate(zip(last_idles, last_truncates, last_resets)):
+            if r:
                 memory_action[i] = Memory_Operation_Type.RESET
             if not idle:
                 # update only reward and content
@@ -218,7 +218,7 @@ class Model_53:
             if d:
                 self.current_score[i] = 0
                 self.thought_steps[i] = 0
-                memory_action[i] = Memory_Operation_Type.RESET
+                # memory_action[i] = Memory_Operation_Type.RESET
             else:
                 self.thought_steps[i] += 1
 

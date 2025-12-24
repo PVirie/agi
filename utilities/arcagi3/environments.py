@@ -55,12 +55,13 @@ action_type_to_str = {
 
 
 class Game_State_Type(str, Enum):
-    IDLE = "IDLE"
-    TRUNCATED = "TRUNCATED"
+    NOT_STARTED = "NOT_STARTED"
     GAME_OVER = "GAME_OVER"
     WIN = "WIN"
     NOT_FINISHED = "NOT_FINISHED"
-    NOT_STARTED = "NOT_STARTED"
+    IDLE = "IDLE"
+    TRUNCATED = "TRUNCATED"
+    RESET = "RESET"
 
 
 class Game_State:
@@ -174,6 +175,7 @@ class ARCAGI3_Environment:
                 )
                 response_json = response.json()
                 self.guids[i] = response_json.get("guid", None)
+                response_json["state"] = Game_State_Type.RESET if action_type == Action_Type.RESET else Game_State_Type.TRUNCATED
             else:
                 json_payload = {
                     "card_id": self.score_card_id,

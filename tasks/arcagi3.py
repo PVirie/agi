@@ -41,25 +41,28 @@ async def run(env, agent):
     steps = 0
     while True:
         states = await env.execute(actions)
+        last_idle = [
+            s.state == Game_State_Type.IDLE for s in states
+        ]
         next_done = [
             s.state == Game_State_Type.WIN or s.state == Game_State_Type.GAME_OVER for s in states
         ]
         last_truncated = [
-            s.state == Game_State_Type.TRUNCATED for s in states
+            s.state == Game_State_Type.TRUNCATED or s.state == Game_State_Type.RESET for s in states
+        ]
+        last_reset = [
+            s.state == Game_State_Type.RESET for s in states
         ]
         actions = agent.choose_action(
-            last_idles=[s.state == Game_State_Type.IDLE for s in states],
+            last_idles=last_idle,
             next_dones=next_done,
             last_truncates=last_truncated,
+            last_resets=last_reset,
             latest_frames=[state.frame for state in states],
             scores=[state.score for state in states],
             next_available_actions=[state.next_available_actions for state in states],
             force_train=steps % 10 == 9
         )
-        actions = [
-            (Action_Type.RESET if d else a[0], a[1], a[2]) if a is not None else None
-            for a,d in zip(actions, next_done)
-        ]
         await asyncio.sleep(1)
 
         elapsed_time = time.perf_counter() - start_time
@@ -78,7 +81,7 @@ async def run(env, agent):
             logging.info(f"Expected time left: {max_running_time - elapsed_time:.2f} seconds.")
 
 
-    await env.close()
+    report = await env.close()
 
 
 if __name__ == "__main__":
@@ -128,9 +131,9 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     agent_core = Core(
-        action_size=6, position_size=16,
+        action_size=7, position_size=16,
         width=64, height=64, channel=4,
-        hidden_size=128, layers=2,
+        hidden_size=256, layers=4,
         device=device, 
         persistence_path=parameters_path
     ).to(device)

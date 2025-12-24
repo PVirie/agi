@@ -38,7 +38,7 @@ class SF_STCT_Core(Core, nn.Module):
             vector_dim=1 + position_size, 
             embed_dim=hidden_size, depth=layers
         )
-        
+
         self.temporal_encoder = TemporalEncoder(
             embed_dim=hidden_size, depth=layers
         )
