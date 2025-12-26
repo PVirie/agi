@@ -19,7 +19,7 @@ cmd_format_endpoint = "/api/cmd/{cmd}"
 class Action_Type(Enum):
     """
         Available Actions:
-            Action 0: Reset the current level, issue twice to restart the game from the first level. 
+            Action 0: Restart the current level, issue twice to reset the game from the first level. 
             This should not be used as a player action; lest the agent exploits only first level to accumulate score.
             I therefore split it into two actions.
             Action 1: Move up or Select A
@@ -32,8 +32,8 @@ class Action_Type(Enum):
                 Y coordinate (0-63)
             Action 7: Undo
     """
-    RESET = 7
     RESTART = 8
+    RESET = 7
     A1 = 0
     A2 = 1
     A3 = 2

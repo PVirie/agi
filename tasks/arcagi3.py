@@ -63,6 +63,10 @@ async def run(env, agent):
             next_available_actions=[state.next_available_actions for state in states],
             force_train=steps % 10 == 9
         )
+        # actions = [
+        #     (Action_Type.RESTART if d else a[0], a[1], a[2]) if a is not None else None
+        #     for a,d in zip(actions, next_done)
+        # ]
         await asyncio.sleep(1)
 
         elapsed_time = time.perf_counter() - start_time
