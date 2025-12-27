@@ -163,7 +163,7 @@ class ARCAGI3_Environment:
                 self.return_states[i].state = Game_State_Type.IDLE
                 continue
             
-            action_type = Action_Type(at[0])
+            action_type = at[0]
             if action_type == Action_Type.RESET or action_type == Action_Type.RESTART:
                 response = self.request_session.post(
                     base_url + cmd_format_endpoint.format(cmd="RESET"),
