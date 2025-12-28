@@ -42,6 +42,9 @@ class Action_Type(Enum):
     A6 = 5
     A7 = 6
 
+    def __repr__(self):
+        return f"{self.name}"
+
 
 action_type_to_str = {
     Action_Type.A1: "ACTION1",
@@ -71,6 +74,9 @@ class Game_State:
         self.score = score
         self.win_score = win_score
         self.next_available_actions = [Action_Type(action) for action in next_available_actions]
+
+    def short_str(self):
+        return f"{self.state.value}|{self.score}/{self.win_score}"
 
 
 class ARCAGI3_Environment:
@@ -158,6 +164,7 @@ class ARCAGI3_Environment:
         if not self.is_started:
             raise Exception("Environment not started. Call start() before execute().")
 
+        something_changed = False
         for i, at in enumerate(actions):
             if at is None:
                 self.return_states[i].state = Game_State_Type.IDLE
@@ -219,7 +226,9 @@ class ARCAGI3_Environment:
                 win_score=response_json.get("win_score", 0),
                 next_available_actions=response_json.get("next_available_actions", [])
             )
+            if game_state.score != self.return_states[i].score or game_state.state in [Game_State_Type.WIN, Game_State_Type.GAME_OVER]:
+                something_changed = True
             self.return_states[i] = game_state
         
-        return self.return_states
+        return something_changed, self.return_states
     

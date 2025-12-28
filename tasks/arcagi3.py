@@ -40,7 +40,7 @@ async def run(env, agent):
     start_time = time.perf_counter()
     steps = 0
     while True:
-        states = await env.execute(actions)
+        has_event, states = await env.execute(actions)
         last_idle = [
             s.state == Game_State_Type.IDLE for s in states
         ]
@@ -64,7 +64,7 @@ async def run(env, agent):
             force_train=steps % 10 == 9
         )
         actions = [
-            (Action_Type(a[0]), a[1], a[2]) if a is not None else None
+            ((Action_Type(a[0]), a[1], a[2]) if a is not None else None) if not d else (Action_Type.RESET, )
             for a, d in zip(actions, next_done)
         ]
         await asyncio.sleep(1)
@@ -76,7 +76,11 @@ async def run(env, agent):
 
         steps += 1
         if steps % 10 == 0:
-            logging.info(f"{steps}| Selected actions: {actions}; Scores: {[s.score for s in states]}")
+            logging.info(f"{steps}| Selected actions: {actions}")
+
+        if has_event:
+            log_str = "; ".join([s.short_str() for s in states])
+            logging.info(f"States changed at step {steps}: [{log_str}]")
 
         if steps % 100 == 0:
             # compute estimated time left
