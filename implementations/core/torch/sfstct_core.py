@@ -228,19 +228,19 @@ class SF_STCT_Core(Core, nn.Module):
         log_prob_action = props_action.log_prob(action_action)
         log_prob_x = props_x.log_prob(action_x)
         log_prob_y = props_y.log_prob(action_y)
-        log_prob_content = props_content.log_prob(action_content).sum(-1)
-        log_prob_position = props_position.log_prob(position).sum(-1)
+        log_prob_content = props_content.log_prob(action_content).mean(-1)
+        log_prob_position = props_position.log_prob(position).mean(-1)
         batch_log_prob = log_prob_flag + log_prob_action + log_prob_x + log_prob_y + log_prob_content + log_prob_position
         
         # clamp batch_log_prob to avoid too large negatives
-        batch_log_prob = torch.clamp(batch_log_prob, min=-100, max=0)
+        # batch_log_prob = torch.clamp(batch_log_prob, min=-100, max=0)
 
         entropy_flag = props_flag.entropy()
         entropy_action = props_action.entropy()
         entropy_x = props_x.entropy()
         entropy_y = props_y.entropy()
-        entropy_content = props_content.entropy().sum(-1)
-        entropy_position = props_position.entropy().sum(-1)
+        entropy_content = props_content.entropy().mean(-1)
+        entropy_position = props_position.entropy().mean(-1)
         batch_entropy = entropy_flag + entropy_action + entropy_x + entropy_y + entropy_content + entropy_position
 
         # collapse last dimension
@@ -310,7 +310,7 @@ class SF_STCT_Core(Core, nn.Module):
         log_prob_action = props_action.log_prob(action_action)
         log_prob_x = props_x.log_prob(action_x)
         log_prob_y = props_y.log_prob(action_y)
-        log_prob_content = props_content.log_prob(action_content).sum(-1)
+        log_prob_content = props_content.log_prob(action_content).mean(-1)
 
         log_prob = torch.stack([log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content], dim=-1)
         masked_log_prob = log_prob * f_mask

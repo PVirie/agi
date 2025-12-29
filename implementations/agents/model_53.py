@@ -64,7 +64,7 @@ class Model_53:
                 self.thought_steps[i] = 0
 
         content = np.reshape(extract_frame(latest_frames), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
-        reward = np.array([score - self.current_score[i] for i, score in enumerate(scores)])
+        reward = np.array([score - self.current_score[i] for i, score in enumerate(scores)]) - 0.01 # small step penalty
         self.current_score = [s for s in scores] # copy
         next_done = [d for d in next_dones] # copy
         last_truncated = [t for t in last_truncates] # copy
@@ -96,7 +96,7 @@ class Model_53:
         position = last_obs[:, 1:1 + self.agent_core.position_size]
         self.memory.operate(position=position, content=content, operations=memory_action)
 
-        if (any(next_done) or any(last_truncated) or any([r != 0 for r in reward]) or force_train) and current_cl > 1:
+        if (any(next_done) or any(last_truncated) or force_train) and current_cl > 1:
             
             if self.do_supervision:
                 # learn Supervise content

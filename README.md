@@ -38,4 +38,5 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 -   [x] Supervised learning module (Teacher forcing)
 -   [x] Asynchronous external action handle
 -   [x] External memory module
--   [ ] Supervised observation position
+-   [ ] Memory store reward
+-   [ ] Use RL to select two observation modes
