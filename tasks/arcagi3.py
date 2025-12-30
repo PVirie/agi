@@ -53,14 +53,20 @@ async def run(env, agent):
         last_reset = [
             s.state == Game_State_Type.RESET for s in states
         ]
+        scores = [
+            s.score + (10 if s.state == Game_State_Type.WIN else (-1 if s.state == Game_State_Type.GAME_OVER else 0))
+            for s in states
+        ]
         actions = agent.choose_action(
             last_idles=last_idle,
             next_dones=next_done,
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=[state.frame for state in states],
-            scores=[state.score for state in states],
-            next_available_actions=[state.next_available_actions for state in states],
+            scores=scores,
+            next_available_actions=[
+                [a.value for a in state.next_available_actions] for state in states
+            ],
             force_train=steps % 10 == 9
         )
         actions = [

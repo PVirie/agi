@@ -56,6 +56,14 @@ action_type_to_str = {
     Action_Type.A7: "ACTION7"
 }
 
+return_action_to_action_type = {
+    1: Action_Type.A1,
+    2: Action_Type.A2,
+    3: Action_Type.A3,
+    4: Action_Type.A4,
+    5: Action_Type.A5,
+    6: Action_Type.A6,
+}
 
 class Game_State_Type(str, Enum):
     NOT_STARTED = "NOT_STARTED"
@@ -224,7 +232,7 @@ class ARCAGI3_Environment:
                 state=response_json.get("state", None),
                 score=response_json.get("score", 0),
                 win_score=response_json.get("win_score", 0),
-                next_available_actions=response_json.get("next_available_actions", [])
+                next_available_actions=[return_action_to_action_type[aa] for aa in response_json.get("available_actions", [])]
             )
             if game_state.score != self.return_states[i].score or game_state.state in [Game_State_Type.WIN, Game_State_Type.GAME_OVER]:
                 something_changed = True

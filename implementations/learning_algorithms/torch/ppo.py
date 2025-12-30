@@ -133,6 +133,7 @@ class PPO(PPO_Learner):
                 b_newvalue = b_newvalue[:, start:end, ...]
                 
                 logratio = b_newlogprob - mb_log_prob
+                logratio = torch.clamp(logratio, -10.0, 10.0)
                 ratio = logratio.exp()
 
                 with torch.no_grad():

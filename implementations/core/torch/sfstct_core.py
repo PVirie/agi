@@ -232,8 +232,6 @@ class SF_STCT_Core(Core, nn.Module):
         log_prob_position = props_position.log_prob(position).mean(-1)
         batch_log_prob = log_prob_flag + log_prob_action + log_prob_x + log_prob_y + log_prob_content + log_prob_position
         
-        # clamp batch_log_prob to avoid too large negatives
-        # batch_log_prob = torch.clamp(batch_log_prob, min=-100, max=0)
 
         entropy_flag = props_flag.entropy()
         entropy_action = props_action.entropy()
