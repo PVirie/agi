@@ -31,7 +31,7 @@ class PPO(PPO_Learner):
         self.target_kl = None
 
         self.update_epochs = 10
-        self.num_minibatches = 32
+        self.num_minibatches = 2
 
         self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
         
@@ -107,16 +107,18 @@ class PPO(PPO_Learner):
 
         # Optimizing the policy and value network
         clipfracs = []
+        b_inds = np.arange(batch_size)
         for epoch in range(self.update_epochs):
-            # np.random.shuffle(b_inds)
+            np.random.shuffle(b_inds)
             for start in range(0, sequence_size, minibatch_size):
                 end = start + minibatch_size
+                mb_inds = b_inds[start:end]
 
-                mb_log_prob = logprobs[:, start:end, ...]
-                mb_value = values[:, start:end, ...]
-                mb_advantages = advantages[:, start:end, ...] 
-                mb_returns = returns[:, start:end, ...]
-                mb_masks = masks[:, start:end, ...]
+                mb_log_prob = logprobs[mb_inds, ...]
+                mb_value = values[mb_inds, ...]
+                mb_advantages = advantages[mb_inds, ...] 
+                mb_returns = returns[mb_inds, ...]
+                mb_masks = masks[mb_inds, ...]
 
                 if torch.sum(mb_masks) < 1e-8:
                     continue
@@ -128,9 +130,9 @@ class PPO(PPO_Learner):
                     use_grad=True
                 )
 
-                b_newlogprob = b_newlogprob[:, start:end, ...]
-                b_entropy = b_entropy[:, start:end, ...]
-                b_newvalue = b_newvalue[:, start:end, ...]
+                b_newlogprob = b_newlogprob[mb_inds, ...]
+                b_entropy = b_entropy[mb_inds, ...]
+                b_newvalue = b_newvalue[mb_inds, ...]
                 
                 logratio = b_newlogprob - mb_log_prob
                 logratio = torch.clamp(logratio, -10.0, 10.0)

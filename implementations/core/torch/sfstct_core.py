@@ -8,7 +8,7 @@ import numpy as np
 import logging
 
 from interfaces.core import Core
-from .base import init_weights
+from .base import init_weights, Categorical_With_Mask_Sample
 from .sfstct import SpatialEncoder, TemporalEncoder
 
 
@@ -165,7 +165,11 @@ class SF_STCT_Core(Core, nn.Module):
         return logits_value[:, -1, ...].cpu().numpy()
     
 
-    def get_action_and_value(self, context, action, use_action=False, use_grad=True):
+    def get_action_and_value(self, context, action, use_action=False, use_grad=True, extra_params=None):
+
+        if extra_params is not None:
+            available_actions = extra_params.get("available_actions", None)
+
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
@@ -185,7 +189,7 @@ class SF_STCT_Core(Core, nn.Module):
         value = self.head_value(temporal_feat)    # (B, T, 1)
 
         props_flag = Categorical(logits=logits_flag)
-        props_action = Categorical(logits=logits_action)
+        props_action = Categorical_With_Mask_Sample(logits=logits_action)
         props_x = Categorical(logits=logits_x)
         props_y = Categorical(logits=logits_y)
         props_content = Bernoulli(probs=pprobs_content)
@@ -198,7 +202,7 @@ class SF_STCT_Core(Core, nn.Module):
             action_content = action[:, :, 4:]
         else:
             action_flag = props_flag.sample()
-            action_action = props_action.sample()
+            action_action = props_action.sample_from_available_indices(indices=available_actions)
             action_x = props_x.sample()
             action_y = props_y.sample()
             action_content = props_content.sample()

@@ -175,7 +175,10 @@ class Model_53:
             self.obs.make_batch(batch_led=True),
             self.actions.make_batch(batch_led=True, append_last=True),
             use_action=False,
-            use_grad=False
+            use_grad=False,
+            extra_params={
+                "available_actions": next_available_actions
+            }
         )
 
         # store last states
