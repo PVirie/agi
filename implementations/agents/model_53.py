@@ -13,7 +13,8 @@ class Model_53:
                  trainer: PPO_Learner, supervised_trainer: Supervised_Learner, 
                  context_collector: Context_Collector, action_collector: Context_Collector,
                  memory: Memory,
-                 do_supervision: bool = False
+                 do_supervision: bool = False,
+                 use_memory: bool = True
                  ):
         self.agent_core = agent_core
         self.trainer = trainer
@@ -23,6 +24,7 @@ class Model_53:
         self.memory = memory
 
         self.do_supervision = do_supervision
+        self.use_memory = use_memory
 
         self.reset()
 
@@ -58,7 +60,7 @@ class Model_53:
             self.last_truncates.append([True for _ in range(batch_size)])
             self.last_idles.append([False for _ in range(batch_size)])
 
-        for i, t in enumerate(last_truncates):
+        for i, (idle, t) in enumerate(zip(last_idles, last_truncates)):
             if t:
                 self.current_score[i] = 0
                 self.thought_steps[i] = 0
@@ -193,37 +195,35 @@ class Model_53:
         position = position[:, -1, ...]
 
         # if next done, reset score and thought steps
-        ext_action = []
+        ext_action = [None for _ in range(batch_size)]
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         for i, d in enumerate(next_dones):
             flag = ext_flag[i].item()
+            self.thought_steps[i] += 1
             if flag == 0 or self.thought_steps[i] >= 2:
                 # observe external
-                ext_action.append((a[i].item(), x[i].item(), y[i].item()))
+                ext_action[i] = (a[i].item(), x[i].item(), y[i].item())
                 self.thought_steps[i] = 0
                 memory_action[i] = Memory_Operation_Type.IDLE
-            elif flag == 1:
-                # position based retrieve
-                ext_action.append(None)
-                memory_action[i] = Memory_Operation_Type.FETCH_BY_POSITION
-            elif flag == 2:
-                # content based retrieve
-                ext_action.append(None)
-                memory_action[i] = Memory_Operation_Type.FETCH_BY_CONTENT
-            elif flag == 3:
-                # record node
-                ext_action.append(None)
-                memory_action[i] = Memory_Operation_Type.CACHE
-            elif flag == 4:
-                ext_action.append(None)
-                memory_action[i] = Memory_Operation_Type.IDLE
+            else:
+                if self.use_memory:
+                    if flag == 1:
+                        memory_action[i] = Memory_Operation_Type.IDLE
+                    elif flag == 2:
+                        # position based retrieve
+                        memory_action[i] = Memory_Operation_Type.FETCH_BY_POSITION
+                    elif flag == 3:
+                        # content based retrieve
+                        memory_action[i] = Memory_Operation_Type.FETCH_BY_CONTENT
+                    elif flag == 4:
+                        # record node
+                        memory_action[i] = Memory_Operation_Type.CACHE
+                else:
+                    memory_action[i] = Memory_Operation_Type.IDLE
 
             if d:
                 self.current_score[i] = 0
                 self.thought_steps[i] = 0
-                # memory_action[i] = Memory_Operation_Type.RESET
-            else:
-                self.thought_steps[i] += 1
 
         position, content = self.memory.operate(position=position, content=content, operations=memory_action)
 

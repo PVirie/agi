@@ -86,7 +86,7 @@ class PPO(PPO_Learner):
 
         batch_size = actions.shape[0]
         sequence_size = actions.shape[1]
-        minibatch_size = max(sequence_size // self.num_minibatches, 8)
+        minibatch_size = min(batch_size // self.num_minibatches, 8)
 
         with torch.no_grad():
             advantages = []
@@ -110,7 +110,7 @@ class PPO(PPO_Learner):
         b_inds = np.arange(batch_size)
         for epoch in range(self.update_epochs):
             np.random.shuffle(b_inds)
-            for start in range(0, sequence_size, minibatch_size):
+            for start in range(0, batch_size, minibatch_size):
                 end = start + minibatch_size
                 mb_inds = b_inds[start:end]
 
