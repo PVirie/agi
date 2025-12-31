@@ -64,22 +64,44 @@ class Up(nn.Module):
         return self.conv(x)
 
 
-class TemporalAttention(nn.Module):
-    def __init__(self, input_dim, dropout=0.1):
+class DeepTemporalTransformer(nn.Module):
+    def __init__(self, input_dim, num_heads=8, num_layers=3, dropout=0.1):
         super().__init__()
-        self.attention = nn.MultiheadAttention(embed_dim=input_dim, num_heads=input_dim, batch_first=True, dropout=dropout)
-        self.norm = nn.LayerNorm(input_dim)
-        self.dropout = nn.Dropout(dropout)
+        # We use TransformerEncoder with a Causal Mask to implement a 
+        # "Decoder-only" (GPT-style) temporal model.
+        # This allows frames to attend to history through multiple layers.
         
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=input_dim,
+            nhead=num_heads,
+            # Since input_dim is large (~4000), we keep feedforward dim equal to input_dim
+            # to prevent parameter explosion, but standard is usually 4 * input_dim.
+            dim_feedforward=input_dim, 
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True # Improves gradient flow in deep networks
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
     def forward(self, x):
-        attn_output, _ = self.attention(x, x, x)
-        x = x + self.dropout(attn_output)
-        x = self.norm(x)
-        return x
+        """
+        x: [Batch, Time, Features]
+        """
+        B, T, C = x.shape
+        
+        # --- Causal Mask ---
+        # Returns [T, T] float matrix. 
+        # 0.0 for visible (past/present), -inf for masked (future).
+        mask = nn.Transformer.generate_square_subsequent_mask(T, device=x.device)
+        
+        # Pass through the deep transformer stack
+        out = self.transformer(x, mask=mask)
+        return out
+
 
 
 class TemporalUNet(nn.Module):
-    def __init__(self, n_channels=1, vec_dim=128, bilinear=True):
+    def __init__(self, n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True):
         super(TemporalUNet, self).__init__()
         self.n_channels = n_channels
         self.vec_dim = vec_dim
@@ -98,7 +120,12 @@ class TemporalUNet(nn.Module):
         self.flat_features = self.bottleneck_channels * 4 * 4
         self.attn_input_dim = self.flat_features + vec_dim
         
-        self.temporal_attn = TemporalAttention(self.attn_input_dim)
+        self.temporal_attn = DeepTemporalTransformer(
+            input_dim=self.attn_input_dim,
+            num_heads=self.attn_input_dim,
+            num_layers=num_temporal_layers,
+            dropout=0.1
+        )
         self.fusion = nn.Linear(self.attn_input_dim, self.flat_features)
 
         # --- Decoder ---
@@ -202,7 +229,7 @@ class TemporalUNet(nn.Module):
 
 if __name__ == "__main__":
     # Test
-    model = TemporalUNet(n_channels=1, vec_dim=128)
+    model = TemporalUNet(n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True)
     img = torch.randn(2, 5, 1, 64, 64)
     vec = torch.randn(2, 5, 128)
     

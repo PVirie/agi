@@ -30,7 +30,7 @@ class Action_Content_Core(Core, nn.Module):
         self.hidden_size = hidden_size
 
         # feature always has size 32
-        self.temporal_unet = TemporalUNet(n_channels=channel, vec_dim=1 + position_size, bilinear=True)
+        self.temporal_unet = TemporalUNet(n_channels=channel, vec_dim=1 + position_size, num_temporal_layers=layers, bilinear=True)
 
         self.head_flag = nn.Sequential(
             nn.Linear(32, 32),
