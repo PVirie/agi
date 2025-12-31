@@ -100,6 +100,8 @@ class Model_53:
 
         if (any(next_done) or any(last_truncated) or force_train) and current_cl > 1:
             
+            self.agent_core.train()
+
             if self.do_supervision:
                 # learn Supervise content
 
@@ -169,6 +171,8 @@ class Model_53:
             left_over_slide = self.obs.mark(skip_last=True)
             self.last_truncates = self.last_truncates[left_over_slide]
             self.last_idles = self.last_idles[left_over_slide]
+
+            self.agent_core.eval()
 
 
         # Choose a random action

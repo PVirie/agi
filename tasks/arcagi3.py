@@ -21,7 +21,7 @@ from utilities.arcagi3.environments import Action_Type, Game_State_Type, ARCAGI3
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.core.torch.sfstct_core import SF_STCT_Core as Core
+from implementations.core.torch.core import Action_Content_Core as Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
 from implementations.core.states import State_Sequence as Collector
@@ -105,6 +105,7 @@ if __name__ == "__main__":
     parser.add_argument("--reset",                  "-r",   action="store_true")
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
+    parser.add_argument("--use-memory",             "-um",  action="store_true",                help="Enable the use of memory in the agent.")
     parser.add_argument("--with-supervision",       "-svl", action="store_true",                help="Enable supervised learning along with PPO.")
     parser.add_argument("--no-thought",             "-nth", action="store_true",                help="Disable thoughts in favor of fixed steps.")
     parser.add_argument("--no-reference",           "-nrf", action="store_true",                help="Disable reference and use traditional PE.")
@@ -170,7 +171,8 @@ if __name__ == "__main__":
         context_collector=Collector(max_history=8),
         action_collector=Collector(max_history=8),
         memory=memory,
-        do_supervision=args.with_supervision
+        do_supervision=args.with_supervision,
+        use_memory=args.use_memory,
     )
 
     asyncio.run(run(env, model_53_agent))

@@ -10,71 +10,45 @@ import logging
 from interfaces.core import Core
 from .base import init_weights, Categorical_With_Mask_Sample
 from .sfstct import SpatialEncoder, TemporalEncoder
+from .temporal_unet import TemporalUNet
 
 
-class SF_STCT_Core(Core, nn.Module):
+class Action_Content_Core(Core, nn.Module):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, device=None, persistence_path=None):
         super().__init__()
-        # content_size = channels x height x width
-
         self.device = device
 
         self.action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
-
         self.packed_action_size = 1 + 3 + self.content_size  # ext_flag + action + x + y + content
 
         self.width = width
         self.height = height
         self.channel = channel
-
         self.hidden_size = hidden_size
 
-        # Configuration matches the report specification
-        self.spatial_encoder = SpatialEncoder(
-            img_size=width, patch_size=4, in_chans=channel,
-            vector_dim=1 + position_size, 
-            embed_dim=hidden_size, depth=layers
-        )
+        # feature always has size 32
+        self.temporal_unet = TemporalUNet(n_channels=channel, vec_dim=1 + position_size, bilinear=True)
 
-        self.temporal_encoder = TemporalEncoder(
-            embed_dim=hidden_size, depth=layers
-        )
-
-        # Prediction Heads [10]
-        # Decoupling MLP before projection is best practice
         self.head_flag = nn.Sequential(
-            nn.Linear(hidden_size, 64),
+            nn.Linear(32, 32),
             nn.GELU(),
-            nn.Linear(64, 5)   # 5 classes
+            nn.Linear(32, 5)   # 5 classes
         )
         self.head_action = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(32, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
-        self.head_x = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, width) # width classes
-        )
-        self.head_y = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, height) # height classes
-        )
         self.head_content = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, self.content_size), # content_size classes
             nn.Sigmoid()
         )
         self.head_value = nn.Sequential(
-            nn.Linear(hidden_size, 64),
+            nn.Linear(32, 32),
             nn.GELU(),
-            nn.Linear(64, 1)   # Regression output
+            nn.Linear(32, 1)   # Regression output
         )
 
         self.value_logstd = nn.Parameter(torch.zeros(1, 1))
@@ -96,13 +70,10 @@ class SF_STCT_Core(Core, nn.Module):
 
     def reset_parameters(self):
         # Reset parameters of all layers
-        self.spatial_encoder.reset_parameters()
-        self.temporal_encoder.reset_parameters()
+        self.temporal_unet.reset_parameters()
 
         self.head_flag.apply(init_weights)
         self.head_action.apply(init_weights)
-        self.head_x.apply(init_weights)
-        self.head_y.apply(init_weights)
         self.head_content.apply(init_weights)
         self.head_value.apply(init_weights)
 
@@ -141,13 +112,10 @@ class SF_STCT_Core(Core, nn.Module):
         image_part = torch.reshape(image_content, (batch_size, context_size, self.channel, self.height, self.width))
         non_image_part = context[:, :, :1 + self.position_size]
 
-        # 1. Spatial Processing (Independent per frame)
-        spatial_feats = self.spatial_encoder(image_part, non_image_part) # Output: (B, T, hidden_size)
+        x_p, y_p, features, content_logits = self.temporal_unet(image_part, non_image_part)
+        content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
         
-        # 2. Temporal Processing (Across frames with causal mask)
-        temporal_feat = self.temporal_encoder(spatial_feats) # Output: (B, T, hidden_size)
-        
-        return temporal_feat
+        return x_p, y_p, features, content_logits
     
 
     def get_latest_value(self, context, action):
@@ -159,8 +127,8 @@ class SF_STCT_Core(Core, nn.Module):
             action = torch.zeros((context.size(0), context.size(1), self.packed_action_size), dtype=torch.int64).to(self.device)
 
         with torch.no_grad():
-            temporal_feat = self.__compute(context, action)
-            logits_value = self.head_value(temporal_feat)    # (B, T, 1)
+            _, _, features, _ = self.__compute(context, action)
+            logits_value = self.head_value(features)    # (B, T, 1)
             
         return logits_value[:, -1, ...].cpu().numpy()
     
@@ -179,19 +147,17 @@ class SF_STCT_Core(Core, nn.Module):
             action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
         batch_size = context.size(0)
-        temporal_feat = self.__compute(context, action)
+        x_p, y_p, features, content_logits = self.__compute(context, action)
 
-        logits_flag = self.head_flag(temporal_feat)    # (B, T, 5)
-        logits_action = self.head_action(temporal_feat) # (B, T, 6)
-        logits_x = self.head_x(temporal_feat)      # (B, T, 64)
-        logits_y = self.head_y(temporal_feat)      # (B, T, 64)
-        pprobs_content = self.head_content(temporal_feat) # (B, T, content_size)
-        value = self.head_value(temporal_feat)    # (B, T, 1)
+        logits_flag = self.head_flag(features)    # (B, T, 5)
+        logits_action = self.head_action(features) # (B, T, 6)
+        pprobs_content = self.head_content(content_logits) # (B, T, content_size)
+        value = self.head_value(features)    # (B, T, 1)
 
         props_flag = Categorical(logits=logits_flag)
         props_action = Categorical_With_Mask_Sample(logits=logits_action)
-        props_x = Categorical(logits=logits_x)
-        props_y = Categorical(logits=logits_y)
+        props_x = Categorical(probs=x_p)
+        props_y = Categorical(probs=y_p)
         props_content = Bernoulli(probs=pprobs_content)
 
         if use_action:
@@ -285,18 +251,16 @@ class SF_STCT_Core(Core, nn.Module):
         elif isinstance(f_mask, np.ndarray):
             f_mask = torch.tensor(f_mask, dtype=torch.float32).to(self.device)
 
-        temporal_feat = self.__compute(context, action)
+        x_p, y_p, features, content_logits = self.__compute(context, action)
 
-        logits_flag = self.head_flag(temporal_feat)    # (B, T, 5)
-        logits_action = self.head_action(temporal_feat) # (B, T, 6)
-        logits_x = self.head_x(temporal_feat)      # (B, T, 64)
-        logits_y = self.head_y(temporal_feat)      # (B, T, 64)
-        pprobs_content = self.head_content(temporal_feat) # (B, T, content_size)
+        logits_flag = self.head_flag(features)    # (B, T, 5)
+        logits_action = self.head_action(features) # (B, T, 6)
+        pprobs_content = self.head_content(content_logits) # (B, T, content_size)
 
         props_flag = Categorical(logits=logits_flag)
         props_action = Categorical(logits=logits_action)
-        props_x = Categorical(logits=logits_x)
-        props_y = Categorical(logits=logits_y)
+        props_x = Categorical(probs=x_p)
+        props_y = Categorical(probs=y_p)
         props_content = Bernoulli(probs=pprobs_content)
 
         if target_action is None:

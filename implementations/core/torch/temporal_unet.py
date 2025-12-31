@@ -1,0 +1,215 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+try:
+    from .base import init_weights
+except ImportError:
+    from implementations.core.torch.base import init_weights
+
+
+class DoubleConv(nn.Module):
+    """(convolution => [BN] => ReLU) * 2"""
+    def __init__(self, in_channels, out_channels, mid_channels=None):
+        super().__init__()
+        if not mid_channels:
+            mid_channels = out_channels
+        self.double_conv = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.double_conv(x)
+
+
+class Down(nn.Module):
+    """Downscaling with maxpool then double conv"""
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.maxpool_conv = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleConv(in_channels, out_channels)
+        )
+
+    def forward(self, x):
+        return self.maxpool_conv(x)
+
+
+class Up(nn.Module):
+    """Upscaling then double conv"""
+    def __init__(self, in_channels, out_channels, skip_channels, bilinear=True):
+        super().__init__()
+
+        if bilinear:
+            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.conv = DoubleConv(in_channels + skip_channels, out_channels, mid_channels=in_channels // 2)
+        else:
+            self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+            self.conv = DoubleConv(in_channels // 2 + skip_channels, out_channels)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])
+        
+        x = torch.cat([x2, x1], dim=1)
+        return self.conv(x)
+
+
+class TemporalAttention(nn.Module):
+    def __init__(self, input_dim, dropout=0.1):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(embed_dim=input_dim, num_heads=input_dim, batch_first=True, dropout=dropout)
+        self.norm = nn.LayerNorm(input_dim)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, x):
+        attn_output, _ = self.attention(x, x, x)
+        x = x + self.dropout(attn_output)
+        x = self.norm(x)
+        return x
+
+
+class TemporalUNet(nn.Module):
+    def __init__(self, n_channels=1, vec_dim=128, bilinear=True):
+        super(TemporalUNet, self).__init__()
+        self.n_channels = n_channels
+        self.vec_dim = vec_dim
+        self.bilinear = bilinear
+
+        # --- Encoder ---
+        self.inc = DoubleConv(n_channels, 32)
+        self.down1 = Down(32, 64)
+        self.down2 = Down(64, 128)
+        self.down3 = Down(128, 256)
+        factor = 2 if bilinear else 1
+        self.down4 = Down(256, 512 // factor)
+
+        # --- Temporal Bottleneck ---
+        self.bottleneck_channels = 512 // factor
+        self.flat_features = self.bottleneck_channels * 4 * 4
+        self.attn_input_dim = self.flat_features + vec_dim
+        
+        self.temporal_attn = TemporalAttention(self.attn_input_dim)
+        self.fusion = nn.Linear(self.attn_input_dim, self.flat_features)
+
+        # --- Decoder ---
+        self.up1 = Up(self.bottleneck_channels, 256 // factor, 256, bilinear)
+        self.up2 = Up(256 // factor, 128 // factor, 128, bilinear)
+        self.up3 = Up(128 // factor, 64 // factor, 64, bilinear)
+        self.up4 = Up(64 // factor, 32, 32, bilinear)
+
+        self.head_heatmap = nn.Conv2d(32, 1, kernel_size=1)
+        self.head_content = nn.Conv2d(32, n_channels, kernel_size=1)
+        
+        self.reset_parameters()
+
+
+    def reset_parameters(self):
+        self.apply(init_weights)
+
+
+    def _get_max_features(self, feature_map, heatmap_logits):
+        """
+        Extracts features from the feature_map at the location of the 
+        max value in heatmap_logits.
+        """
+        N, C, H, W = feature_map.shape
+        
+        # Flatten spatial dims
+        heatmap_flat = heatmap_logits.view(N, -1)
+        
+        # Hard Argmax to find the "winning" pixel
+        _, max_indices = torch.max(heatmap_flat, dim=1) # [N]
+        
+        # Gather Features
+        features_flat = feature_map.view(N, C, -1)
+        gather_indices = max_indices.view(N, 1, 1).expand(N, C, 1)
+        selected_features = features_flat.gather(2, gather_indices).squeeze(2) # [N, C]
+        
+        return selected_features
+
+
+    def forward(self, x, v):
+        """
+        x: [Batch, Time, Channels, Height, Width]
+        v: [Batch, Time, VecDim]
+        Returns:
+            x_log_probs: [Batch, Time, 64] (Log Probabilities for X coordinate)
+            y_log_probs: [Batch, Time, 64] (Log Probabilities for Y coordinate)
+            flag_logits: [Batch, Time, 6]  (Logits for Flag)
+        """
+        B, T, C, H, W = x.shape
+        
+        # --- U-Net Encoder/Decoder (Batch+Time folded) ---
+        x_reshaped = x.view(B * T, C, H, W)
+        x1 = self.inc(x_reshaped)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        
+        # Temporal Attention
+        flat_x5 = x5.view(B * T, -1)
+        v_reshaped = v.view(B * T, -1)
+        combined = torch.cat([flat_x5, v_reshaped], dim=1)
+        combined = combined.view(B, T, -1)
+        attn_out = self.temporal_attn(combined)
+        
+        fused = self.fusion(attn_out.view(B * T, -1))
+        x_dec = fused.view_as(x5)
+        
+        x = self.up1(x_dec, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x_features = self.up4(x, x1) # [B*T, 32, 64, 64]
+        
+        # --- Generate Heatmap ---
+        heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, 64, 64]
+        
+        # --- Compute X/Y Distributions (Marginalization) ---
+        # 1. Softmax over the 2D spatial map to get probabilities
+        heatmap_probs = F.softmax(heatmap_logits.view(B * T, -1), dim=1).view(B * T, 1, H, W)
+        
+        # 2. Sum over Height (dim 2) to get X distribution (Width)
+        x_probs = torch.sum(heatmap_probs, dim=2).squeeze(1) # [B*T, 64]
+        
+        # 3. Sum over Width (dim 3) to get Y distribution (Height)
+        y_probs = torch.sum(heatmap_probs, dim=3).squeeze(1) # [B*T, 64]
+        
+        # --- Compute flat features ---
+        sampled_features = self._get_max_features(x_features, heatmap_logits)
+
+        # --- Compute direct content ---
+        content_logits = self.head_content(x_features) # [B*T, C, 64, 64]
+        
+        # --- Reshape and Return ---
+        x_probs = x_probs.view(B, T, -1)
+        y_probs = y_probs.view(B, T, -1)
+        sampled_features = sampled_features.view(B, T, -1)
+        content_logits = content_logits.view(B, T, C, H, W)
+        
+        return x_probs, y_probs, sampled_features, content_logits
+
+
+if __name__ == "__main__":
+    # Test
+    model = TemporalUNet(n_channels=1, vec_dim=128)
+    img = torch.randn(2, 5, 1, 64, 64)
+    vec = torch.randn(2, 5, 128)
+    
+    x_p, y_p, features, content_logits = model(img, vec)
+    
+    print(f"X Log-Probs: {x_p.shape}")   # [2, 5, 64]
+    print(f"Y Log-Probs: {y_p.shape}")   # [2, 5, 64]
+    print(f"Sampled Features: {features.shape}") # [2, 5, 32]
+    print(f"Content Logits: {content_logits.shape}") # [2, 5, 1, 64, 64]
+    print("Forward pass successful.")
