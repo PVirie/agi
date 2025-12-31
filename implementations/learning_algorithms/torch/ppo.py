@@ -25,10 +25,10 @@ class PPO(PPO_Learner):
         self.clip_coef = 0.2
         self.norm_adv = True
         self.clip_vloss = True
-        self.ent_coef = 0.0
+        self.ent_coef = 0.01
         self.vf_coef = 0.5
         self.max_grad_norm = 0.5
-        self.target_kl = None
+        self.target_kl = 0.03
 
         self.update_epochs = 10
         self.num_minibatches = 2
