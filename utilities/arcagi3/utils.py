@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 
 # class FrameData(BaseModel):
@@ -70,15 +69,30 @@ def extract_frame(frame_data) -> np.ndarray:
     """Convert frame data to tensor format for the model."""
     # Convert frame to numpy array with color indices 0-15
 
-    out_frames = []
-    for frames in frame_data:
-        last_frame = frames[-1] # get only last frame
-        frame = np.array(last_frame, dtype=np.int64)  # shape (H, W)
-        frame = convert_chw_to_4bit(frame)  # shape (4, H, W)
-        frame = np.reshape(frame, (4*64*64))  # flatten to (4*64*64)
-        out_frames.append(frame)
+    last_frame = frame_data[-1] # get only last frame
+    frame = np.array(last_frame, dtype=np.int64)  # shape (H, W)
+    frame = convert_chw_to_4bit(frame)  # shape (4, H, W)
+    frame = np.reshape(frame, (4*64*64))  # flatten to (4*64*64)
     
-    return np.stack(out_frames, axis=0)  # shape (batch_size, 4*64*64)
+    return frame
+
+
+def check_frame_difference(frame1: np.ndarray, frame2: np.ndarray) -> bool:
+    """
+    Check if there is any difference between two frames.
+    
+    Args:
+        frame1 (np.ndarray): First frame array.
+        frame2 (np.ndarray): Second frame array.
+    
+    Returns:
+        bool: True if frames are different, False if they are the same.
+    """
+    if frame1.shape != frame2.shape:
+        return True  # Different shapes imply difference
+    
+    # check float array difference with a tolerance
+    return not np.allclose(frame1, frame2, atol=1e-6)
 
 
 def pad(array: np.ndarray, target_length: int, pad_value: float = 0.0, append_to_front: bool = False) -> np.ndarray:

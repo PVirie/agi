@@ -16,7 +16,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 APP_ROOT = os.getenv("APP_ROOT", "/app")
 
 import utilities
-from utilities.arcagi3.environments import Action_Type, Game_State_Type, ARCAGI3_Environment
+from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_Type, ARCAGI3_Environment
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -29,6 +29,17 @@ from implementations.core.energy_memory import Energy_Memory as Memory
 
 torch.autograd.set_detect_anomaly(True)
 
+
+def get_state_reward(state: Game_State) -> int:
+    reward = state.delta_score
+    if state == Game_State_Type.WIN:
+        reward = 10
+    elif state == Game_State_Type.GAME_OVER:
+        reward = -1
+    if not state.diff_from_last:
+        reward = -1
+    return reward
+    
 
 async def run(env, agent):
 
@@ -53,17 +64,13 @@ async def run(env, agent):
         last_reset = [
             s.state == Game_State_Type.RESET for s in states
         ]
-        scores = [
-            s.score + (10 if s.state == Game_State_Type.WIN else (-1 if s.state == Game_State_Type.GAME_OVER else 0))
-            for s in states
-        ]
         actions = agent.choose_action(
             last_idles=last_idle,
             next_dones=next_done,
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=[state.frame for state in states],
-            scores=scores,
+            rewards=[get_state_reward(s) for s in states],
             next_available_actions=[
                 [a.value for a in state.next_available_actions] for state in states
             ],

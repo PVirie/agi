@@ -3,6 +3,8 @@ import requests
 from enum import Enum
 from typing import List
 import logging
+from .utils import extract_frame, check_frame_difference
+
 
 API_KEY = os.getenv("ARC_API_KEY", "")
 HOST = os.getenv("HOST", "three.arcprize.org")
@@ -82,9 +84,25 @@ class Game_State:
         self.score = score
         self.win_score = win_score
         self.next_available_actions = [Action_Type(action) for action in next_available_actions]
+        self.diff_from_last = False
+        self.delta_score = 0
 
     def short_str(self):
         return f"{self.state.value}|{self.score}/{self.win_score}"
+    
+    def set_difference_from_last(self, last_state):
+        if last_state is None:
+            self.diff_from_last = True
+            self.delta_score = self.score
+            return
+        if last_state.frame is None or self.frame is None:
+            self.diff_from_last = True
+            self.delta_score = self.score
+            return
+        if check_frame_difference(last_state.frame, self.frame):
+            self.diff_from_last = True
+            self.delta_score = self.score - last_state.score
+            return
 
 
 class ARCAGI3_Environment:
@@ -228,7 +246,7 @@ class ARCAGI3_Environment:
                     continue
 
             game_state = Game_State(
-                frame=response_json.get("frame", None),
+                frame=extract_frame(response_json.get("frame", None)),
                 state=response_json.get("state", None),
                 score=response_json.get("score", 0),
                 win_score=response_json.get("win_score", 0),
@@ -236,6 +254,7 @@ class ARCAGI3_Environment:
             )
             if game_state.score != self.return_states[i].score or game_state.state in [Game_State_Type.WIN, Game_State_Type.GAME_OVER]:
                 something_changed = True
+            game_state.set_difference_from_last(self.return_states[i])
             self.return_states[i] = game_state
         
         return something_changed, self.return_states

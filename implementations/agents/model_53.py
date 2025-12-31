@@ -4,7 +4,6 @@ from interfaces.core import Core
 from interfaces.memory import Memory, Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
 
-from .utils import extract_frame, pad
 
 class Model_53:
     
@@ -40,18 +39,16 @@ class Model_53:
         self.last_truncates = []
         self.last_idles = []
 
-        self.current_score = None
         self.thought_steps = None
 
 
-    def choose_action(self, last_idles, next_dones, last_truncates, last_resets, latest_frames, scores, next_available_actions, force_train=False):
+    def choose_action(self, last_idles, next_dones, last_truncates, last_resets, latest_frames, rewards, next_available_actions, force_train=False):
 
-        batch_size = len(scores)
+        batch_size = len(latest_frames)
         current_cl = len(self.rewards)
 
-        if self.current_score is None:
-            self.current_score = [0 for _ in scores]
-            self.thought_steps = [0 for _ in scores]
+        if self.thought_steps is None:
+            self.thought_steps = [0 for _ in range(batch_size)]
             self.obs.append(
                 np.zeros((batch_size, 1), dtype=np.float32), 
                 np.zeros((batch_size, self.agent_core.position_size), dtype=np.float32), 
@@ -62,12 +59,10 @@ class Model_53:
 
         for i, (idle, t) in enumerate(zip(last_idles, last_truncates)):
             if t:
-                self.current_score[i] = 0
                 self.thought_steps[i] = 0
 
-        content = np.reshape(extract_frame(latest_frames), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
-        reward = np.array([score - self.current_score[i] for i, score in enumerate(scores)]) - 0.01 # small step penalty
-        self.current_score = [s for s in scores] # copy
+        content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
+        reward = np.array([r - 0.01 for r in rewards]) # add small step penalty
         next_done = [d for d in next_dones] # copy
         last_truncated = [t for t in last_truncates] # copy
         last_idle = [idle for idle in last_idles] # copy
@@ -226,7 +221,6 @@ class Model_53:
                     memory_action[i] = Memory_Operation_Type.IDLE
 
             if d:
-                self.current_score[i] = 0
                 self.thought_steps[i] = 0
 
         position, content = self.memory.operate(position=position, content=content, operations=memory_action)
