@@ -98,7 +98,7 @@ class Action_Content_Core(Core, nn.Module):
             torch.save({
                 "model_state_dict": self.state_dict(),
             }, f"{self.persistence_path}/core_checkpoint.pth")
-            print("Saved core parameters to", f"{self.persistence_path}/core_checkpoint.pth")
+            logging.info("Saved core parameters to", f"{self.persistence_path}/core_checkpoint.pth")
 
 
     def __compute(self, context, action):
