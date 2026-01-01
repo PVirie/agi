@@ -44,10 +44,12 @@ def get_state_reward(state: Game_State) -> int:
 async def run(env, agent):
 
     all_games_info = await env.list_games()
-    actions = [(Action_Type.RESET, ) for _ in range(4)]
+    all_public_game_ids = [game["game_id"] for game in all_games_info if game.get("game_type") == "public"]
+    # now duplicate game to have at least 3 games for each id
+    selected_game_ids = all_public_game_ids * 3
+    await env.start(selected_game_ids=selected_game_ids)
 
-    await env.start(selected_game_ids=[game["game_id"] for game in all_games_info[:4]])
-
+    actions = [(Action_Type.RESET, ) for _ in range(len(selected_game_ids))]
     start_time = time.perf_counter()
     steps = 0
     while True:

@@ -138,6 +138,12 @@ class ARCAGI3_Environment:
         ]
         """
         results = response.json()
+        known_public_game_titles = set(["LS20", "FT09", "VC33"])
+        # add game type property to each game metadata
+        for game_meta in results:
+            if game_meta["title"] in known_public_game_titles:
+                game_meta["game_type"] = "public"
+
         self.all_game_metadata = results
         return results
     

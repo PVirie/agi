@@ -31,7 +31,7 @@ class PPO(PPO_Learner):
         self.target_kl = 0.03
 
         self.update_epochs = 10
-        self.num_minibatches = 2
+        self.num_minibatches = 4
 
         self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
         
