@@ -12,6 +12,7 @@ class Model_53:
                  trainer: PPO_Learner, supervised_trainer: Supervised_Learner, 
                  context_collector: Context_Collector, action_collector: Context_Collector,
                  memory: Memory,
+                 max_num_thought_steps: int = 2,
                  do_supervision: bool = False,
                  use_memory: bool = True
                  ):
@@ -22,6 +23,7 @@ class Model_53:
         self.actions = action_collector
         self.memory = memory
 
+        self.max_num_thought_steps = max_num_thought_steps
         self.do_supervision = do_supervision
         self.use_memory = use_memory
 
@@ -199,7 +201,7 @@ class Model_53:
         for i, d in enumerate(next_dones):
             flag = ext_flag[i].item()
             self.thought_steps[i] += 1
-            if flag == 0 or self.thought_steps[i] >= 2:
+            if flag == 0 or self.thought_steps[i] >= self.max_num_thought_steps:
                 # observe external
                 ext_action[i] = (a[i].item(), x[i].item(), y[i].item())
                 self.thought_steps[i] = 0

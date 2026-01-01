@@ -13,12 +13,12 @@ def convert_np_array_to_float_tensor(np_array: np.ndarray, device) -> torch.Tens
 
 
 def convert_list_of_np_array_to_float_tensor(np_array_list: List[np.ndarray], device) -> List[torch.Tensor]:
-    before_transpose = [torch.tensor(arr, dtype=torch.float32).to(device) for arr in np_array_list]
-    return torch.stack(before_transpose, dim=1)
+    combined = np.stack(np_array_list, axis=1)
+    return torch.tensor(combined, dtype=torch.float32).to(device)
 
 
 def convert_list_of_float_to_float_tensor(float_list: List[List[float]], device) -> torch.Tensor:
-    before_transpose = torch.tensor(float_list, dtype=torch.float32).to(device)
+    before_transpose = torch.tensor(np.array(float_list, dtype=np.float32), dtype=torch.float32).to(device)
     return torch.transpose(before_transpose, 0, 1)
 
 
