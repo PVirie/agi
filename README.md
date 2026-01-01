@@ -40,5 +40,5 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 -   [x] External memory module
 -   [x] Using available options to improve exploration
 -   [x] Penalize action without any effect
--   [ ] Memory store reward
+-   [x] Memory store reward
 -   [ ] Use RL to select two observation modes

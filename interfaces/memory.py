@@ -5,14 +5,13 @@ from typing import List
 
 class Memory_Operation_Type(Enum):
     CACHE = 0
-    FETCH_BY_POSITION = 1
-    FETCH_BY_CONTENT = 2
-    RESET = 3
-    IDLE = 4  # no operation
+    FETCH = 1
+    RESET = 2
+    IDLE = 3  # no operation
 
 
 class Memory(abc.ABC):
 
     @abc.abstractmethod
-    def operate(self, position, content, operations: List[Memory_Operation_Type]):
+    def operate(self, tuple_record, operation: List[Memory_Operation_Type], index: List[int]=None):
         pass

@@ -167,8 +167,7 @@ if __name__ == "__main__":
         persistence_path=parameters_path
     )
     memory = Memory(
-        position_size=16,
-        content_size=agent_core.content_size,
+        sizes=(1, 16, agent_core.content_size),
         max_slot_size=128
     )
     model_53_agent = model_53.Model_53(

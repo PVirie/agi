@@ -9,7 +9,7 @@ class PPO_Learner(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def learn(self, obs: Any, actions: Any, logprobs: List[Any], values: List[Any], rewards: List[List[float]], next_dones: List[List[bool]], last_value: Any, last_done: List[bool], masks: Any = None):
+    def learn(self, obs: Any, actions: Any, logprobs: List[Any], values: List[Any], rewards: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool], masks: Any = None):
         pass
 
 

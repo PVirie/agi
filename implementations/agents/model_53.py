@@ -87,13 +87,21 @@ class Model_53:
         new_value = np.concatenate([
             np.reshape(reward, (-1, 1)), 
             np.zeros((batch_size, self.agent_core.position_size), dtype=np.float32), 
-            content], axis=1)
+            content
+        ], axis=1)
         update_value = last_obs * (1.0 - update_mask) + new_value * update_mask
         self.obs.update_last(update_value)
 
         # cache new observation into memory
         position = last_obs[:, 1:1 + self.agent_core.position_size]
-        self.memory.operate(position=position, content=content, operations=memory_action)
+        self.memory.operate(
+            tuple_record=(
+                np.reshape(reward, (-1, 1)), 
+                position, 
+                content
+            ), 
+            operation=memory_action
+        )
 
         if (any(next_done) or any(last_truncated) or force_train) and current_cl > 1:
             
@@ -198,6 +206,7 @@ class Model_53:
         # if next done, reset score and thought steps
         ext_action = [None for _ in range(batch_size)]
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
+        memory_fetch_index = [-1 for _ in range(batch_size)]
         for i, d in enumerate(next_dones):
             flag = ext_flag[i].item()
             self.thought_steps[i] += 1
@@ -212,10 +221,12 @@ class Model_53:
                         memory_action[i] = Memory_Operation_Type.IDLE
                     elif flag == 2:
                         # position based retrieve
-                        memory_action[i] = Memory_Operation_Type.FETCH_BY_POSITION
+                        memory_action[i] = Memory_Operation_Type.FETCH
+                        memory_fetch_index[i] = 1
                     elif flag == 3:
                         # content based retrieve
-                        memory_action[i] = Memory_Operation_Type.FETCH_BY_CONTENT
+                        memory_action[i] = Memory_Operation_Type.FETCH
+                        memory_fetch_index[i] = 2
                     elif flag == 4:
                         # record node
                         memory_action[i] = Memory_Operation_Type.CACHE
@@ -225,9 +236,17 @@ class Model_53:
             if d:
                 self.thought_steps[i] = 0
 
-        position, content = self.memory.operate(position=position, content=content, operations=memory_action)
+        reward, position, content = self.memory.operate(
+            tuple_record=(
+                np.zeros((batch_size, 1), dtype=np.float32),
+                position, 
+                content
+            ),
+            operation=memory_action,
+            index=memory_fetch_index
+        )
 
-        self.obs.append(np.zeros((batch_size, 1), dtype=np.float32), position, content)
+        self.obs.append(reward, position, content)
         self.last_truncates.append([False for _ in range(batch_size)])
         self.last_idles.append([ext_action[i] is None for i in range(batch_size)])
         
