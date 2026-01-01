@@ -32,13 +32,20 @@ torch.autograd.set_detect_anomaly(True)
 
 def get_state_reward(state: Game_State) -> int:
     reward = state.delta_score
-    if state == Game_State_Type.WIN:
+    state_type = state.state
+    if state_type == Game_State_Type.WIN:
         reward = 10
-    elif state == Game_State_Type.GAME_OVER:
+    elif state_type == Game_State_Type.GAME_OVER:
         reward = -1
-    if not state.diff_from_last:
-        reward = -1
-    return reward
+    elif state_type == Game_State_Type.IDLE:
+        reward = 0
+    elif state_type == Game_State_Type.NOT_FINISHED:
+        reward = state.delta_score
+        if not state.diff_from_last:
+            reward = -0.1
+    else:
+        reward = 0
+    return reward - 0.01  # small step penalty
     
 
 async def run(env, agent):
@@ -90,12 +97,11 @@ async def run(env, agent):
             break
 
         steps += 1
-        if steps % 10 == 0:
-            logging.info(f"{steps}| Selected actions: {actions}")
-
-        if has_event:
+        if steps % 10 == 0 or has_event:
             log_str = "; ".join([s.short_str() for s in states])
-            logging.info(f"States changed at step {steps}: [{log_str}]")
+            logging.info(f"{steps}| States: [{log_str}]")
+            logging.info(f"{steps}| Rewards: {[get_state_reward(s) for s in states]}")
+            logging.info(f"{steps}| Selected actions: {actions}")
 
         if steps % 100 == 0:
             # compute estimated time left

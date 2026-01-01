@@ -41,6 +41,8 @@ class Model_53:
         self.last_truncates = []
         self.last_idles = []
 
+        self.agent_core.eval()
+
         self.thought_steps = None
 
 
@@ -64,7 +66,7 @@ class Model_53:
                 self.thought_steps[i] = 0
 
         content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
-        reward = np.array([r - 0.01 for r in rewards]) # add small step penalty
+        reward = np.array([r for r in rewards])
         next_done = [d for d in next_dones] # copy
         last_truncated = [t for t in last_truncates] # copy
         last_idle = [idle for idle in last_idles] # copy

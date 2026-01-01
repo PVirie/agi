@@ -88,9 +88,9 @@ class Action_Content_Core(Core, nn.Module):
             try:
                 checkpoint = torch.load(f"{self.persistence_path}/core_checkpoint.pth", map_location=self.device)
                 self.load_state_dict(checkpoint["model_state_dict"])
-                logging.info(f"Core: Loaded checkpoint from {self.persistence_path}/core_checkpoint.pth")
+                logging.info(f"Loaded core parameters from {self.persistence_path}/core_checkpoint.pth")
             except FileNotFoundError:
-                logging.info(f"Core: No checkpoint found at {self.persistence_path}/core_checkpoint.pth")
+                logging.info(f"No core parameters checkpoint found at {self.persistence_path}/core_checkpoint.pth")
 
 
     def save(self):
@@ -98,7 +98,7 @@ class Action_Content_Core(Core, nn.Module):
             torch.save({
                 "model_state_dict": self.state_dict(),
             }, f"{self.persistence_path}/core_checkpoint.pth")
-            print("Core: Saved checkpoint to", f"{self.persistence_path}/core_checkpoint.pth")
+            print("Saved core parameters to", f"{self.persistence_path}/core_checkpoint.pth")
 
 
     def __compute(self, context, action):
