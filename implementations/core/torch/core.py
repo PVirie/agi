@@ -116,6 +116,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
 
     def get_action_and_value(self, context, action, use_action=False, use_grad=True, extra_params=None):
 
+        available_actions = None
         if extra_params is not None:
             available_actions = extra_params.get("available_actions", None)
 
@@ -268,52 +269,40 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
 
     def unpack_action(self, packed_action):
         # packed_action has shape (batch, self.packed_action_size)
-        # return ext_flag, action_data... , content
+        # return int_action, ext_action , content
 
-        ext_part = packed_action[:, 0].astype(int)
-        action = packed_action[:, 1].astype(int)
-        x = packed_action[:, 2].astype(int)
-        y = packed_action[:, 3].astype(int)
+        int_part = packed_action[:, 0].astype(int)
+        ext_part = packed_action[:, 1:4].astype(int)
         content = packed_action[:, 4:].astype(float)
 
-        return ext_part, action, x, y, content
+        return int_part, ext_part, content
     
 
-    def pack_action(self, b_ext=None, b_action=None, b_x=None, b_y=None, b_content=None):
+    def pack_action(self, b_int=None, b_ext=None, b_content=None):
         # b_xxx has shape (batch, ...)
         # return packed_action_seq of shape (batch, self.packed_action_size) of type int
         # replace none with zeros
 
         batch_size = None
-        if b_ext is not None:
+        if b_int is not None:
+            batch_size = b_int.shape[0]
+        elif b_ext is not None:
             batch_size = b_ext.shape[0]
-        elif b_action is not None:
-            batch_size = b_action.shape[0]
-        elif b_x is not None:
-            batch_size = b_x.shape[0]
-        elif b_y is not None:
-            batch_size = b_y.shape[0]
         elif b_content is not None:
             batch_size = b_content.shape[0]
         else:
-            raise ValueError("At least one of b_ext, b_action, b_x, b_y, b_content must be provided")
+            raise ValueError("At least one of b_int, b_ext, b_content must be provided")
         
+        if b_int is None:
+            b_int = np.zeros((batch_size,), dtype=int)
         if b_ext is None:
-            b_ext = np.zeros((batch_size,), dtype=int)
-        if b_action is None:
-            b_action = np.zeros((batch_size,), dtype=int)
-        if b_x is None:
-            b_x = np.zeros((batch_size,), dtype=int)
-        if b_y is None:
-            b_y = np.zeros((batch_size,), dtype=int)
+            b_ext = np.zeros((batch_size, 3), dtype=int)
         if b_content is None:
             b_content = np.zeros((batch_size, self.content_size), dtype=float)
 
         packed_action = np.concatenate([
-            b_ext.reshape((batch_size, 1)),
-            b_action.reshape((batch_size, 1)),
-            b_x.reshape((batch_size, 1)),
-            b_y.reshape((batch_size, 1)),
+            b_int.reshape((batch_size, 1)),
+            b_ext.reshape((batch_size, 3)),
             b_content
         ], axis=-1).astype(int)
 

@@ -19,5 +19,5 @@ class Core(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def pack_action(self, b_ext=None, b_action=None, b_x=None, b_y=None, b_content=None):
+    def pack_action(self, b_int=None, b_ext=None, b_content=None):
         pass

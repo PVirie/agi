@@ -202,19 +202,19 @@ class Model_53:
         self.next_dones.append(next_done)
 
         # extract output here
-        ext_flag, a, x, y, content = self.agent_core.unpack_action(packed_action[:, -1, ...])
+        int_action, ext_action, content = self.agent_core.unpack_action(packed_action[:, -1, ...])
         position = position[:, -1, ...]
 
         # if next done, reset score and thought steps
-        ext_action = [None for _ in range(batch_size)]
+        return_action = [None for _ in range(batch_size)]
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         memory_fetch_index = [-1 for _ in range(batch_size)]
         for i, d in enumerate(next_dones):
-            flag = ext_flag[i].item()
+            flag = int_action[i].item()
             self.thought_steps[i] += 1
             if flag == 0 or self.thought_steps[i] >= self.max_num_thought_steps:
                 # observe external
-                ext_action[i] = (a[i].item(), x[i].item(), y[i].item())
+                return_action[i] = ext_action[i]
                 self.thought_steps[i] = 0
                 memory_action[i] = Memory_Operation_Type.IDLE
             else:
@@ -250,6 +250,6 @@ class Model_53:
 
         self.obs.append(reward, position, content)
         self.last_truncates.append([False for _ in range(batch_size)])
-        self.last_idles.append([ext_action[i] is None for i in range(batch_size)])
+        self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         
-        return ext_action
+        return return_action

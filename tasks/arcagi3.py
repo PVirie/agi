@@ -86,7 +86,7 @@ async def run(env, agent):
             force_train=steps % 10 == 9
         )
         actions = [
-            ((Action_Type(a[0]), a[1], a[2]) if a is not None else None) if not d else (Action_Type.RESET, )
+            ((Action_Type(a[0].item()), a[1].item(), a[2].item()) if a is not None else None) if not d else (Action_Type.RESET, )
             for a, d in zip(actions, next_done)
         ]
         await asyncio.sleep(1)
