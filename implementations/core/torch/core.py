@@ -11,12 +11,14 @@ from interfaces.core import Core
 from .base import init_weights, Categorical_With_Mask_Sample
 from .sfstct import SpatialEncoder, TemporalEncoder
 from .temporal_unet import TemporalUNet
+from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Action_Content_Core(Core, nn.Module):
+class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, device=None, persistence_path=None):
-        super().__init__()
+        nn.Module.__init__(self)
+        Safe_nn_Module.__init__(self, name="core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.action_size = action_size
@@ -62,10 +64,7 @@ class Action_Content_Core(Core, nn.Module):
         )
 
         self.reset_parameters()
-
-        self.persistence_path = persistence_path
-        if self.persistence_path is not None:
-            self.load()
+        self.load()
 
 
     def reset_parameters(self):
@@ -81,24 +80,6 @@ class Action_Content_Core(Core, nn.Module):
 
         # make sure value_logstd is initialized to 0
         nn.init.constant_(self.value_logstd, 0.0)
-
-
-    def load(self):
-        if self.persistence_path is not None:
-            try:
-                checkpoint = torch.load(f"{self.persistence_path}/core_checkpoint.pth", map_location=self.device)
-                self.load_state_dict(checkpoint["model_state_dict"])
-                logging.info(f"Loaded core parameters from {self.persistence_path}/core_checkpoint.pth")
-            except FileNotFoundError:
-                logging.info(f"No core parameters checkpoint found at {self.persistence_path}/core_checkpoint.pth")
-
-
-    def save(self):
-        if self.persistence_path is not None:
-            torch.save({
-                "model_state_dict": self.state_dict(),
-            }, f"{self.persistence_path}/core_checkpoint.pth")
-            logging.info("Saved core parameters to", f"{self.persistence_path}/core_checkpoint.pth")
 
 
     def __compute(self, context, action):
