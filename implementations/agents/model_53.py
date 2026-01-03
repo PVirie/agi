@@ -117,7 +117,7 @@ class Model_53:
                 recorded_actions = self.actions.make_batch(batch_led=True)
                 last_actions = self.agent_core.pack_action(b_content=content)
                 target_actions = np.concatenate([
-                    recorded_actions[:, 1:, :],
+                    recorded_actions[:, :-1, :],
                     np.reshape(last_actions, (batch_size, 1, -1))
                 ], axis=1)
                 

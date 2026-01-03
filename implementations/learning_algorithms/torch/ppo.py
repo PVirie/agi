@@ -67,8 +67,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         sequence_size = actions.shape[1]
         minibatch_size = min(batch_size // self.num_minibatches, 8)
 
-        # Get old log probabilities and values
         with torch.no_grad():
+            # Get old log probabilities and values
             _, _, logprobs, _, values = self.agent.get_action_and_value(
                 obs, 
                 actions,
@@ -76,7 +76,7 @@ class PPO(RL_Learner, Safe_nn_Module):
                 use_grad=True
             )
 
-        with torch.no_grad():
+            # Bootstrap value if not done
             advantages = []
             lastgaelam = torch.zeros(batch_size).to(self.device)
             for t in reversed(range(sequence_size)):
@@ -111,16 +111,15 @@ class PPO(RL_Learner, Safe_nn_Module):
                 if torch.sum(mb_masks) < 1e-8:
                     continue
 
+                mb_obs = obs[mb_inds, ...]
+                mb_actions = actions[mb_inds, ...]
+
                 _, _, b_newlogprob, b_entropy, b_newvalue = self.agent.get_action_and_value(
-                    obs, 
-                    actions,
+                    mb_obs, 
+                    mb_actions,
                     use_action=True,
                     use_grad=True
                 )
-
-                b_newlogprob = b_newlogprob[mb_inds, ...]
-                b_entropy = b_entropy[mb_inds, ...]
-                b_newvalue = b_newvalue[mb_inds, ...]
                 
                 logratio = b_newlogprob - mb_log_prob
                 logratio = torch.clamp(logratio, -10.0, 10.0)

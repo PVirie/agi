@@ -154,14 +154,11 @@ class TemporalUNet(nn.Module):
         # Flatten spatial dims
         heatmap_flat = heatmap_logits.view(N, -1)
         
-        # Hard Argmax to find the "winning" pixel
-        _, max_indices = torch.max(heatmap_flat, dim=1) # [N]
-        
-        # Gather Features
+        # Soft Argmax to find expected feature vector
+        heatmap_probs = F.softmax(heatmap_flat, dim=1) # [N, H*W]
         features_flat = feature_map.view(N, C, -1)
-        gather_indices = max_indices.view(N, 1, 1).expand(N, C, 1)
-        selected_features = features_flat.gather(2, gather_indices).squeeze(2) # [N, C]
-        
+        selected_features = torch.bmm(features_flat, heatmap_probs.unsqueeze(2)).squeeze(2) # [N, C]
+
         return selected_features
 
 
