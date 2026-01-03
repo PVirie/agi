@@ -15,11 +15,11 @@ class DoubleConv(nn.Module):
         if not mid_channels:
             mid_channels = out_channels
         self.double_conv = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_channels),
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False, padding_mode='reflect'),
+            nn.GroupNorm(num_groups=min(32, mid_channels), num_channels=mid_channels),
             nn.ReLU(inplace=True),
-            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False, padding_mode='reflect'),
+            nn.GroupNorm(num_groups=min(32, out_channels), num_channels=out_channels),
             nn.ReLU(inplace=True)
         )
 
@@ -57,8 +57,7 @@ class Up(nn.Module):
         
         diffY = x2.size()[2] - x1.size()[2]
         diffX = x2.size()[3] - x1.size()[3]
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2])
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2], mode='reflect')
         
         x = torch.cat([x2, x1], dim=1)
         return self.conv(x)
@@ -134,8 +133,16 @@ class TemporalUNet(nn.Module):
         self.up3 = Up(128 // factor, 64 // factor, 64, bilinear)
         self.up4 = Up(64 // factor, 32, 32, bilinear)
 
-        self.head_heatmap = nn.Conv2d(32, 1, kernel_size=1)
-        self.head_content = nn.Conv2d(32, n_channels, kernel_size=1)
+        self.head_heatmap = nn.Sequential(
+            nn.Conv2d(32, 16, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(16, 1, kernel_size=1)
+        )
+        self.head_content = nn.Sequential(
+            nn.Conv2d(32, 16, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(16, n_channels, kernel_size=1)
+        )
         
         self.reset_parameters()
 
@@ -203,11 +210,13 @@ class TemporalUNet(nn.Module):
         # 1. Softmax over the 2D spatial map to get probabilities
         heatmap_probs = F.softmax(heatmap_logits.view(B * T, -1), dim=1).view(B * T, 1, H, W)
         
-        # 2. Sum over Height (dim 2) to get X distribution (Width)
-        x_probs = torch.sum(heatmap_probs, dim=2).squeeze(1) # [B*T, 64]
+        # 2. max over Height (dim 2) to get X distribution (Width)
+        x_probs = torch.max(heatmap_probs, dim=2).values.squeeze(1) # [B*T, 64]
+        x_probs = x_probs / (x_probs.sum(dim=1, keepdim=True) + 1e-8)
         
-        # 3. Sum over Width (dim 3) to get Y distribution (Height)
-        y_probs = torch.sum(heatmap_probs, dim=3).squeeze(1) # [B*T, 64]
+        # 3. max over Width (dim 3) to get Y distribution (Height)
+        y_probs = torch.max(heatmap_probs, dim=3).values.squeeze(1) # [B*T, 64]
+        y_probs = y_probs / (y_probs.sum(dim=1, keepdim=True) + 1e-8)
         
         # --- Compute flat features ---
         sampled_features = self._get_max_features(x_features, heatmap_logits)
