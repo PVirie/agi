@@ -126,10 +126,9 @@ class Model_53:
                 masks = masks * (1.0 - np.stack(self.last_idles[1:], axis=1, dtype=np.float32))
                 # make feature mask of shape (batch_size, context_length, 5)
                 # and filter only content part
-                masks = np.expand_dims(masks, axis=-1)
                 masks = np.concatenate([
                     np.zeros((batch_size, masks.shape[1], 4), dtype=np.float32),
-                    masks
+                    np.reshape(masks, (batch_size, masks.shape[1], 1))
                 ], axis=-1)
 
                 self.supervised_trainer.train(
@@ -182,7 +181,7 @@ class Model_53:
 
         # Choose a random action
         # this one return batch leading tensors (batch, 1, ...)
-        packed_action, position, newlogprob, _, newvalue = self.agent_core.get_action_and_value(
+        packed_action, position, _, _, _ = self.agent_core.get_action_and_value(
             self.obs.make_batch(batch_led=True),
             self.actions.make_batch(batch_led=True, append_last=True),
             use_action=False,
