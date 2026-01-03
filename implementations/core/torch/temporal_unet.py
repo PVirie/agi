@@ -206,31 +206,18 @@ class TemporalUNet(nn.Module):
         # --- Generate Heatmap ---
         heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, 64, 64]
         
-        # --- Compute X/Y Distributions (Marginalization) ---
-        # 1. Softmax over the 2D spatial map to get probabilities
-        heatmap_probs = F.softmax(heatmap_logits.view(B * T, -1), dim=1).view(B * T, 1, H, W)
-        
-        # 2. max over Height (dim 2) to get X distribution (Width)
-        x_probs = torch.max(heatmap_probs, dim=2).values.squeeze(1) # [B*T, 64]
-        x_probs = x_probs / (x_probs.sum(dim=1, keepdim=True) + 1e-8)
-        
-        # 3. max over Width (dim 3) to get Y distribution (Height)
-        y_probs = torch.max(heatmap_probs, dim=3).values.squeeze(1) # [B*T, 64]
-        y_probs = y_probs / (y_probs.sum(dim=1, keepdim=True) + 1e-8)
-        
         # --- Compute flat features ---
-        sampled_features = self._get_max_features(x_features, heatmap_logits)
+        sampled_features = x_features.mean(dim=(2, 3))  # [B*T, 32]
 
         # --- Compute direct content ---
         content_logits = self.head_content(x_features) # [B*T, C, 64, 64]
         
         # --- Reshape and Return ---
-        x_probs = x_probs.view(B, T, -1)
-        y_probs = y_probs.view(B, T, -1)
+        heatmap_logits = heatmap_logits.view(B, T, H, W)
         sampled_features = sampled_features.view(B, T, -1)
         content_logits = content_logits.view(B, T, C, H, W)
         
-        return x_probs, y_probs, sampled_features, content_logits
+        return heatmap_logits, sampled_features, content_logits
 
 
 if __name__ == "__main__":
@@ -239,10 +226,9 @@ if __name__ == "__main__":
     img = torch.randn(2, 5, 1, 64, 64)
     vec = torch.randn(2, 5, 128)
     
-    x_p, y_p, features, content_logits = model(img, vec)
+    heatmap_logits, features, content_logits = model(img, vec)
     
-    print(f"X Log-Probs: {x_p.shape}")   # [2, 5, 64]
-    print(f"Y Log-Probs: {y_p.shape}")   # [2, 5, 64]
+    print(f"Heatmap: {heatmap_logits.shape}")   # [2, 5, 64, 64]
     print(f"Sampled Features: {features.shape}") # [2, 5, 32]
     print(f"Content Logits: {content_logits.shape}") # [2, 5, 1, 64, 64]
     print("Forward pass successful.")

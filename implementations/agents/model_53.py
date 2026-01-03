@@ -124,10 +124,10 @@ class Model_53:
                 # masks has shape (batch_size, context_length)
                 masks = self.actions.make_mask(batch_led=True)
                 masks = masks * (1.0 - np.stack(self.last_idles[1:], axis=1, dtype=np.float32))
-                # make feature mask of shape (batch_size, context_length, 5)
+                # make feature mask of shape (batch_size, context_length, 4)
                 # and filter only content part
                 masks = np.concatenate([
-                    np.zeros((batch_size, masks.shape[1], 4), dtype=np.float32),
+                    np.zeros((batch_size, masks.shape[1], 3), dtype=np.float32),
                     np.reshape(masks, (batch_size, masks.shape[1], 1))
                 ], axis=-1)
 

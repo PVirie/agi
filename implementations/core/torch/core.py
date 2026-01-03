@@ -24,7 +24,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         self.action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
-        self.packed_action_size = 1 + 3 + self.content_size  # ext_flag + action + x + y + content
+        self.packed_action_size = 1 + 2 + self.content_size  # ext_flag + action + loc + content
 
         self.width = width
         self.height = height
@@ -55,7 +55,6 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
 
         self.value_logstd = nn.Parameter(torch.zeros(1, 1))
 
-        # self.position_step = Multilayer_Relu(position_size + action_size + width + height, position_size, hidden_size, 2)
         self.position_step = nn.Sequential(
             nn.Linear(position_size + action_size, hidden_size),
             nn.GELU(),
@@ -93,10 +92,11 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         image_part = torch.reshape(image_content, (batch_size, context_size, self.channel, self.height, self.width))
         non_image_part = context[:, :, :1 + self.position_size]
 
-        x_p, y_p, features, content_logits = self.temporal_unet(image_part, non_image_part)
+        heatmap_logits, features, content_logits = self.temporal_unet(image_part, non_image_part)
+        heatmap_logits = torch.reshape(heatmap_logits, (batch_size, context_size, self.height * self.width))
         content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
         
-        return x_p, y_p, features, content_logits
+        return heatmap_logits, features, content_logits
     
 
     def get_latest_value(self, context, action):
@@ -108,7 +108,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
             action = torch.zeros((context.size(0), context.size(1), self.packed_action_size), dtype=torch.int64).to(self.device)
 
         with torch.no_grad():
-            _, _, features, _ = self.__compute(context, action)
+            _, features, _ = self.__compute(context, action)
             logits_value = self.head_value(features)    # (B, T, 1)
             
         return logits_value[:, -1, ...].cpu().numpy()
@@ -129,48 +129,41 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
             action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
         batch_size = context.size(0)
-        x_p, y_p, features, content_logits = self.__compute(context, action)
+        heatmap_logits, features, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, 5)
-        logits_action = self.head_action(features) # (B, T, 6)
+        logits_action = self.head_action(features) # (B, T, action_size)
         pprobs_content = self.head_content(content_logits) # (B, T, content_size)
         value = self.head_value(features)    # (B, T, 1)
 
         props_flag = Categorical(logits=logits_flag)
         props_action = Categorical_With_Mask_Sample(logits=logits_action)
-        props_x = Categorical(probs=x_p)
-        props_y = Categorical(probs=y_p)
+        props_loc = Categorical(logits=heatmap_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
         if use_action:
             action_flag = action[:, :, 0]
             action_action = action[:, :, 1]
-            action_x = action[:, :, 2]
-            action_y = action[:, :, 3]
-            action_content = action[:, :, 4:]
+            action_loc = action[:, :, 2]
+            action_content = action[:, :, 3:]
         else:
             action_flag = props_flag.sample()
             action_action = props_action.sample_from_available_indices(indices=available_actions)
-            action_x = props_x.sample()
-            action_y = props_y.sample()
+            action_loc = props_loc.sample()
             action_content = props_content.sample()
 
             action = torch.cat([
                 action_flag.unsqueeze(-1),
                 action_action.unsqueeze(-1),
-                action_x.unsqueeze(-1),
-                action_y.unsqueeze(-1),
+                action_loc.unsqueeze(-1),
                 action_content
             ], dim=-1)
 
 
         # compute position
         last_position = context[:, :, 1:1 + self.position_size]
-        # make one hot encoding for action, x, y
+        # make one hot encoding for action, location
         action_onehot = torch.nn.functional.one_hot(action_action.long(), num_classes=self.action_size).float()
-        # x_onehot = torch.nn.functional.one_hot(action_x.long(), num_classes=self.width).float()
-        # y_onehot = torch.nn.functional.one_hot(action_y.long(), num_classes=self.height).float()
-        # position = self.position_step(torch.concat([last_position, action_onehot, x_onehot, y_onehot], dim=-1))
         logits_position = self.position_step(torch.concat([last_position, action_onehot], dim=-1))
         props_position = Bernoulli(probs=logits_position)
         position = props_position.sample()
@@ -178,20 +171,17 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
 
         log_prob_flag = props_flag.log_prob(action_flag)
         log_prob_action = props_action.log_prob(action_action)
-        log_prob_x = props_x.log_prob(action_x)
-        log_prob_y = props_y.log_prob(action_y)
+        log_prob_loc = props_loc.log_prob(action_loc)
         log_prob_content = props_content.log_prob(action_content).mean(-1)
         log_prob_position = props_position.log_prob(position).mean(-1)
-        batch_log_prob = log_prob_flag + log_prob_action + log_prob_x + log_prob_y + log_prob_content + log_prob_position
+        batch_log_prob = log_prob_flag + log_prob_action + log_prob_loc + log_prob_content + log_prob_position
         
-
         entropy_flag = props_flag.entropy()
         entropy_action = props_action.entropy()
-        entropy_x = props_x.entropy()
-        entropy_y = props_y.entropy()
+        entropy_loc = props_loc.entropy()
         entropy_content = props_content.entropy().mean(-1)
         entropy_position = props_position.entropy().mean(-1)
-        batch_entropy = entropy_flag + entropy_action + entropy_x + entropy_y + entropy_content + entropy_position
+        batch_entropy = entropy_flag + entropy_action + entropy_loc + entropy_content + entropy_position
 
         # collapse last dimension
         batch_log_prob = torch.reshape(batch_log_prob, (batch_size, -1))
@@ -214,7 +204,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         context has shape (batch, context_size, ...)
         action has shape (batch, context_size, self.packed_action_size)
         target_action has shape (batch, context_size, self.packed_action_size)
-        f_mask has shape (batch, context_size, 5)
+        f_mask has shape (batch, context_size, 4)
         """
 
         batch_size = context.size(0)
@@ -224,25 +214,24 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
         if action is None:
-            action = torch.zeros((batch_size, context_size, 1 + 3 + self.content_size), dtype=torch.float32).to(self.device)
+            action = torch.zeros((batch_size, context_size, self.packed_action_size), dtype=torch.float32).to(self.device)
         elif isinstance(action, np.ndarray):
             action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
         if f_mask is None:
-            f_mask = torch.ones((batch_size, context_size, 5), dtype=torch.float32).to(self.device)
+            f_mask = torch.ones((batch_size, context_size, 4), dtype=torch.float32).to(self.device)
         elif isinstance(f_mask, np.ndarray):
             f_mask = torch.tensor(f_mask, dtype=torch.float32).to(self.device)
 
-        x_p, y_p, features, content_logits = self.__compute(context, action)
+        heatmap_logits, features, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, 5)
-        logits_action = self.head_action(features) # (B, T, 6)
+        logits_action = self.head_action(features) # (B, T, action_size)
         pprobs_content = self.head_content(content_logits) # (B, T, content_size)
 
         props_flag = Categorical(logits=logits_flag)
         props_action = Categorical(logits=logits_action)
-        props_x = Categorical(probs=x_p)
-        props_y = Categorical(probs=y_p)
+        props_loc = Categorical(logits=heatmap_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
         if target_action is None:
@@ -250,17 +239,15 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
 
         action_flag = target_action[:, :, 0]
         action_action = target_action[:, :, 1]
-        action_x = target_action[:, :, 2]
-        action_y = target_action[:, :, 3]
-        action_content = target_action[:, :, 4:]
+        action_loc = target_action[:, :, 2]
+        action_content = target_action[:, :, 3:]
 
         log_prob_flag = props_flag.log_prob(action_flag)
         log_prob_action = props_action.log_prob(action_action)
-        log_prob_x = props_x.log_prob(action_x)
-        log_prob_y = props_y.log_prob(action_y)
+        log_prob_loc = props_loc.log_prob(action_loc)
         log_prob_content = props_content.log_prob(action_content).mean(-1)
 
-        log_prob = torch.stack([log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content], dim=-1)
+        log_prob = torch.stack([log_prob_flag, log_prob_action, log_prob_loc, log_prob_content], dim=-1)
         masked_log_prob = log_prob * f_mask
         sum_log_prob = torch.sum(masked_log_prob, dim=-1)
 
@@ -272,8 +259,14 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         # return int_action, ext_action , content
 
         int_part = packed_action[:, 0].astype(int)
-        ext_part = packed_action[:, 1:4].astype(int)
-        content = packed_action[:, 4:].astype(float)
+        pre_ext_part = packed_action[:, 1:3].astype(int)
+        content = packed_action[:, 3:].astype(float)
+
+        # split pre_ext_part int of height times width into flag, x, y
+        ext_part = np.zeros((packed_action.shape[0], 3), dtype=int)
+        ext_part[:, 0] = pre_ext_part[:, 0]
+        ext_part[:, 1] = pre_ext_part[:, 1] % self.width
+        ext_part[:, 2] = pre_ext_part[:, 1] // self.width
 
         return int_part, ext_part, content
     
@@ -300,9 +293,14 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         if b_content is None:
             b_content = np.zeros((batch_size, self.content_size), dtype=float)
 
+        b_ext = np.reshape(b_ext, (batch_size, 3))
+        b_pack_ext = np.zeros((batch_size, 2), dtype=int)
+        b_pack_ext[:, 0] = b_ext[:, 0]
+        b_pack_ext[:, 1] = b_ext[:, 1] + b_ext[:, 2] * self.width
+
         packed_action = np.concatenate([
-            b_int.reshape((batch_size, 1)),
-            b_ext.reshape((batch_size, 3)),
+            np.reshape(b_int, (batch_size, 1)),
+            b_pack_ext,
             b_content
         ], axis=-1).astype(int)
 
