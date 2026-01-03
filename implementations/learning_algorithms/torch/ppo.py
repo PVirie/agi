@@ -6,7 +6,7 @@ import numpy as np
 import time
 import logging
 
-from interfaces.learning import PPO_Learner
+from interfaces.learning import RL_Learner
 from interfaces.core import Core
 from interfaces.data_structure import Context_Collector
 from utilities.safe_torch_module import Safe_nn_Module
@@ -14,7 +14,7 @@ from utilities.safe_torch_module import Safe_nn_Module
 from .base import convert_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, masked_mean, masked_std
 
 
-class PPO(PPO_Learner, Safe_nn_Module):
+class PPO(RL_Learner, Safe_nn_Module):
 
     def __init__(self, agent: Core, device, persistence_path=None):
         self.agent = agent
@@ -47,12 +47,10 @@ class PPO(PPO_Learner, Safe_nn_Module):
         self.optimizer.param_groups[0]["lr"] = lrnow
 
 
-    def learn(self, obs: Any, actions: Any, logprobs: List[Any], values: List[Any], rewards: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool], masks: Any = None):
+    def learn(self, obs: Any, actions: Any, rewards: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool], masks: Any = None):
         """
         obs: np array of shape (batch_size, context_length, ...)
         actions: np array of shape (batch_size, context_length, ...)
-        logprobs: list of np array of shape (batch_size)
-        values: list np array of shape (batch_size)
         rewards: list of np array of shape (batch_size)
         next_dones: list of bools of length batch_size
         last_value: np array of shape (batch_size)
@@ -62,14 +60,21 @@ class PPO(PPO_Learner, Safe_nn_Module):
         # Use dim 0 as context length dimension
         obs = convert_np_array_to_float_tensor(obs, self.device)
         actions = convert_np_array_to_float_tensor(actions, self.device)
-        logprobs = convert_list_of_np_array_to_float_tensor(logprobs, self.device)
-        values = convert_list_of_np_array_to_float_tensor(values, self.device)
         rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
         masks = torch.ones_like(rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
 
         batch_size = actions.shape[0]
         sequence_size = actions.shape[1]
         minibatch_size = min(batch_size // self.num_minibatches, 8)
+
+        # Get old log probabilities and values
+        with torch.no_grad():
+            _, _, logprobs, _, values = self.agent.get_action_and_value(
+                obs, 
+                actions,
+                use_action=True,
+                use_grad=True
+            )
 
         with torch.no_grad():
             advantages = []

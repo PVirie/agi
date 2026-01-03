@@ -1,5 +1,5 @@
 import numpy as np
-from interfaces.learning import PPO_Learner, Supervised_Learner
+from interfaces.learning import RL_Learner, Supervised_Learner
 from interfaces.core import Core
 from interfaces.memory import Memory, Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
@@ -9,7 +9,7 @@ class Model_53:
     
     def __init__(self, 
                  agent_core: Core, 
-                 trainer: PPO_Learner, supervised_trainer: Supervised_Learner, 
+                 trainer: RL_Learner, supervised_trainer: Supervised_Learner, 
                  context_collector: Context_Collector, action_collector: Context_Collector,
                  memory: Memory,
                  max_num_thought_steps: int = 2,
@@ -34,8 +34,6 @@ class Model_53:
         self.trainer.reset(time=0.0)
         self.obs.clear()
         self.actions.clear()
-        self.logprobs = []
-        self.values = []
         self.rewards = []
         self.next_dones = []
         self.last_truncates = []
@@ -51,6 +49,7 @@ class Model_53:
         batch_size = len(latest_frames)
         current_cl = len(self.rewards)
 
+        # initialize
         if self.thought_steps is None:
             self.thought_steps = [0 for _ in range(batch_size)]
             self.obs.append(
@@ -58,6 +57,7 @@ class Model_53:
                 np.zeros((batch_size, self.agent_core.position_size), dtype=np.float32), 
                 np.zeros((batch_size, self.agent_core.content_size), dtype=np.float32)
             )
+            self.rewards.append(np.zeros((batch_size,), dtype=np.float32))
             self.last_truncates.append([True for _ in range(batch_size)])
             self.last_idles.append([False for _ in range(batch_size)])
 
@@ -93,6 +93,7 @@ class Model_53:
         ], axis=1)
         update_value = last_obs * (1.0 - update_mask) + new_value * update_mask
         self.obs.update_last(update_value)
+        self.rewards[-1] = reward
 
         # cache new observation into memory
         position = last_obs[:, 1:1 + self.agent_core.position_size]
@@ -154,9 +155,7 @@ class Model_53:
             self.trainer.learn(
                 obs=self.obs[:-1].make_batch(batch_led=True), 
                 actions=self.actions.make_batch(batch_led=True), 
-                logprobs=self.logprobs, 
-                values=self.values, 
-                rewards=self.rewards, 
+                rewards=self.rewards[1:],
                 next_dones=self.next_dones, 
                 last_value=np.reshape(last_value, (-1)), 
                 last_done=next_done,
@@ -167,15 +166,14 @@ class Model_53:
             self.trainer.save()
             self.agent_core.save()
             
+            # reset
             self.trainer.reset(time=0.0)
 
             left_over_slide = self.actions.mark()
-            self.logprobs = self.logprobs[left_over_slide]
-            self.values = self.values[left_over_slide]
-            self.rewards = self.rewards[left_over_slide]
             self.next_dones = self.next_dones[left_over_slide]
 
             left_over_slide = self.obs.mark(skip_last=True)
+            self.rewards = self.rewards[left_over_slide]
             self.last_truncates = self.last_truncates[left_over_slide]
             self.last_idles = self.last_idles[left_over_slide]
 
@@ -194,13 +192,6 @@ class Model_53:
             }
         )
 
-        # store last states
-        self.actions.append(packed_action[:, -1, ...])
-        self.logprobs.append(newlogprob[:, -1, ...])
-        self.values.append(newvalue[:, -1, ...])
-        self.rewards.append(reward)
-        self.next_dones.append(next_done)
-
         # extract output here
         int_action, ext_action, content = self.agent_core.unpack_action(packed_action[:, -1, ...])
         position = position[:, -1, ...]
@@ -209,6 +200,7 @@ class Model_53:
         return_action = [None for _ in range(batch_size)]
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         memory_fetch_index = [-1 for _ in range(batch_size)]
+        selected_int_action = np.zeros((batch_size,), dtype=int)
         for i, d in enumerate(next_dones):
             flag = int_action[i].item()
             self.thought_steps[i] += 1
@@ -217,23 +209,29 @@ class Model_53:
                 return_action[i] = ext_action[i]
                 self.thought_steps[i] = 0
                 memory_action[i] = Memory_Operation_Type.IDLE
+                selected_int_action[i] = 0
             else:
                 if self.use_memory:
                     if flag == 1:
                         memory_action[i] = Memory_Operation_Type.IDLE
+                        selected_int_action[i] = 1
                     elif flag == 2:
                         # position based retrieve
                         memory_action[i] = Memory_Operation_Type.FETCH
                         memory_fetch_index[i] = 1
+                        selected_int_action[i] = 2
                     elif flag == 3:
                         # content based retrieve
                         memory_action[i] = Memory_Operation_Type.FETCH
                         memory_fetch_index[i] = 2
+                        selected_int_action[i] = 3
                     elif flag == 4:
                         # record node
                         memory_action[i] = Memory_Operation_Type.CACHE
+                        selected_int_action[i] = 4
                 else:
                     memory_action[i] = Memory_Operation_Type.IDLE
+                    selected_int_action[i] = 1
 
             if d:
                 self.thought_steps[i] = 0
@@ -248,7 +246,19 @@ class Model_53:
             index=memory_fetch_index
         )
 
+        # off-policy warning: here we store the corrected action after memory fetch
+        selected_actions = self.agent_core.pack_action(
+            b_int=selected_int_action,
+            b_ext=ext_action,
+            b_content=content
+        )
+        
+        # store last states
+        self.actions.append(selected_actions)
+        self.next_dones.append(next_done)
+        
         self.obs.append(reward, position, content)
+        self.rewards.append(reward)
         self.last_truncates.append([False for _ in range(batch_size)])
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         
