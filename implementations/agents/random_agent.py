@@ -1,14 +1,23 @@
 import random
 import logging
 
+from interfaces.agent import Agent
 
-class Random_Agent:
+
+class Random_Agent(Agent):
 
     def __init__(self, id: str):
         self.id = id
 
 
-    def choose_action(self, last_idles, next_dones, last_truncates, last_resets, latest_frames, rewards, next_available_actions, force_train=False):
+    def reset(self):
+        logging.info(f"Random agent {self.id} reset.")
+
+
+    def choose_action(self, 
+                      last_idles, next_dones, last_truncates, last_resets, 
+                      latest_frames, rewards, next_available_actions, 
+                      force_train=False):
         logging.info(f"Random agent {self.id} choosing action...")
         actions = []
         for d in next_dones:

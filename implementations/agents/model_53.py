@@ -1,11 +1,12 @@
 import numpy as np
 from interfaces.learning import RL_Learner, Supervised_Learner
+from interfaces.agent import Agent
 from interfaces.core import Core
 from interfaces.memory import Memory, Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
 
 
-class Model_53:
+class Model_53(Agent):
     
     def __init__(self, 
                  agent_core: Core, 
@@ -44,7 +45,10 @@ class Model_53:
         self.thought_steps = None
 
 
-    def choose_action(self, last_idles, next_dones, last_truncates, last_resets, latest_frames, rewards, next_available_actions, force_train=False):
+    def choose_action(self, 
+                      last_idles, next_dones, last_truncates, last_resets, 
+                      latest_frames, rewards, next_available_actions, 
+                      force_train=False):
 
         batch_size = len(latest_frames)
         current_cl = len(self.rewards)

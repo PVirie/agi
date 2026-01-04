@@ -145,7 +145,7 @@ if __name__ == "__main__":
     np.random.seed(20251118)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/arcagi3"
+    experiment_path = f"{APP_ROOT}/experiments/arcagi3_cognition"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -155,7 +155,7 @@ if __name__ == "__main__":
 
     env = ARCAGI3_Environment()
 
-    random_agent = random_agent.Random_Agent("agent_001")
+    random_agent = random_agent.Random_Agent("01")
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)

@@ -154,8 +154,6 @@ class TemporalUNet(nn.Module):
 
     def reset_parameters(self):
         self.apply(init_weights)
-        # Initialize positional embedding
-        nn.init.trunc_normal_(self.pos_embedding, std=0.02)
 
 
     def _get_max_features(self, feature_map, heatmap_logits):
