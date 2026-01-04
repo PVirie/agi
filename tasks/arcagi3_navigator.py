@@ -20,7 +20,7 @@ from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_T
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from implementations.agents import random_agent, model_53
+from implementations.agents import random_agent, model_54
 from implementations.core.torch.core import Action_Content_Core as Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
@@ -30,23 +30,17 @@ from implementations.core.energy_memory import Energy_Memory as Memory
 torch.autograd.set_detect_anomaly(True)
 
 
-def get_state_reward(state: Game_State) -> int:
-    reward = state.delta_score
-    state_type = state.state
-    if state_type == Game_State_Type.WIN:
-        reward = 10
-    elif state_type == Game_State_Type.GAME_OVER:
-        reward = -1
-    elif state_type == Game_State_Type.IDLE:
-        reward = 0
-    elif state_type == Game_State_Type.NOT_FINISHED:
-        reward = state.delta_score
-        if not state.diff_from_last:
-            reward = -0.1
-    else:
-        reward = 0
-    return reward - 0.01  # small step penalty
+def get_env_action(agent_action, state: Game_State):
+    if agent_action is None:
+        return None
     
+    if state.state == Game_State_Type.WIN   :
+        return (Action_Type.RESET, )
+    elif state.state == Game_State_Type.GAME_OVER:
+        return (Action_Type.RESTART, )
+    else:
+        return (Action_Type(agent_action[0].item()), agent_action[1].item(), agent_action[2].item())
+
 
 async def run(env, agent):
 
@@ -57,38 +51,15 @@ async def run(env, agent):
     await env.start(selected_game_ids=selected_game_ids)
 
     actions = [(Action_Type.RESET, ) for _ in range(len(selected_game_ids))]
+    auxiliary_state = [["explore", 200] for _ in range(len(selected_game_ids))]
     start_time = time.perf_counter()
     steps = 0
     while True:
         has_event, states = await env.execute(actions)
-        last_idle = [
-            s.state == Game_State_Type.IDLE for s in states
-        ]
-        next_done = [
-            s.state == Game_State_Type.WIN or s.state == Game_State_Type.GAME_OVER for s in states
-        ]
-        last_truncated = [
-            s.state == Game_State_Type.TRUNCATED or s.state == Game_State_Type.RESET for s in states
-        ]
-        last_reset = [
-            s.state == Game_State_Type.RESET for s in states
-        ]
         actions = agent.choose_action(
-            last_idles=last_idle,
-            next_dones=next_done,
-            last_truncates=last_truncated,
-            last_resets=last_reset,
-            latest_frames=[state.frame for state in states],
-            rewards=[get_state_reward(s) for s in states],
-            next_available_actions=[
-                [a.value for a in state.next_available_actions] for state in states
-            ],
-            force_train=steps % 10 == 9
+            latest_frames=[state.frame for state in states]
         )
-        actions = [
-            ((Action_Type(a[0].item()), a[1].item(), a[2].item()) if a is not None else None) if not d else (Action_Type.RESET, )
-            for a, d in zip(actions, next_done)
-        ]
+        actions = [get_env_action(a, s, x) for a, s, x in zip(actions, states, auxiliary_state)]
         await asyncio.sleep(1)
 
         elapsed_time = time.perf_counter() - start_time
@@ -100,7 +71,6 @@ async def run(env, agent):
         if steps % 10 == 0 or has_event:
             log_str = "; ".join([s.short_str() for s in states])
             logging.info(f"{steps}| States: [{log_str}]")
-            logging.info(f"{steps}| Rewards: {[get_state_reward(s) for s in states]}")
             logging.info(f"{steps}| Selected actions: {actions}")
 
         if steps % 100 == 0:
