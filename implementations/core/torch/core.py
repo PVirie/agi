@@ -35,12 +35,12 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         self.temporal_unet = TemporalUNet(n_channels=channel, vec_dim=1 + position_size, num_temporal_layers=layers, bilinear=True)
 
         self.head_flag = nn.Sequential(
-            nn.Linear(32, 32),
+            nn.Linear(self.temporal_unet.flat_features, hidden_size),
             nn.GELU(),
-            nn.Linear(32, 5)   # 5 classes
+            nn.Linear(hidden_size, 5)   # 5 classes
         )
         self.head_action = nn.Sequential(
-            nn.Linear(32, hidden_size),
+            nn.Linear(self.temporal_unet.flat_features, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
@@ -48,9 +48,9 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
             nn.Sigmoid()
         )
         self.head_value = nn.Sequential(
-            nn.Linear(32, 32),
+            nn.Linear(self.temporal_unet.flat_features, hidden_size),
             nn.GELU(),
-            nn.Linear(32, 1)   # Regression output
+            nn.Linear(hidden_size, 1)   # Regression output
         )
 
         self.value_logstd = nn.Parameter(torch.zeros(1, 1))
@@ -92,11 +92,11 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         image_part = torch.reshape(image_content, (batch_size, context_size, self.channel, self.height, self.width))
         non_image_part = context[:, :, :1 + self.position_size]
 
-        heatmap_logits, features, content_logits = self.temporal_unet(image_part, non_image_part)
+        features, heatmap_logits, content_logits = self.temporal_unet(image_part, non_image_part)
         heatmap_logits = torch.reshape(heatmap_logits, (batch_size, context_size, self.height * self.width))
         content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
         
-        return heatmap_logits, features, content_logits
+        return features, heatmap_logits, content_logits
     
 
     def get_latest_value(self, context, action):
@@ -108,7 +108,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
             action = torch.zeros((context.size(0), context.size(1), self.packed_action_size), dtype=torch.int64).to(self.device)
 
         with torch.no_grad():
-            _, features, _ = self.__compute(context, action)
+            features, _, _ = self.__compute(context, action)
             logits_value = self.head_value(features)    # (B, T, 1)
             
         return logits_value[:, -1, ...].cpu().numpy()
@@ -129,7 +129,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
             action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
         batch_size = context.size(0)
-        heatmap_logits, features, content_logits = self.__compute(context, action)
+        features, heatmap_logits, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, 5)
         logits_action = self.head_action(features) # (B, T, action_size)
@@ -223,7 +223,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         elif isinstance(f_mask, np.ndarray):
             f_mask = torch.tensor(f_mask, dtype=torch.float32).to(self.device)
 
-        heatmap_logits, features, content_logits = self.__compute(context, action)
+        features, heatmap_logits, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, 5)
         logits_action = self.head_action(features) # (B, T, action_size)

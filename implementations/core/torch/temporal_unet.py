@@ -195,7 +195,7 @@ class TemporalUNet(nn.Module):
         combined = combined.view(B, T, -1)
         attn_out = self.temporal_attn(combined)
         
-        fused = self.fusion(attn_out.view(B * T, -1))
+        fused = self.fusion(attn_out.view(B * T, -1)) # [B*T, flat_features]
         x_dec = fused.view_as(x5)
         
         x = self.up1(x_dec, x4)
@@ -206,18 +206,15 @@ class TemporalUNet(nn.Module):
         # --- Generate Heatmap ---
         heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, 64, 64]
         
-        # --- Compute flat features ---
-        sampled_features = x_features.mean(dim=(2, 3))  # [B*T, 32]
-
         # --- Compute direct content ---
         content_logits = self.head_content(x_features) # [B*T, C, 64, 64]
         
         # --- Reshape and Return ---
+        sampled_features = fused.view(B, T, -1) # [B, T, flat_features]
         heatmap_logits = heatmap_logits.view(B, T, H, W)
-        sampled_features = sampled_features.view(B, T, -1)
         content_logits = content_logits.view(B, T, C, H, W)
         
-        return heatmap_logits, sampled_features, content_logits
+        return sampled_features, heatmap_logits, content_logits
 
 
 if __name__ == "__main__":
@@ -226,9 +223,10 @@ if __name__ == "__main__":
     img = torch.randn(2, 5, 1, 64, 64)
     vec = torch.randn(2, 5, 128)
     
-    heatmap_logits, features, content_logits = model(img, vec)
+    features, heatmap_logits, content_logits = model(img, vec)
     
-    print(f"Heatmap: {heatmap_logits.shape}")   # [2, 5, 64, 64]
-    print(f"Sampled Features: {features.shape}") # [2, 5, 32]
-    print(f"Content Logits: {content_logits.shape}") # [2, 5, 1, 64, 64]
+    assert features.shape == (2, 5, model.flat_features)
+    assert heatmap_logits.shape == (2, 5, 64, 64)
+    assert content_logits.shape == (2, 5, 1, 64, 64)
+
     print("Forward pass successful.")
