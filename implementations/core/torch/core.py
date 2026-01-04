@@ -37,12 +37,12 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
             bilinear=True, max_temporal_len=32)
 
         self.head_flag = nn.Sequential(
-            nn.Linear(self.temporal_unet.flat_features, hidden_size),
+            nn.Linear(self.temporal_unet.out_features, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, 5)   # 5 classes
         )
         self.head_action = nn.Sequential(
-            nn.Linear(self.temporal_unet.flat_features, hidden_size),
+            nn.Linear(self.temporal_unet.out_features, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
@@ -50,7 +50,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
             nn.Sigmoid()
         )
         self.head_value = nn.Sequential(
-            nn.Linear(self.temporal_unet.flat_features, hidden_size),
+            nn.Linear(self.temporal_unet.out_features, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, 1)   # Regression output
         )

@@ -122,10 +122,6 @@ class TemporalUNet(nn.Module):
         self.flat_features = self.bottleneck_channels * 4 * 4
         self.attn_input_dim = self.flat_features + 32
         
-        # Learnable Positional Embedding
-        # Shape: [1, max_temporal_len, attn_input_dim]
-        self.pos_embedding = nn.Parameter(torch.zeros(1, max_temporal_len, self.attn_input_dim))
-        
         self.temporal_attn = DeepTemporalTransformer(
             input_dim=self.attn_input_dim,
             num_heads=8,
@@ -139,6 +135,8 @@ class TemporalUNet(nn.Module):
         self.up2 = Up(256 // factor, 128 // factor, 128, bilinear)
         self.up3 = Up(128 // factor, 64 // factor, 64, bilinear)
         self.up4 = Up(64 // factor, 32, 32, bilinear)
+
+        self.out_features = 32
 
         self.head_heatmap = nn.Sequential(
             nn.Conv2d(32, 16, kernel_size=3, padding=1),
@@ -198,21 +196,9 @@ class TemporalUNet(nn.Module):
         x5 = self.down4(x4)
 
         # Temporal Attention Input Construction
-        flat_x5 = x5.view(B * T, -1)
-        v_reshaped = v.view(B * T, -1)
-        projected_v = self.temporal_proj(v_reshaped) # [B*T, 32]
-        combined = torch.cat([flat_x5, projected_v], dim=1)
-        
-        # Reshape to [Batch, Time, Features] for transformer
-        combined = combined.view(B, T, -1)
-        
-        # --- Add Learnable Positional Encoding ---
-        # Slice the embedding to match current temporal length T
-        if T <= self.max_temporal_len:
-            combined = combined + self.pos_embedding[:, :T, :]
-        else:
-            # Fallback/Safety: In real usage, ensure T <= max_temporal_len
-            combined = combined + self.pos_embedding[:, :self.max_temporal_len, :]
+        flat_x5 = x5.view(B, T, -1)
+        projected_v = self.temporal_proj(v) # [B, T, 32]
+        combined = torch.cat([flat_x5, projected_v], dim=2)
 
         # Pass through Transformer
         attn_out = self.temporal_attn(combined)
@@ -225,6 +211,9 @@ class TemporalUNet(nn.Module):
         x = self.up3(x, x2)
         x_features = self.up4(x, x1) # [B*T, 32, 64, 64]
         
+        # --- Extract Sampled Features ---
+        sampled_features = x_features.mean(dim=(2, 3)) # [B*T, 32]
+
         # --- Generate Heatmap ---
         heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, 64, 64]
         
@@ -232,7 +221,7 @@ class TemporalUNet(nn.Module):
         content_logits = self.head_content(x_features) # [B*T, C, 64, 64]
         
         # --- Reshape and Return ---
-        sampled_features = fused.view(B, T, -1) # [B, T, flat_features]
+        sampled_features = sampled_features.view(B, T, -1)
         heatmap_logits = heatmap_logits.view(B, T, H, W)
         content_logits = content_logits.view(B, T, C, H, W)
         
@@ -247,7 +236,7 @@ if __name__ == "__main__":
     
     features, heatmap_logits, content_logits = model(img, vec)
     
-    assert features.shape == (2, 5, model.flat_features)
+    assert features.shape == (2, 5, model.out_features)
     assert heatmap_logits.shape == (2, 5, 64, 64)
     assert content_logits.shape == (2, 5, 1, 64, 64)
 
