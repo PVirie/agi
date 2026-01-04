@@ -163,7 +163,7 @@ if __name__ == "__main__":
         action_size=7, position_size=16,
         width=64, height=64, channel=4,
         hidden_size=256, layers=4,
-        device=device, 
+        max_temporal_range=32, device=device, 
         persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(

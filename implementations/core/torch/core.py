@@ -16,7 +16,7 @@ from utilities.safe_torch_module import Safe_nn_Module
 
 class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
 
-    def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, device=None, persistence_path=None):
+    def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, max_temporal_range=32, device=None, persistence_path=None):
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="core", device=device, persistence_path=persistence_path)
         self.device = device
@@ -32,7 +32,9 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         self.hidden_size = hidden_size
 
         # feature always has size 32
-        self.temporal_unet = TemporalUNet(n_channels=channel, vec_dim=1 + position_size, num_temporal_layers=layers, bilinear=True)
+        self.temporal_unet = TemporalUNet(
+            n_channels=channel, vec_dim=1 + position_size, num_temporal_layers=layers, 
+            bilinear=True, max_temporal_len=32)
 
         self.head_flag = nn.Sequential(
             nn.Linear(self.temporal_unet.flat_features, hidden_size),

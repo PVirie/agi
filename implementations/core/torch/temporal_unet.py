@@ -98,13 +98,13 @@ class DeepTemporalTransformer(nn.Module):
         return out
 
 
-
 class TemporalUNet(nn.Module):
-    def __init__(self, n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True):
+    def __init__(self, n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, max_temporal_len=32):
         super(TemporalUNet, self).__init__()
         self.n_channels = n_channels
         self.vec_dim = vec_dim
         self.bilinear = bilinear
+        self.max_temporal_len = max_temporal_len
 
         # --- Encoder ---
         self.inc = DoubleConv(n_channels, 32)
@@ -114,14 +114,21 @@ class TemporalUNet(nn.Module):
         factor = 2 if bilinear else 1
         self.down4 = Down(256, 512 // factor)
 
+        # Flat feature projector
+        self.temporal_proj = nn.Linear(vec_dim, 32)
+
         # --- Temporal Bottleneck ---
         self.bottleneck_channels = 512 // factor
         self.flat_features = self.bottleneck_channels * 4 * 4
-        self.attn_input_dim = self.flat_features + vec_dim
+        self.attn_input_dim = self.flat_features + 32
+        
+        # Learnable Positional Embedding
+        # Shape: [1, max_temporal_len, attn_input_dim]
+        self.pos_embedding = nn.Parameter(torch.zeros(1, max_temporal_len, self.attn_input_dim))
         
         self.temporal_attn = DeepTemporalTransformer(
             input_dim=self.attn_input_dim,
-            num_heads=self.attn_input_dim,
+            num_heads=8,
             num_layers=num_temporal_layers,
             dropout=0.1
         )
@@ -149,6 +156,8 @@ class TemporalUNet(nn.Module):
 
     def reset_parameters(self):
         self.apply(init_weights)
+        # Initialize positional embedding
+        nn.init.trunc_normal_(self.pos_embedding, std=0.02)
 
 
     def _get_max_features(self, feature_map, heatmap_logits):
@@ -174,9 +183,9 @@ class TemporalUNet(nn.Module):
         x: [Batch, Time, Channels, Height, Width]
         v: [Batch, Time, VecDim]
         Returns:
-            x_log_probs: [Batch, Time, 64] (Log Probabilities for X coordinate)
-            y_log_probs: [Batch, Time, 64] (Log Probabilities for Y coordinate)
-            flag_logits: [Batch, Time, 6]  (Logits for Flag)
+            sampled_features: [Batch, Time, Features]
+            heatmap_logits: [Batch, Time, H, W]
+            content_logits: [Batch, Time, C, H, W]
         """
         B, T, C, H, W = x.shape
         
@@ -187,12 +196,25 @@ class TemporalUNet(nn.Module):
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         x5 = self.down4(x4)
-        
-        # Temporal Attention
+
+        # Temporal Attention Input Construction
         flat_x5 = x5.view(B * T, -1)
         v_reshaped = v.view(B * T, -1)
-        combined = torch.cat([flat_x5, v_reshaped], dim=1)
+        projected_v = self.temporal_proj(v_reshaped) # [B*T, 32]
+        combined = torch.cat([flat_x5, projected_v], dim=1)
+        
+        # Reshape to [Batch, Time, Features] for transformer
         combined = combined.view(B, T, -1)
+        
+        # --- Add Learnable Positional Encoding ---
+        # Slice the embedding to match current temporal length T
+        if T <= self.max_temporal_len:
+            combined = combined + self.pos_embedding[:, :T, :]
+        else:
+            # Fallback/Safety: In real usage, ensure T <= max_temporal_len
+            combined = combined + self.pos_embedding[:, :self.max_temporal_len, :]
+
+        # Pass through Transformer
         attn_out = self.temporal_attn(combined)
         
         fused = self.fusion(attn_out.view(B * T, -1)) # [B*T, flat_features]
@@ -218,8 +240,8 @@ class TemporalUNet(nn.Module):
 
 
 if __name__ == "__main__":
-    # Test
-    model = TemporalUNet(n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True)
+    # max_temporal_len defaults to 32, we pass 32 to be explicit or test with it.
+    model = TemporalUNet(n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, max_temporal_len=32)
     img = torch.randn(2, 5, 1, 64, 64)
     vec = torch.randn(2, 5, 128)
     
