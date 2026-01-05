@@ -136,7 +136,7 @@ class TemporalUNet(nn.Module):
         self.up3 = Up(128 // factor, 64 // factor, 64, bilinear)
         self.up4 = Up(64 // factor, 32, 32, bilinear)
 
-        self.out_features = 32
+        self.out_features = 128
 
         self.head_heatmap = nn.Sequential(
             nn.Conv2d(32, 16, kernel_size=3, padding=1),
@@ -202,15 +202,15 @@ class TemporalUNet(nn.Module):
         attn_out = self.temporal_attn(combined)
         
         fused = self.fusion(attn_out.view(B * T, -1)) # [B*T, flat_features]
-        x_dec = fused.view_as(x5)
+        x4_ = fused.view_as(x5)
         
-        x = self.up1(x_dec, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x_features = self.up4(x, x1) # [B*T, 32, 64, 64]
+        x3_ = self.up1(x4_, x4)
+        x2_ = self.up2(x3_, x3)
+        x1_ = self.up3(x2_, x2)
+        x_features = self.up4(x1_, x1) # [B*T, 128, 64, 64]
         
         # --- Extract Sampled Features ---
-        sampled_features = x_features.mean(dim=(2, 3)) # [B*T, 32]
+        sampled_features = x3.mean(dim=(2, 3)) # [B*T, 32]
 
         # --- Generate Heatmap ---
         heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, 64, 64]

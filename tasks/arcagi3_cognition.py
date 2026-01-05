@@ -36,13 +36,11 @@ def get_state_reward(state: Game_State) -> int:
     if state_type == Game_State_Type.WIN:
         reward = 10
     elif state_type == Game_State_Type.GAME_OVER:
-        reward = -1
+        reward = -0.1
     elif state_type == Game_State_Type.IDLE:
         reward = 0
     elif state_type == Game_State_Type.NOT_FINISHED:
         reward = state.delta_score
-        if not state.diff_from_last:
-            reward = -0.1
     else:
         reward = 0
     return reward - 0.01  # small step penalty
