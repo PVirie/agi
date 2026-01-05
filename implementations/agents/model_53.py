@@ -214,12 +214,10 @@ class Model_53(Agent):
 
         # Choose a random action
         # this one return batch leading tensors (batch, 1, ...)
-        packed_action, position, _, _, _ = self.agent_core.get_action_and_value(
+        packed_action, position = self.agent_core.get_action(
             self.obs.make_batch(batch_led=True),
             self.actions.make_batch(batch_led=True, append_last=True),
-            self.valid_actions.make_batch(batch_led=True),
-            use_action=False,
-            use_grad=False
+            self.valid_actions.make_batch(batch_led=True)
         )
 
         # extract output here

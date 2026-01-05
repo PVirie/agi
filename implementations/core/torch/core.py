@@ -7,14 +7,14 @@ from torch.distributions import Bernoulli
 import numpy as np
 import logging
 
-from interfaces.core import Core
+from interfaces.core import On_Policy_Core
 from .base import init_weights, Categorical_With_Mask
 from .sfstct import SpatialEncoder, TemporalEncoder
 from .temporal_unet import TemporalUNet
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
+class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, max_temporal_range=32, device=None, persistence_path=None):
         nn.Module.__init__(self)
@@ -102,13 +102,72 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         return features, heatmap_logits, content_logits
     
 
-    def get_latest_value(self, context, action):
+    def get_action(self, context, action, valid_actions=None):
+
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
-        if isinstance(action, np.ndarray):
-            action = torch.tensor(action, dtype=torch.int64).to(self.device)
-        elif action is None:
-            action = torch.zeros((context.size(0), context.size(1), self.packed_action_size), dtype=torch.int64).to(self.device)
+
+        if action is None:
+            action = torch.zeros((context.size(0), context.size(1), self.packed_action_size), dtype=torch.float32).to(self.device)
+        elif isinstance(action, np.ndarray):
+            action = torch.tensor(action, dtype=torch.float32).to(self.device)
+
+        available_flags = None
+        available_actions = None
+        if valid_actions is not None:
+            if isinstance(valid_actions, np.ndarray):
+                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
+            # valid_actions has shape (batch, context_size, flag_size + action_size)
+            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
+            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+
+        batch_size = context.size(0)
+        features, heatmap_logits, content_logits = self.__compute(context, action)
+
+        logits_flag = self.head_flag(features)    # (B, T, flag_size)
+        logits_action = self.head_action(features) # (B, T, action_size)
+        pprobs_content = self.head_content(content_logits) # (B, T, content_size)
+
+        props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
+        props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
+        props_loc = Categorical(logits=heatmap_logits)
+        props_content = Bernoulli(probs=pprobs_content)
+
+        action_flag = props_flag.sample()
+        action_action = props_action.sample()
+        action_loc = props_loc.sample()
+        action_content = props_content.sample()
+
+        action = torch.cat([
+            action_flag.unsqueeze(-1),
+            action_action.unsqueeze(-1),
+            action_loc.unsqueeze(-1),
+            action_content
+        ], dim=-1)
+
+        # compute position
+        last_position = context[:, :, 1:1 + self.position_size]
+        # make one hot encoding for action, location
+        action_onehot = torch.nn.functional.one_hot(action_action.long(), num_classes=self.action_size).float()
+        logits_position = self.position_step(torch.concat([last_position, action_onehot], dim=-1))
+        props_position = Bernoulli(probs=logits_position)
+        position = props_position.sample()
+
+        action = action.cpu().numpy().astype(int)
+        position = position.cpu().numpy().astype(float)
+
+        return action, position
+
+
+    def get_latest_value(self, context, action):
+
+        if isinstance(context, np.ndarray):
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
+
+        if action is None:
+            action = torch.zeros((context.size(0), context.size(1), self.packed_action_size), dtype=torch.float32).to(self.device)
+        elif isinstance(action, np.ndarray):
+            action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
         with torch.no_grad():
             features, _, _ = self.__compute(context, action)
@@ -117,7 +176,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         return logits_value[:, -1, ...].cpu().numpy()
     
 
-    def get_action_and_value(self, context, action, valid_actions=None, use_action=False, use_grad=True):
+    def get_value(self, context, action, valid_actions=None):
 
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
@@ -149,24 +208,10 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         props_loc = Categorical(logits=heatmap_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
-        if use_action:
-            action_flag = action[:, :, 0]
-            action_action = action[:, :, 1]
-            action_loc = action[:, :, 2]
-            action_content = action[:, :, 3:]
-        else:
-            action_flag = props_flag.sample()
-            action_action = props_action.sample()
-            action_loc = props_loc.sample()
-            action_content = props_content.sample()
-
-            action = torch.cat([
-                action_flag.unsqueeze(-1),
-                action_action.unsqueeze(-1),
-                action_loc.unsqueeze(-1),
-                action_content
-            ], dim=-1)
-
+        action_flag = action[:, :, 0]
+        action_action = action[:, :, 1]
+        action_loc = action[:, :, 2]
+        action_content = action[:, :, 3:]
 
         # compute position
         last_position = context[:, :, 1:1 + self.position_size]
@@ -175,7 +220,6 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         logits_position = self.position_step(torch.concat([last_position, action_onehot], dim=-1))
         props_position = Bernoulli(probs=logits_position)
         position = props_position.sample()
-
 
         log_prob_flag = props_flag.log_prob(action_flag)
         log_prob_action = props_action.log_prob(action_action)
@@ -196,15 +240,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         batch_entropy = torch.reshape(batch_entropy, (batch_size, -1))
         batch_value = torch.reshape(value, (batch_size, -1))
 
-        action = action.cpu().numpy().astype(int)
-        position = position.cpu().numpy().astype(float)
-
-        if not use_grad:
-            batch_log_prob = batch_log_prob.detach().cpu().numpy()
-            batch_entropy = batch_entropy.detach().cpu().numpy()
-            batch_value = batch_value.detach().cpu().numpy()
-
-        return action, position, batch_log_prob, batch_entropy, batch_value
+        return batch_log_prob, batch_entropy, batch_value
 
 
     def get_log_probability(self, context, action, valid_actions=None, target_action=None, f_mask=None):

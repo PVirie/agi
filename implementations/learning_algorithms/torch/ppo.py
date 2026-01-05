@@ -7,7 +7,7 @@ import time
 import logging
 
 from interfaces.learning import RL_Learner
-from interfaces.core import Core
+from interfaces.core import On_Policy_Core
 from interfaces.data_structure import Context_Collector
 from utilities.safe_torch_module import Safe_nn_Module
 
@@ -17,7 +17,7 @@ from .base import masked_mean, masked_std
 
 class PPO(RL_Learner, Safe_nn_Module):
 
-    def __init__(self, agent: Core, device, persistence_path=None):
+    def __init__(self, agent: On_Policy_Core, device, persistence_path=None):
         self.agent = agent
         self.device = device
 
@@ -37,7 +37,10 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
 
-        Safe_nn_Module.__init__(self, name="ppo_learner", device=device, persistence_path=persistence_path, module=self.optimizer)
+        Safe_nn_Module.__init__(self, 
+            device=device, persistence_path=persistence_path, 
+            modules={"ppo_learner": self.optimizer}
+        )
 
         self.load()
 
@@ -74,12 +77,10 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         with torch.no_grad():
             # Get old log probabilities and values
-            _, _, logprobs, _, values = self.agent.get_action_and_value(
+            logprobs, _, values = self.agent.get_value(
                 obs, 
                 actions,
-                valid_actions,
-                use_action=True,
-                use_grad=True
+                valid_actions
             )
 
             # Bootstrap value if not done
@@ -121,12 +122,10 @@ class PPO(RL_Learner, Safe_nn_Module):
                 mb_actions = actions[mb_inds, ...]
                 mb_valid_actions = valid_actions[mb_inds, ...] if valid_actions is not None else None
 
-                _, _, b_newlogprob, b_entropy, b_newvalue = self.agent.get_action_and_value(
+                b_newlogprob, b_entropy, b_newvalue = self.agent.get_value(
                     mb_obs, 
                     mb_actions,
-                    mb_valid_actions,
-                    use_action=True,
-                    use_grad=True
+                    mb_valid_actions
                 )
                 
                 logratio = b_newlogprob - mb_log_prob

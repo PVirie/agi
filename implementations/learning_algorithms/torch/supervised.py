@@ -25,7 +25,10 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
 
         self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
         
-        Safe_nn_Module.__init__(self, name="basic_learner", device=device, persistence_path=persistence_path, module=self.optimizer)
+        Safe_nn_Module.__init__(self, 
+            device=device, persistence_path=persistence_path, 
+            modules={"basic_learner": self.optimizer}
+        )
 
         self.load()
 
