@@ -207,10 +207,11 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         return action, position, batch_log_prob, batch_entropy, batch_value
 
 
-    def get_log_probability(self, context, action, target_action=None, f_mask=None):
+    def get_log_probability(self, context, action, valid_actions=None, target_action=None, f_mask=None):
         """
         context has shape (batch, context_size, ...)
         action has shape (batch, context_size, self.packed_action_size)
+        valid_actions has shape (batch, context_size, flag_size + action_size)
         target_action has shape (batch, context_size, self.packed_action_size)
         f_mask has shape (batch, context_size, 4)
         """
@@ -231,14 +232,23 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         elif isinstance(f_mask, np.ndarray):
             f_mask = torch.tensor(f_mask, dtype=torch.float32).to(self.device)
 
+        available_flags = None
+        available_actions = None
+        if valid_actions is not None:
+            if isinstance(valid_actions, np.ndarray):
+                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
+            # valid_actions has shape (batch, context_size, flag_size + action_size)
+            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
+            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+
         features, heatmap_logits, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
         pprobs_content = self.head_content(content_logits) # (B, T, content_size)
 
-        props_flag = Categorical(logits=logits_flag)
-        props_action = Categorical(logits=logits_action)
+        props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
+        props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
         props_loc = Categorical(logits=heatmap_logits)
         props_content = Bernoulli(probs=pprobs_content)
 

@@ -165,7 +165,8 @@ class Model_53(Agent):
                     obs=self.obs[:-1].make_batch(batch_led=True),
                     actions=recorded_actions,
                     target_actions=target_actions,
-                    masks=masks
+                    masks=masks,
+                    valid_actions=self.valid_actions[:-1].make_batch(batch_led=True)
                 )
 
             # compute last value from the current context (past observation) and the recent observation

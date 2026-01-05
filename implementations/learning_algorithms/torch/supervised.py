@@ -36,7 +36,7 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         self.optimizer.param_groups[0]["lr"] = lrnow
 
 
-    def train(self, obs: Any, actions: Any, target_actions: Any, masks: Any = None):
+    def train(self, obs: Any, actions: Any, target_actions: Any, masks: Any = None, valid_actions: Any = None):
         obs = convert_np_array_to_float_tensor(obs, self.device)
         actions = convert_np_array_to_float_tensor(actions, self.device)
         target_actions = convert_np_array_to_float_tensor(target_actions, self.device)
@@ -45,6 +45,7 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
             newlogprob = self.agent.get_log_probability(
                 context=obs, 
                 action=actions,
+                valid_actions=valid_actions,
                 target_action=target_actions,
                 f_mask=masks
             )

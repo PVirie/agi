@@ -11,7 +11,7 @@ class Core(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_log_probability(self, context, action, target_action=None, f_mask=None):
+    def get_log_probability(self, context, action, valid_actions=None, target_action=None, f_mask=None):
         pass
 
     @abc.abstractmethod
