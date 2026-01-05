@@ -248,92 +248,43 @@ class Multilayer_CNN(nn.Module):
         self.apply(init_weights)
 
 
-# Implement pytorch Categorial with mask sample (Unlike MaskedCategorical)
-class Categorical_With_Mask_Sample(Categorical):
-    def masked_sample(self, mask=None, sample_shape=torch.Size()):
+# Implement pytorch Categorial with mask (Same as MaskedCategorical)
+class Categorical_With_Mask(Categorical):
+    
+    def __init__(self, probs=None, logits=None, mask=None, validate_args=None):
         """
-        Samples with a mask, handling automatic broadcasting for missing dimensions.
-        
-        Broadcasting Logic:
-        If mask.ndim < logits.ndim, we assume the mask applies to the 
-        Leading Dimensions (Batch) and the Last Dimension (Category). 
-        We unsqueeze the middle dimensions of the mask to match logits.
-        
-        Example:
-            Logits: (Batch, Sequence, Category)
-            Mask:   (Batch, Category)
-            -> Mask becomes (Batch, 1, Category) to broadcast over Sequence.
+        Args:
+            probs (Tensor): Event probabilities. 
+            logits (Tensor): Event log-probabilities.
+            mask (Tensor): Boolean tensor where False indicates the category 
+                           should be masked out (probability = 0).
+            validate_args (bool): Whether to validate input values.
         """
-        if mask is None:
-            return super().sample(sample_shape)
-            
-        # 1. Align Mask Dimensions (Middle Broadcasting)
-        if mask.ndim < self.logits.ndim:
-            # Calculate how many middle dimensions are missing (e.g., Sequence)
-            # Logits: (B, S, C) [ndim=3] | Mask: (B, C) [ndim=2] -> diff = 1
-            diff = self.logits.ndim - mask.ndim
-            
-            # Reshape mask: Keep leading dims, insert 1s, keep last dim
-            # (B, C) -> (B, 1, C)
-            new_shape = mask.shape[:-1] + (1,) * diff + mask.shape[-1:]
-            mask = mask.view(new_shape)
-
-        # 2. Safety Check
-        # Ensure that AFTER broadcasting, we don't have any completely blocked rows
-        # We broadcast the mask against logits shape (excluding the last dim) to check validity
-        # Note: We use expand_as to simulate the broadcast without copying data
-        mask_expanded = mask.expand_as(self.logits)
-        if not mask_expanded.any(dim=-1).all():
-             raise ValueError("Invalid mask: at least one batch/sequence item has NO valid actions.")
-
-        # 3. Apply Mask
-        logits = self.logits.clone()
-        logits[~mask_expanded.bool()] = -float('inf')
+        self.mask = mask
         
-        # 4. Sample
-        return Categorical(logits=logits).sample(sample_shape)
+        if (probs is None) == (logits is None):
+            raise ValueError("Either `probs` or `logits` must be specified, but not both.")
 
-    def sample_from_available_indices(self, indices=None, sample_shape=torch.Size()):
-        """
-        Creates a minimal mask from indices and delegates to masked_sample
-        to handle the broadcasting logic.
-        """
-        if indices is None:
-            return super().sample(sample_shape)
+        if mask is not None:
+            if probs is not None:
+                logits = torch.log(probs)
+                probs = None # Ensure we only pass logits to super()
+            min_value = torch.finfo(logits.dtype).min
+            logits = torch.where(mask, logits, torch.tensor(min_value).to(logits.device))
 
-        # Initialize minimal mask based on indices shape, NOT logits shape.
-        # We let masked_sample handle the expansion to match logits later.
+        super().__init__(probs=probs, logits=logits, validate_args=validate_args)
+
+
+    def expand(self, batch_shape, _instance=None):
+        """
+        Expand implementation to ensure the mask is carried over correctly 
+        when .expand() is called on the distribution.
+        """
+        new = super().expand(batch_shape, _instance)
         
-        # Case A: Ragged Lists [[0,1], [2]] -> Mask (Batch, Category)
-        if isinstance(indices, (list, tuple)):
-            # Determine shape: (Batch_Size, Category_Size)
-            batch_size = len(indices)
-            cat_size = self.logits.shape[-1]
-            
-            # Create base mask on correct device
-            mask = torch.zeros((batch_size, cat_size), device=self.logits.device, dtype=torch.bool)
-            
-            for i, valid_idx in enumerate(indices):
-                if hasattr(valid_idx, '__len__') and len(valid_idx) > 0:
-                    idx_tensor = torch.as_tensor(valid_idx, device=self.logits.device, dtype=torch.long)
-                    mask[i, idx_tensor] = True
-                elif isinstance(valid_idx, int): # Handle simple list [0, 1]
-                     mask[i, valid_idx] = True
-
-        # Case B: Tensor Indices
-        elif isinstance(indices, torch.Tensor):
-            indices = indices.to(self.logits.device).long()
-            
-            # Create mask with same rank as indices (plus category dim)
-            # If indices is (B, K), mask becomes (B, C)
-            mask_shape = indices.shape[:-1] + (self.logits.shape[-1],)
-            mask = torch.zeros(mask_shape, device=self.logits.device, dtype=torch.bool)
-            
-            # Scatter True values
-            # value=1 broadcasts to the shape of indices
-            mask.scatter_(dim=-1, index=indices, value=True)
-            
-        else:
-            raise ValueError("indices must be None, List, or Tensor")
-
-        return self.masked_sample(mask=mask, sample_shape=sample_shape)
+        if self.mask is not None:
+            try:
+                new.mask = self.mask.expand(batch_shape + self.event_shape)
+            except RuntimeError:
+                new.mask = self.mask
+        return new

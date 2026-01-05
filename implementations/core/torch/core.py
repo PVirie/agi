@@ -3,13 +3,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
 from torch.distributions.categorical import Categorical
-from torchrl.modules import MaskedCategorical
 from torch.distributions import Bernoulli
 import numpy as np
 import logging
 
 from interfaces.core import Core
-from .base import init_weights, Categorical_With_Mask_Sample
+from .base import init_weights, Categorical_With_Mask
 from .sfstct import SpatialEncoder, TemporalEncoder
 from .temporal_unet import TemporalUNet
 from utilities.safe_torch_module import Safe_nn_Module
@@ -145,8 +144,8 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         pprobs_content = self.head_content(content_logits) # (B, T, content_size)
         value = self.head_value(features)    # (B, T, 1)
 
-        props_flag = MaskedCategorical(logits=logits_flag, mask=available_flags)
-        props_action = MaskedCategorical(logits=logits_action, mask=available_actions)
+        props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
+        props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
         props_loc = Categorical(logits=heatmap_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
