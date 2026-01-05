@@ -12,7 +12,7 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 WORKDIR /app
 
 # install torch with cuda support
-RUN pip3 install torch torchvision torchaudio
+RUN pip3 install torch torchvision torchrl torchaudio
 RUN pip3 install debugpy
 
 CMD ["python3", "-m", "debugpy", "--listen", "0.0.0.0:43690", "tasks/benchmark.py"]
