@@ -7,7 +7,7 @@ class Core(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_action_and_value(self, context, action, use_action=False, use_grad=True):
+    def get_action_and_value(self, context, action, valid_actions=None, use_action=False, use_grad=True):
         pass
 
     @abc.abstractmethod

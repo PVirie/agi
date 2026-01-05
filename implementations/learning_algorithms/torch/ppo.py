@@ -11,7 +11,8 @@ from interfaces.core import Core
 from interfaces.data_structure import Context_Collector
 from utilities.safe_torch_module import Safe_nn_Module
 
-from .base import convert_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, masked_mean, masked_std
+from .base import convert_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor
+from .base import masked_mean, masked_std
 
 
 class PPO(RL_Learner, Safe_nn_Module):
@@ -47,7 +48,10 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.optimizer.param_groups[0]["lr"] = lrnow
 
 
-    def learn(self, obs: Any, actions: Any, rewards: List[Any], next_dones: List[List[bool]], last_value: Any, last_done: List[bool], masks: Any = None):
+    def learn(self, 
+              obs: Any, actions: Any, rewards: List[Any], 
+              next_dones: List[List[bool]], last_value: Any, last_done: List[bool], 
+              masks: Any = None, valid_actions: Any = None):
         """
         obs: np array of shape (batch_size, context_length, ...)
         actions: np array of shape (batch_size, context_length, ...)
@@ -56,6 +60,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         last_value: np array of shape (batch_size)
         last_done: bools of length batch_size
         masks: np array of shape (batch_size, context_length)
+        valid_actions: np array of shape (batch_size, context_length, ...)
         """
         # Use dim 0 as context length dimension
         obs = convert_np_array_to_float_tensor(obs, self.device)
@@ -72,6 +77,7 @@ class PPO(RL_Learner, Safe_nn_Module):
             _, _, logprobs, _, values = self.agent.get_action_and_value(
                 obs, 
                 actions,
+                valid_actions,
                 use_action=True,
                 use_grad=True
             )
@@ -113,10 +119,12 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 mb_obs = obs[mb_inds, ...]
                 mb_actions = actions[mb_inds, ...]
+                mb_valid_actions = valid_actions[mb_inds, ...] if valid_actions is not None else None
 
                 _, _, b_newlogprob, b_entropy, b_newvalue = self.agent.get_action_and_value(
                     mb_obs, 
                     mb_actions,
+                    mb_valid_actions,
                     use_action=True,
                     use_grad=True
                 )

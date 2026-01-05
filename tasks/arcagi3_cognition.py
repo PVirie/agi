@@ -183,6 +183,7 @@ if __name__ == "__main__":
         trainer=ppo_learner, supervised_trainer=supervised_learner,
         context_collector=Collector(max_history=8),
         action_collector=Collector(max_history=8),
+        valid_action_collector=Collector(max_history=8),
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=args.with_supervision,

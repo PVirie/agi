@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
-from torch.distributions.categorical import Categorical
+from torch.distributions.categorical import Categorical, MaskedCategorical
 from torch.distributions import Bernoulli
 import numpy as np
 import logging
@@ -21,6 +21,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         Safe_nn_Module.__init__(self, name="core", device=device, persistence_path=persistence_path)
         self.device = device
 
+        self.flag_size = 5  # num classes for flag
         self.action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
@@ -39,7 +40,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         self.head_flag = nn.Sequential(
             nn.Linear(self.temporal_unet.out_features, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, 5)   # 5 classes
+            nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
         )
         self.head_action = nn.Sequential(
             nn.Linear(self.temporal_unet.out_features, hidden_size),
@@ -116,11 +117,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         return logits_value[:, -1, ...].cpu().numpy()
     
 
-    def get_action_and_value(self, context, action, use_action=False, use_grad=True, extra_params=None):
-
-        available_actions = None
-        if extra_params is not None:
-            available_actions = extra_params.get("available_actions", None)
+    def get_action_and_value(self, context, action, valid_actions=None, use_action=False, use_grad=True):
 
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
@@ -130,16 +127,25 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
         elif isinstance(action, np.ndarray):
             action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
+        available_flags = None
+        available_actions = None
+        if valid_actions is not None:
+            if isinstance(valid_actions, np.ndarray):
+                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
+            # valid_actions has shape (batch, context_size, flag_size + action_size)
+            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
+            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+
         batch_size = context.size(0)
         features, heatmap_logits, content_logits = self.__compute(context, action)
 
-        logits_flag = self.head_flag(features)    # (B, T, 5)
+        logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
         pprobs_content = self.head_content(content_logits) # (B, T, content_size)
         value = self.head_value(features)    # (B, T, 1)
 
-        props_flag = Categorical(logits=logits_flag)
-        props_action = Categorical_With_Mask_Sample(logits=logits_action)
+        props_flag = MaskedCategorical(logits=logits_flag, mask=available_flags)
+        props_action = MaskedCategorical(logits=logits_action, mask=available_actions)
         props_loc = Categorical(logits=heatmap_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
@@ -150,7 +156,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
             action_content = action[:, :, 3:]
         else:
             action_flag = props_flag.sample()
-            action_action = props_action.sample_from_available_indices(indices=available_actions)
+            action_action = props_action.sample()
             action_loc = props_loc.sample()
             action_content = props_content.sample()
 
@@ -227,7 +233,7 @@ class Action_Content_Core(Core, nn.Module, Safe_nn_Module):
 
         features, heatmap_logits, content_logits = self.__compute(context, action)
 
-        logits_flag = self.head_flag(features)    # (B, T, 5)
+        logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
         pprobs_content = self.head_content(content_logits) # (B, T, content_size)
 

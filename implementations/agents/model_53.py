@@ -6,12 +6,23 @@ from interfaces.memory import Memory, Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
 
 
+def make_valid_mask(valid_actions, action_size):
+    """
+    valid_actions: a list (batch) of list of int
+    action_size: int
+    """
+    valid_mask = np.zeros((len(valid_actions), action_size), dtype=np.bool)
+    for i, va in enumerate(valid_actions):
+        valid_mask[i, va] = True
+    return valid_mask
+
+
 class Model_53(Agent):
     
     def __init__(self, 
                  agent_core: Core, 
                  trainer: RL_Learner, supervised_trainer: Supervised_Learner, 
-                 context_collector: Context_Collector, action_collector: Context_Collector,
+                 context_collector: Context_Collector, action_collector: Context_Collector, valid_action_collector: Context_Collector,
                  memory: Memory,
                  max_num_thought_steps: int = 2,
                  do_supervision: bool = False,
@@ -22,6 +33,7 @@ class Model_53(Agent):
         self.supervised_trainer = supervised_trainer
         self.obs = context_collector
         self.actions = action_collector
+        self.valid_actions = valid_action_collector
         self.memory = memory
 
         self.max_num_thought_steps = max_num_thought_steps
@@ -35,6 +47,7 @@ class Model_53(Agent):
         self.trainer.reset(time=0.0)
         self.obs.clear()
         self.actions.clear()
+        self.valid_actions.clear()
         self.rewards = []
         self.next_dones = []
         self.last_truncates = []
@@ -61,7 +74,13 @@ class Model_53(Agent):
                 np.zeros((batch_size, self.agent_core.position_size), dtype=np.float32), 
                 np.zeros((batch_size, self.agent_core.content_size), dtype=np.float32)
             )
-            self.rewards.append(np.zeros((batch_size,), dtype=np.float32))
+            self.rewards.append(
+                np.zeros((batch_size,), dtype=np.float32)
+            )
+            self.valid_actions.append(
+                np.ones((batch_size, self.agent_core.flag_size), dtype=np.bool),
+                np.ones((batch_size, self.agent_core.action_size), dtype=np.bool)
+            )
             self.last_truncates.append([True for _ in range(batch_size)])
             self.last_idles.append([False for _ in range(batch_size)])
 
@@ -98,6 +117,13 @@ class Model_53(Agent):
         update_value = last_obs * (1.0 - update_mask) + new_value * update_mask
         self.obs.update_last(update_value)
         self.rewards[-1] = reward
+        self.valid_actions.update_last(
+            make_valid_mask([
+                [0] if self.thought_steps[i] == self.max_num_thought_steps - 1 or not self.use_memory else list(range(self.agent_core.flag_size)) 
+                for i in range(batch_size)
+            ], self.agent_core.flag_size),
+            make_valid_mask(next_available_actions, self.agent_core.action_size)
+        )
 
         # cache new observation into memory
         position = last_obs[:, 1:1 + self.agent_core.position_size]
@@ -162,7 +188,8 @@ class Model_53(Agent):
                 next_dones=self.next_dones, 
                 last_value=np.reshape(last_value, (-1)), 
                 last_done=next_done,
-                masks=masks
+                masks=masks,
+                valid_actions=self.valid_actions[:-1].make_batch(batch_led=True)
             )
 
             self.supervised_trainer.save()
@@ -176,6 +203,7 @@ class Model_53(Agent):
             self.next_dones = self.next_dones[left_over_slide]
 
             left_over_slide = self.obs.mark(skip_last=True)
+            self.valid_actions.mark(skip_last=True)
             self.rewards = self.rewards[left_over_slide]
             self.last_truncates = self.last_truncates[left_over_slide]
             self.last_idles = self.last_idles[left_over_slide]
@@ -188,11 +216,9 @@ class Model_53(Agent):
         packed_action, position, _, _, _ = self.agent_core.get_action_and_value(
             self.obs.make_batch(batch_led=True),
             self.actions.make_batch(batch_led=True, append_last=True),
+            self.valid_actions.make_batch(batch_led=True),
             use_action=False,
-            use_grad=False,
-            extra_params={
-                "available_actions": next_available_actions
-            }
+            use_grad=False
         )
 
         # extract output here
@@ -259,9 +285,13 @@ class Model_53(Agent):
         # store last states
         self.actions.append(selected_actions)
         self.next_dones.append(next_done)
-        
+
         self.obs.append(reward, position, content)
         self.rewards.append(reward)
+        self.valid_actions.append(
+            np.ones((batch_size, self.agent_core.flag_size), dtype=np.bool),
+            np.ones((batch_size, self.agent_core.action_size), dtype=np.bool)
+        )
         self.last_truncates.append([False for _ in range(batch_size)])
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         
