@@ -11,7 +11,7 @@ from interfaces.core import On_Policy_Core
 from interfaces.data_structure import Context_Collector
 from utilities.safe_torch_module import Safe_nn_Module
 
-from .base import convert_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor
+from .base import convert_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, convert_np_array_to_bool_tensor
 from .base import masked_mean, masked_std
 
 
@@ -70,6 +70,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         actions = convert_np_array_to_float_tensor(actions, self.device)
         rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
         masks = torch.ones_like(rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
+        valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
 
         batch_size = actions.shape[0]
         sequence_size = actions.shape[1]

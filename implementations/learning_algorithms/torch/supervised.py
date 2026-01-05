@@ -10,7 +10,7 @@ from interfaces.learning import Supervised_Learner
 from interfaces.core import Core
 from utilities.safe_torch_module import Safe_nn_Module
 
-from .base import convert_np_array_to_float_tensor, masked_mean
+from .base import convert_np_array_to_float_tensor, convert_np_array_to_bool_tensor
 
 class Basic_Learner(Supervised_Learner, Safe_nn_Module):
 
@@ -43,6 +43,7 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         obs = convert_np_array_to_float_tensor(obs, self.device)
         actions = convert_np_array_to_float_tensor(actions, self.device)
         target_actions = convert_np_array_to_float_tensor(target_actions, self.device)
+        valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
 
         for epoch in range(self.update_epochs):
             newlogprob = self.agent.get_log_probability(

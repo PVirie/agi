@@ -144,16 +144,16 @@ class Model_53(Agent):
                 # learn Supervise content
 
                 # make action format
-                recorded_actions = self.actions.make_batch(batch_led=True)
-                last_actions = self.agent_core.pack_action(b_content=content)
+                recorded_obs = self.obs.make_batch(batch_led=True)[:, :-1, :]  # shape (batch_size, context_length, obs_size)
                 target_actions = np.concatenate([
-                    recorded_actions[:, :-1, :],
-                    np.reshape(last_actions, (batch_size, 1, -1))
-                ], axis=1)
+                    np.zeros((recorded_obs.shape[0], recorded_obs.shape[1], self.agent_core.packed_action_size - self.agent_core.content_size), dtype=np.float32),
+                    recorded_obs[:, :, 1 + self.agent_core.position_size:]  # content part
+                ], axis=-1)
                 
                 # masks has shape (batch_size, context_length)
                 masks = self.actions.make_mask(batch_led=True)
                 masks = masks * (1.0 - np.stack(self.last_idles[1:], axis=1, dtype=np.float32))
+                masks = masks * (1.0 - np.transpose(np.array(self.next_dones, dtype=np.float32), (1, 0)))
                 # make feature mask of shape (batch_size, context_length, 4)
                 # and filter only content part
                 masks = np.concatenate([
@@ -163,7 +163,7 @@ class Model_53(Agent):
 
                 self.supervised_trainer.train(
                     obs=self.obs[:-1].make_batch(batch_led=True),
-                    actions=recorded_actions,
+                    actions=self.actions.make_batch(batch_led=True), 
                     target_actions=target_actions,
                     masks=masks,
                     valid_actions=self.valid_actions[:-1].make_batch(batch_led=True)
