@@ -156,24 +156,6 @@ class TemporalUNet(nn.Module):
         self.apply(init_weights)
 
 
-    def _get_max_features(self, feature_map, heatmap_logits):
-        """
-        Extracts features from the feature_map at the location of the 
-        max value in heatmap_logits.
-        """
-        N, C, H, W = feature_map.shape
-        
-        # Flatten spatial dims
-        heatmap_flat = heatmap_logits.view(N, -1)
-        
-        # Soft Argmax to find expected feature vector
-        heatmap_probs = F.softmax(heatmap_flat, dim=1) # [N, H*W]
-        features_flat = feature_map.view(N, C, -1)
-        selected_features = torch.bmm(features_flat, heatmap_probs.unsqueeze(2)).squeeze(2) # [N, C]
-
-        return selected_features
-
-
     def forward(self, x, v):
         """
         x: [Batch, Time, Channels, Height, Width]
@@ -215,15 +197,22 @@ class TemporalUNet(nn.Module):
         # --- Generate Heatmap ---
         heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, 64, 64]
         
+        # max over Height (dim 2) to get X distribution (Width)
+        x_logits = heatmap_logits.max(dim=2).values # [B*T, 1, W]
+
+        # max over Width (dim 3) to get Y distribution (Height)
+        y_logits = heatmap_logits.max(dim=3).values # [B*T, 1, H]
+        
         # --- Compute direct content ---
         content_logits = self.head_content(x_features) # [B*T, C, 64, 64]
         
         # --- Reshape and Return ---
         sampled_features = sampled_features.view(B, T, -1)
-        heatmap_logits = heatmap_logits.view(B, T, H, W)
+        x_logits = x_logits.view(B, T, W)
+        y_logits = y_logits.view(B, T, H)
         content_logits = content_logits.view(B, T, C, H, W)
         
-        return sampled_features, heatmap_logits, content_logits
+        return sampled_features, x_logits, y_logits, content_logits
 
 
 if __name__ == "__main__":
@@ -232,10 +221,11 @@ if __name__ == "__main__":
     img = torch.randn(2, 5, 1, 64, 64)
     vec = torch.randn(2, 5, 128)
     
-    features, heatmap_logits, content_logits = model(img, vec)
+    features, x_logits, y_logits, content_logits = model(img, vec)
     
     assert features.shape == (2, 5, model.out_features)
-    assert heatmap_logits.shape == (2, 5, 64, 64)
+    assert x_logits.shape == (2, 5, 64)
+    assert y_logits.shape == (2, 5, 64)
     assert content_logits.shape == (2, 5, 1, 64, 64)
 
     print("Forward pass successful.")

@@ -25,7 +25,7 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
         self.action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
-        self.packed_action_size = 1 + 2 + self.content_size  # ext_flag + action + loc + content
+        self.packed_action_size = 1 + 3 + self.content_size  # ext_flag + action + x + y + content
 
         self.width = width
         self.height = height
@@ -95,11 +95,13 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
         image_part = torch.reshape(image_content, (batch_size, context_size, self.channel, self.height, self.width))
         non_image_part = context[:, :, :1 + self.position_size]
 
-        features, heatmap_logits, content_logits = self.temporal_unet(image_part, non_image_part)
-        heatmap_logits = torch.reshape(heatmap_logits, (batch_size, context_size, self.height * self.width))
+        features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, non_image_part)
+        features = torch.reshape(features, (batch_size, context_size, self.temporal_unet.out_features))
+        x_logits = torch.reshape(x_logits, (batch_size, context_size, self.width))
+        y_logits = torch.reshape(y_logits, (batch_size, context_size, self.height))
         content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
         
-        return features, heatmap_logits, content_logits
+        return features, x_logits, y_logits, content_logits
     
 
     def get_action(self, context, action, valid_actions=None):
@@ -122,7 +124,7 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
         batch_size = context.size(0)
-        features, heatmap_logits, content_logits = self.__compute(context, action)
+        features, x_logits, y_logits, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
@@ -130,18 +132,21 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
-        props_loc = Categorical(logits=heatmap_logits)
+        props_x = Categorical(logits=x_logits)
+        probs_y = Categorical(logits=y_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
         action_flag = props_flag.sample()
         action_action = props_action.sample()
-        action_loc = props_loc.sample()
+        action_x = props_x.sample()
+        action_y = probs_y.sample()
         action_content = props_content.sample()
 
         action = torch.cat([
             action_flag.unsqueeze(-1),
             action_action.unsqueeze(-1),
-            action_loc.unsqueeze(-1),
+            action_x.unsqueeze(-1),
+            action_y.unsqueeze(-1),
             action_content
         ], dim=-1)
 
@@ -170,7 +175,7 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
             action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
         with torch.no_grad():
-            features, _, _ = self.__compute(context, action)
+            features, _, _, _ = self.__compute(context, action)
             logits_value = self.head_value(features)    # (B, T, 1)
             
         return logits_value[:, -1, ...].cpu().numpy()
@@ -196,7 +201,7 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
         batch_size = context.size(0)
-        features, heatmap_logits, content_logits = self.__compute(context, action)
+        features, x_logits, y_logits, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
@@ -205,13 +210,15 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
-        props_loc = Categorical(logits=heatmap_logits)
+        props_x = Categorical(logits=x_logits)
+        probs_y = Categorical(logits=y_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
         action_flag = action[:, :, 0]
         action_action = action[:, :, 1]
-        action_loc = action[:, :, 2]
-        action_content = action[:, :, 3:]
+        action_x = action[:, :, 2]
+        action_y = action[:, :, 3]
+        action_content = action[:, :, 4:]
 
         # compute position
         last_position = context[:, :, 1:1 + self.position_size]
@@ -223,17 +230,19 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
 
         log_prob_flag = props_flag.log_prob(action_flag)
         log_prob_action = props_action.log_prob(action_action)
-        log_prob_loc = props_loc.log_prob(action_loc)
+        log_prob_x = props_x.log_prob(action_x)
+        log_prob_y = probs_y.log_prob(action_y)
         log_prob_content = props_content.log_prob(action_content).mean(-1)
         log_prob_position = props_position.log_prob(position).mean(-1)
-        batch_log_prob = log_prob_flag + log_prob_action + log_prob_loc + log_prob_content + log_prob_position
+        batch_log_prob = log_prob_flag + log_prob_action + log_prob_x + log_prob_y + log_prob_content + log_prob_position
         
         entropy_flag = props_flag.entropy()
         entropy_action = props_action.entropy()
-        entropy_loc = props_loc.entropy()
+        entropy_x = props_x.entropy()
+        entropy_y = probs_y.entropy()
         entropy_content = props_content.entropy().mean(-1)
         entropy_position = props_position.entropy().mean(-1)
-        batch_entropy = entropy_flag + entropy_action + entropy_loc + entropy_content + entropy_position
+        batch_entropy = entropy_flag + entropy_action + entropy_x + entropy_y + entropy_content + entropy_position
 
         # collapse last dimension
         batch_log_prob = torch.reshape(batch_log_prob, (batch_size, -1))
@@ -249,7 +258,7 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
         action has shape (batch, context_size, self.packed_action_size)
         valid_actions has shape (batch, context_size, flag_size + action_size)
         target_action has shape (batch, context_size, self.packed_action_size)
-        f_mask has shape (batch, context_size, 4)
+        f_mask has shape (batch, context_size, 5)
         """
 
         batch_size = context.size(0)
@@ -277,7 +286,7 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        features, heatmap_logits, content_logits = self.__compute(context, action)
+        features, x_logits, y_logits, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
@@ -285,7 +294,8 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
-        props_loc = Categorical(logits=heatmap_logits)
+        props_x = Categorical(logits=x_logits)
+        probs_y = Categorical(logits=y_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
         if target_action is None:
@@ -293,15 +303,17 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
 
         action_flag = target_action[:, :, 0]
         action_action = target_action[:, :, 1]
-        action_loc = target_action[:, :, 2]
-        action_content = target_action[:, :, 3:]
+        action_x = target_action[:, :, 2]
+        action_y = target_action[:, :, 3]
+        action_content = target_action[:, :, 4:]
 
         log_prob_flag = props_flag.log_prob(action_flag)
         log_prob_action = props_action.log_prob(action_action)
-        log_prob_loc = props_loc.log_prob(action_loc)
+        log_prob_x = props_x.log_prob(action_x)
+        log_prob_y = probs_y.log_prob(action_y)
         log_prob_content = props_content.log_prob(action_content).mean(-1)
 
-        log_prob = torch.stack([log_prob_flag, log_prob_action, log_prob_loc, log_prob_content], dim=-1)
+        log_prob = torch.stack([log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content], dim=-1)
         masked_log_prob = log_prob * f_mask
         sum_log_prob = torch.sum(masked_log_prob, dim=-1)
 
@@ -313,14 +325,8 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
         # return int_action, ext_action , content
 
         int_part = packed_action[:, 0].astype(int)
-        pre_ext_part = packed_action[:, 1:3].astype(int)
-        content = packed_action[:, 3:].astype(float)
-
-        # split pre_ext_part int of height times width into flag, x, y
-        ext_part = np.zeros((packed_action.shape[0], 3), dtype=int)
-        ext_part[:, 0] = pre_ext_part[:, 0]
-        ext_part[:, 1] = pre_ext_part[:, 1] % self.width
-        ext_part[:, 2] = pre_ext_part[:, 1] // self.width
+        ext_part = packed_action[:, 1:4].astype(int)
+        content = packed_action[:, 4:].astype(float)
 
         return int_part, ext_part, content
     
@@ -347,14 +353,9 @@ class Action_Content_Core(On_Policy_Core, nn.Module, Safe_nn_Module):
         if b_content is None:
             b_content = np.zeros((batch_size, self.content_size), dtype=float)
 
-        b_ext = np.reshape(b_ext, (batch_size, 3))
-        b_pack_ext = np.zeros((batch_size, 2), dtype=int)
-        b_pack_ext[:, 0] = b_ext[:, 0]
-        b_pack_ext[:, 1] = b_ext[:, 1] + b_ext[:, 2] * self.width
-
         packed_action = np.concatenate([
             np.reshape(b_int, (batch_size, 1)),
-            b_pack_ext,
+            b_ext,
             b_content
         ], axis=-1).astype(int)
 

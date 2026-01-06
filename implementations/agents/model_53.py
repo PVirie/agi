@@ -154,10 +154,10 @@ class Model_53(Agent):
                 masks = self.actions.make_mask(batch_led=True)
                 masks = masks * (1.0 - np.stack(self.last_idles[1:], axis=1, dtype=np.float32))
                 masks = masks * (1.0 - np.transpose(np.array(self.next_dones, dtype=np.float32), (1, 0)))
-                # make feature mask of shape (batch_size, context_length, 4)
+                # make feature mask of shape (batch_size, context_length, 5)
                 # and filter only content part
                 masks = np.concatenate([
-                    np.zeros((batch_size, masks.shape[1], 3), dtype=np.float32),
+                    np.zeros((batch_size, masks.shape[1], 4), dtype=np.float32),
                     np.reshape(masks, (batch_size, masks.shape[1], 1))
                 ], axis=-1)
 
