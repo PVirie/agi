@@ -126,3 +126,29 @@ class State_Sequence(Context_Collector):
             mask_tensor = np.repeat(mask_tensor, batch_size, axis=1)
 
         return mask_tensor
+
+
+if __name__ == "__main__":
+    # test assert that State_Sequence works as expected
+    seq = State_Sequence(max_history=5)
+    for i in range(10):
+        seq.append(np.zeros((2, 3)) + i, np.zeros((2, 2)) + i)
+    batch = seq.make_batch(batch_led=True)
+    assert batch.shape == (2, 10, 5)
+    mask = seq.make_mask(batch_led=True)
+    assert mask.shape == (2, 10)
+    seq2 = seq[7:8]
+    batch2 = seq2.make_batch(batch_led=True)
+    assert batch2.shape == (2, 6, 5)
+    mark_slice = seq.mark(skip_last=True)
+    assert mark_slice == slice(4, 10)
+    batch3 = seq.make_batch(batch_led=True)
+    assert batch3.shape == (2, 6, 5)
+
+    # test zero max_history
+    seq = State_Sequence(max_history=0)
+    for i in range(10):
+        seq.append(np.zeros((2, 3)) + i, np.zeros((2, 2)) + i)
+    seq2 = seq[7:8]
+    batch2 = seq2.make_batch(batch_led=True)
+    assert batch2.shape == (2, 1, 5)

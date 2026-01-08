@@ -64,12 +64,11 @@ class Up(nn.Module):
 
 
 class DeepTemporalTransformer(nn.Module):
-    def __init__(self, input_dim, num_heads=8, num_layers=3, dropout=0.1):
+    def __init__(self, input_dim, num_heads=8, num_layers=3, dropout=0.1, history_steps=8, max_temporal_len=32):
         super().__init__()
-        # We use TransformerEncoder with a Causal Mask to implement a 
-        # "Decoder-only" (GPT-style) temporal model.
-        # This allows frames to attend to history through multiple layers.
-        
+        self.history_steps = history_steps
+        self.max_temporal_len = max_temporal_len
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=input_dim,
             nhead=num_heads,
@@ -82,29 +81,58 @@ class DeepTemporalTransformer(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
+        self.register_buffer('full_mask', self._generate_mask(max_temporal_len))
+
+
+    def _generate_mask(self, size):
+        """Generates the causal + history limited mask."""
+        mask = torch.full((size, size), float('-inf'))
+        
+        if self.history_steps == 0:
+            # Diagonal only
+            mask.fill_diagonal_(0.0)
+        else:
+            # Create boolean valid mask
+            # 1. Causality: Lower triangle
+            valid = torch.tril(torch.ones(size, size, dtype=torch.bool))
+            
+            # 2. History Limit: Upper triangle relative to diagonal -N
+            if self.history_steps is not None:
+                history_constraint = torch.triu(torch.ones(size, size, dtype=torch.bool), diagonal=-self.history_steps)
+                valid = valid & history_constraint
+                
+            mask.masked_fill_(valid, 0.0)
+            
+        return mask
+
+
+    def get_mask(self, x):
+        """Returns the appropriate mask slice for input x."""
+        T = x.shape[1]
+        
+        # Fast path: Slice the pre-calculated buffer
+        if T <= self.max_temporal_len:
+            return self.full_mask[:T, :T]
+        
+        # Fallback: If input is longer than max_temporal_len, generate on the fly
+        return self._generate_mask(T).to(x.device)
+    
+
     def forward(self, x):
         """
         x: [Batch, Time, Features]
         """
-        B, T, C = x.shape
-        
-        # --- Causal Mask ---
-        # Returns [T, T] float matrix. 
-        # 0.0 for visible (past/present), -inf for masked (future).
-        mask = nn.Transformer.generate_square_subsequent_mask(T, device=x.device)
-        
-        # Pass through the deep transformer stack
+        mask = self.get_mask(x)
         out = self.transformer(x, mask=mask)
         return out
 
 
 class TemporalUNet(nn.Module):
-    def __init__(self, n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, max_temporal_len=32):
+    def __init__(self, n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=8, max_temporal_len=32):
         super(TemporalUNet, self).__init__()
         self.n_channels = n_channels
         self.vec_dim = vec_dim
         self.bilinear = bilinear
-        self.max_temporal_len = max_temporal_len
 
         # --- Encoder ---
         self.inc = DoubleConv(n_channels, 32)
@@ -126,7 +154,9 @@ class TemporalUNet(nn.Module):
             input_dim=self.attn_input_dim,
             num_heads=8,
             num_layers=num_temporal_layers,
-            dropout=0.1
+            dropout=0.1,
+            history_steps=history_steps,
+            max_temporal_len=max_temporal_len
         )
         self.fusion = nn.Linear(self.attn_input_dim, self.flat_features)
 
@@ -217,7 +247,7 @@ class TemporalUNet(nn.Module):
 
 if __name__ == "__main__":
     # max_temporal_len defaults to 32, we pass 32 to be explicit or test with it.
-    model = TemporalUNet(n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, max_temporal_len=32)
+    model = TemporalUNet(n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=2, max_temporal_len=32)
     img = torch.randn(2, 5, 1, 64, 64)
     vec = torch.randn(2, 5, 128)
     
