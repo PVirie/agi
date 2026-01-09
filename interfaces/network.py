@@ -19,7 +19,6 @@ class Policy_Network(abc.ABC):
         pass
 
 
-
 class Value_Network(abc.ABC):
 
     @abc.abstractmethod
@@ -34,18 +33,18 @@ class Value_Network(abc.ABC):
 class Q_Network(abc.ABC):
     
     @abc.abstractmethod
-    def get_q1_values(self, context, action, valid_actions=None):
+    def get_q1_values(self, context, action):
         pass
 
     @abc.abstractmethod
-    def get_q2_values(self, context, action, valid_actions=None):
+    def get_q2_values(self, context, action):
         pass
 
     @abc.abstractmethod
-    def get_q1_target_values(self, context, action, valid_actions=None):
+    def get_q1_target_values(self, context, action):
         pass
 
     @abc.abstractmethod
-    def get_q2_target_values(self, context, action, valid_actions=None):
+    def get_q2_target_values(self, context, action):
         pass
     
