@@ -1,9 +1,13 @@
 import abc
 
-class Core(abc.ABC):
+class Policy_Network(abc.ABC):
     
     @abc.abstractmethod
-    def get_log_probability(self, context, action, valid_actions=None, target_action=None, f_mask=None):
+    def get_log_probability(self, context, action, valid_actions=None, target_action=None, only_logprob_components=False):
+        pass
+
+    @abc.abstractmethod
+    def get_action(self, context, action, valid_actions=None):
         pass
 
     @abc.abstractmethod
@@ -14,23 +18,20 @@ class Core(abc.ABC):
     def pack_action(self, b_int=None, b_ext=None, b_content=None):
         pass
 
-    @abc.abstractmethod
-    def get_action(self, context, action, valid_actions=None):
-        pass
 
 
-class On_Policy_Core(Core):
+class Value_Network(abc.ABC):
 
     @abc.abstractmethod
-    def get_latest_value(self, context, action):
+    def get_latest_value(self, context):
         pass
 
     @abc.abstractmethod
-    def get_value(self, context, action, valid_actions=None):
+    def get_value(self, context):
         pass
 
 
-class Off_Policy_Core(Core):
+class Q_Network(abc.ABC):
     
     @abc.abstractmethod
     def get_q1_values(self, context, action, valid_actions=None):

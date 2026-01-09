@@ -19,5 +19,5 @@ class RL_Learner(abc.ABC):
 class Supervised_Learner(abc.ABC):
 
     @abc.abstractmethod
-    def train(self, obs: Any, actions: Any, target_actions: Any, masks: Any = None, valid_actions: Any = None):
+    def train(self, obs: Any, actions: Any, target_actions: Any, valid_actions: Any = None, trained_logprob_indices: List[int] = None):
         pass

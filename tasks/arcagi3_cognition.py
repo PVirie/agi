@@ -21,11 +21,12 @@ from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_T
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.core.torch.core import Action_Content_Core as Core
+from implementations.networks.torch.policy.temporal_conv import Policy_Core
+from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
-from implementations.core.states import State_Sequence as Collector
-from implementations.core.energy_memory import Energy_Memory as Memory
+from implementations.networks.states import State_Sequence as Collector
+from implementations.networks.energy_memory import Energy_Memory as Memory
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -155,33 +156,55 @@ if __name__ == "__main__":
 
     random_agent = random_agent.Random_Agent("01")
 
+    if args.scale == "small":
+        history_steps = 0
+        layers = 2
+        hidden_size = 64
+        conv_layers = [2, 2, 2, 2]
+    elif args.scale == "medium":
+        history_steps = 8
+        layers = 4
+        hidden_size = 128
+        conv_layers = [3, 4, 6, 3]
+    else:  # large
+        history_steps = 16
+        layers = 6
+        hidden_size = 256
+        conv_layers = [3, 4, 23, 3]
+
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
-    agent_core = Core(
+    policy_core = Policy_Core(
         action_size=7, position_size=16,
         width=64, height=64, channel=4,
-        hidden_size=64, layers=4,
-        history_steps=4, max_temporal_len=32,
+        hidden_size=hidden_size, layers=layers,
+        history_steps=history_steps, max_temporal_len=32,
+        device=device, persistence_path=parameters_path
+    ).to(device)
+    value_core = Value_Core(
+        action_size=7, position_size=16,
+        width=64, height=64, channel=4,
+        layers=conv_layers,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        agent=agent_core, device=device,
-        persistence_path=parameters_path
+        policy_model=policy_core, value_model=value_core,
+        device=device, persistence_path=parameters_path
     )
     supervised_learner = Basic_Learner(
-        agent=agent_core, device=device,
-        persistence_path=parameters_path
+        policy_model=policy_core, 
+        device=device, persistence_path=parameters_path
     )
     memory = Memory(
-        sizes=(1, 16, agent_core.content_size),
-        max_slot_size=128
+        sizes=(1, 16, policy_core.content_size),
+        max_slot_size=256
     )
     model_53_agent = model_53.Model_53(
-        agent_core=agent_core, 
+        policy_model=policy_core, value_model=value_core,
         trainer=ppo_learner, supervised_trainer=supervised_learner,
-        context_collector=Collector(max_history=4),
-        action_collector=Collector(max_history=4),
-        valid_action_collector=Collector(max_history=4),
+        context_collector=Collector(max_history=history_steps),
+        action_collector=Collector(max_history=history_steps),
+        valid_action_collector=Collector(max_history=history_steps),
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=args.with_supervision,

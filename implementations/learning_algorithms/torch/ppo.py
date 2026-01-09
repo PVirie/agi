@@ -7,7 +7,7 @@ import time
 import logging
 
 from interfaces.learning import RL_Learner
-from interfaces.core import On_Policy_Core
+from interfaces.network import Policy_Network, Value_Network
 from interfaces.data_structure import Context_Collector
 from utilities.safe_torch_module import Safe_nn_Module
 
@@ -17,8 +17,9 @@ from .base import masked_mean, masked_std
 
 class PPO(RL_Learner, Safe_nn_Module):
 
-    def __init__(self, agent: On_Policy_Core, device, persistence_path=None):
-        self.agent = agent
+    def __init__(self, policy_model: Policy_Network, value_model: Value_Network, device, persistence_path=None):
+        self.policy_model = policy_model
+        self.value_model = value_model
         self.device = device
 
         self.lr = 3e-4
@@ -35,7 +36,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.update_epochs = 10
         self.num_minibatches = 4
 
-        self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
+        all_parameters = list(self.policy_model.parameters()) + list(self.value_model.parameters())
+        self.optimizer = optim.Adam(all_parameters, lr=self.lr, eps=1e-5)
 
         Safe_nn_Module.__init__(self, 
             device=device, persistence_path=persistence_path, 
@@ -78,11 +80,12 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         with torch.no_grad():
             # Get old log probabilities and values
-            logprobs, _, values = self.agent.get_value(
+            logprobs, _ = self.policy_model.get_log_probability(
                 obs, 
                 actions,
                 valid_actions
             )
+            values = self.value_model.get_value(obs)
 
             # Bootstrap value if not done
             advantages = []
@@ -123,11 +126,12 @@ class PPO(RL_Learner, Safe_nn_Module):
                 mb_actions = actions[mb_inds, ...]
                 mb_valid_actions = valid_actions[mb_inds, ...] if valid_actions is not None else None
 
-                b_newlogprob, b_entropy, b_newvalue = self.agent.get_value(
+                b_newlogprob, b_entropy = self.policy_model.get_log_probability(
                     mb_obs, 
                     mb_actions,
                     mb_valid_actions
                 )
+                b_newvalue = self.value_model.get_value(mb_obs)
                 
                 logratio = b_newlogprob - mb_log_prob
                 logratio = torch.clamp(logratio, -10.0, 10.0)
@@ -168,7 +172,8 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.agent.parameters(), self.max_grad_norm)
+                nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.max_grad_norm)
+                nn.utils.clip_grad_norm_(self.value_model.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
             if self.target_kl is not None and approx_kl > self.target_kl:

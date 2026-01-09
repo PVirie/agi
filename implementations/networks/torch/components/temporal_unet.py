@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 try:
-    from .base import init_weights
+    from ..components.base import init_weights
 except ImportError:
-    from implementations.core.torch.base import init_weights
+    from implementations.networks.torch.components.base import init_weights
 
 
 class DoubleConv(nn.Module):

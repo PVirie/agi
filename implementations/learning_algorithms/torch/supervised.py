@@ -7,15 +7,16 @@ import time
 import logging
 
 from interfaces.learning import Supervised_Learner
-from interfaces.core import Core
+from interfaces.network import Policy_Network
 from utilities.safe_torch_module import Safe_nn_Module
 
 from .base import convert_np_array_to_float_tensor, convert_np_array_to_bool_tensor
+from .base import masked_mean
 
 class Basic_Learner(Supervised_Learner, Safe_nn_Module):
 
-    def __init__(self, agent: Core, device, persistence_path=None):
-        self.agent = agent
+    def __init__(self, policy_model: Policy_Network, device, persistence_path=None):
+        self.policy_model = policy_model
         self.device = device
 
         self.lr = 3e-4
@@ -23,7 +24,7 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
 
         self.update_epochs = 1
 
-        self.optimizer = optim.Adam(self.agent.parameters(), lr=self.lr, eps=1e-5)
+        self.optimizer = optim.Adam(self.policy_model.parameters(), lr=self.lr, eps=1e-5)
         
         Safe_nn_Module.__init__(self, 
             device=device, persistence_path=persistence_path, 
@@ -39,26 +40,43 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         self.optimizer.param_groups[0]["lr"] = lrnow
 
 
-    def train(self, obs: Any, actions: Any, target_actions: Any, masks: Any = None, valid_actions: Any = None):
+    def train(self, obs: Any, actions: Any, target_actions: Any, valid_actions: Any = None, masks: Any = None, trained_logprob_indices: List[int] = None):
+        """
+        obs: np array of shape (batch_size, context_length, ...)
+        actions: np array of shape (batch_size, context_length, ...)
+        target_actions: np array of shape (batch_size, context_length, ...)
+        valid_actions: np array of shape (batch_size, context_length, ...)
+        masks: np array of shape (batch_size, context_length)
+        trained_logprob_indices: List of int indices to select which logprob components to train on
+        """
         obs = convert_np_array_to_float_tensor(obs, self.device)
         actions = convert_np_array_to_float_tensor(actions, self.device)
         target_actions = convert_np_array_to_float_tensor(target_actions, self.device)
         valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
+        masks = convert_np_array_to_float_tensor(masks, self.device) if masks is not None else None
 
         for epoch in range(self.update_epochs):
-            newlogprob = self.agent.get_log_probability(
+            logprobs = self.policy_model.get_log_probability(
                 context=obs, 
                 action=actions,
                 valid_actions=valid_actions,
                 target_action=target_actions,
-                f_mask=masks
+                only_logprob_components=True
             )
 
+            if trained_logprob_indices is not None:
+                logprobs = logprobs[trained_logprob_indices]
+                
+            sum_log_probs = torch.concatenate(logprobs, dim=-1).sum(dim=-1)
+
             # now attempt to minimize negative log likelihood
-            loss = -newlogprob.mean()
+            if masks is None:
+                loss = -sum_log_probs.mean()
+            else:
+                loss = -masked_mean(sum_log_probs, masks)
 
             self.optimizer.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(self.agent.parameters(), self.max_grad_norm)
+            nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.max_grad_norm)
             self.optimizer.step()
 

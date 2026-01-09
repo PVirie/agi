@@ -4,9 +4,9 @@ import torch.nn.functional as F
 from torch.nn.init import trunc_normal_
 
 try:
-    from .base import init_weights
+    from ..components.base import init_weights
 except ImportError:
-    from implementations.core.torch.base import init_weights
+    from implementations.networks.torch.components.base import init_weights
 
 
 class SpatialEncoder(nn.Module):
