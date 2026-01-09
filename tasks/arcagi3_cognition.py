@@ -161,7 +161,7 @@ if __name__ == "__main__":
         action_size=7, position_size=16,
         width=64, height=64, channel=4,
         hidden_size=64, layers=4,
-        history_steps=0, max_temporal_len=32,
+        history_steps=4, max_temporal_len=32,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
@@ -179,9 +179,9 @@ if __name__ == "__main__":
     model_53_agent = model_53.Model_53(
         agent_core=agent_core, 
         trainer=ppo_learner, supervised_trainer=supervised_learner,
-        context_collector=Collector(max_history=0),
-        action_collector=Collector(max_history=0),
-        valid_action_collector=Collector(max_history=0),
+        context_collector=Collector(max_history=4),
+        action_collector=Collector(max_history=4),
+        valid_action_collector=Collector(max_history=4),
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=args.with_supervision,
