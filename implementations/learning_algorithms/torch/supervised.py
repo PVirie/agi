@@ -65,9 +65,10 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
             )
 
             if trained_logprob_indices is not None:
-                logprobs = logprobs[trained_logprob_indices]
+                # select only the logprob components we want to train on from the last dimension
+                logprobs = logprobs[:, :, trained_logprob_indices]
                 
-            sum_log_probs = torch.concatenate(logprobs, dim=-1).sum(dim=-1)
+            sum_log_probs = logprobs.sum(dim=-1)  # sum over logprob components
 
             # now attempt to minimize negative log likelihood
             if masks is None:

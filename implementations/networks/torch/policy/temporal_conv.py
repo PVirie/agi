@@ -227,7 +227,10 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
             log_prob_content = torch.reshape(log_prob_content, (batch_size, context_size))
             log_prob_position = torch.reshape(log_prob_position, (batch_size, context_size))
 
-            return [log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content, log_prob_position]
+            # return [log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content, log_prob_position]
+            return torch.stack([
+                log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content, log_prob_position
+            ], dim=-1)
         else:
             # collapse last dimension
             batch_log_prob = torch.reshape(batch_log_prob, (batch_size, context_size))
