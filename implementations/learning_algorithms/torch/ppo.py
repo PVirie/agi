@@ -67,7 +67,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         valid_actions: np array of shape (batch_size, context_length, ...)
         """
         # Use dim 0 as context length dimension
-        obs = convert_np_array_to_float_tensor(obs, self.device)
+        obs = convert_np_array_to_float_tensor(obs[:, :-1, ...], self.device)
+        obs_last = convert_np_array_to_float_tensor(obs[:, -1:, ...], self.device)
         actions = convert_np_array_to_float_tensor(actions, self.device)
         rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
         next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
@@ -79,29 +80,27 @@ class PPO(RL_Learner, Safe_nn_Module):
         minibatch_size = min(batch_size // self.num_minibatches, 8)
 
         with torch.no_grad():
-            obs_without_last = obs[:, :-1, ...]  # (batch_size, context_length, ...)
-
             # Get old log probabilities and values
             logprobs, _ = self.policy_model.get_log_probability(
-                obs_without_last, 
+                obs, 
                 actions,
                 valid_actions
             )
-            values = self.value_model.get_value(obs)
-            values_without_last = values[:, :-1, ...]  # (batch_size, context_length)
+            values_with_last = self.value_model.get_value(torch.cat([obs, obs_last], dim=1))
+            values = values_with_last[:, :-1, ...]  # (batch_size, context_length)
 
             # Bootstrap value if not done
             advantages = []
             lastgaelam = torch.zeros(batch_size).to(self.device)
             for t in reversed(range(sequence_size)):
                 nextnonterminal = 1.0 - next_dones[:, t]
-                nextvalues = values[:, t + 1]
-                delta = rewards[:, t] + self.gamma * nextvalues * nextnonterminal - values[:, t]
+                nextvalues = values_with_last[:, t + 1]
+                delta = rewards[:, t] + self.gamma * nextvalues * nextnonterminal - values_with_last[:, t]
                 lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
                 advantages.append(lastgaelam)
             advantages.reverse()
             advantages = torch.stack(advantages, dim=1)
-            returns = advantages + values_without_last
+            returns = advantages + values
 
         # Optimizing the policy and value network
         clipfracs = []
@@ -113,7 +112,7 @@ class PPO(RL_Learner, Safe_nn_Module):
                 mb_inds = b_inds[start:end]
 
                 mb_log_prob = logprobs[mb_inds, ...]
-                mb_value = values_without_last[mb_inds, ...]
+                mb_value = values[mb_inds, ...]
                 mb_advantages = advantages[mb_inds, ...] 
                 mb_returns = returns[mb_inds, ...]
                 mb_masks = masks[mb_inds, ...]
@@ -121,7 +120,7 @@ class PPO(RL_Learner, Safe_nn_Module):
                 if torch.sum(mb_masks) < 1e-8:
                     continue
 
-                mb_obs = obs_without_last[mb_inds, ...]
+                mb_obs = obs[mb_inds, ...]
                 mb_actions = actions[mb_inds, ...]
                 mb_valid_actions = valid_actions[mb_inds, ...] if valid_actions is not None else None
 
