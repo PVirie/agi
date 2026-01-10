@@ -198,7 +198,7 @@ class TemporalUNet(nn.Module):
         B, T, C, H, W = x.shape
         
         # --- U-Net Encoder/Decoder (Batch+Time folded) ---
-        x_reshaped = x.view(B * T, C, H, W)
+        x_reshaped = x.reshape(B * T, C, H, W)
         x1 = self.inc(x_reshaped)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
@@ -206,15 +206,15 @@ class TemporalUNet(nn.Module):
         x5 = self.down4(x4)
 
         # Temporal Attention Input Construction
-        flat_x5 = x5.view(B, T, -1)
+        flat_x5 = x5.reshape(B, T, -1)
         projected_v = self.temporal_proj(v) # [B, T, 32]
         combined = torch.cat([flat_x5, projected_v], dim=2)
 
         # Pass through Transformer
         attn_out = self.temporal_attn(combined)
         
-        fused = self.fusion(attn_out.view(B * T, -1)) # [B*T, flat_features]
-        x4_ = fused.view_as(x5)
+        fused = self.fusion(attn_out.reshape(B * T, -1)) # [B*T, flat_features]
+        x4_ = fused.reshape_as(x5)
         
         x3_ = self.up1(x4_, x4)
         x2_ = self.up2(x3_, x3)
@@ -237,10 +237,10 @@ class TemporalUNet(nn.Module):
         content_logits = self.head_content(x_features) # [B*T, C, 64, 64]
         
         # --- Reshape and Return ---
-        sampled_features = sampled_features.view(B, T, -1)
-        x_logits = x_logits.view(B, T, W)
-        y_logits = y_logits.view(B, T, H)
-        content_logits = content_logits.view(B, T, C, H, W)
+        sampled_features = sampled_features.reshape(B, T, -1)
+        x_logits = x_logits.reshape(B, T, W)
+        y_logits = y_logits.reshape(B, T, H)
+        content_logits = content_logits.reshape(B, T, C, H, W)
         
         return sampled_features, x_logits, y_logits, content_logits
 

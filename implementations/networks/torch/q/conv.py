@@ -65,14 +65,14 @@ class ParametricImpalaQNetwork(nn.Module):
         _, _, N, F = actions.shape
         
         # 1. Encode States
-        flat_state = state.view(B * S, C, H, W)
+        flat_state = state.reshape(B * S, C, H, W)
         state_feats = self.state_encoder(flat_state)    # (B*S, hidden_dim)
         state_emb = self.state_projector(state_feats)   # (B*S, hidden_dim)
         
         # 2. Encode Actions
-        flat_actions = actions.view(B * S * N, F)
+        flat_actions = actions.reshape(B * S * N, F)
         action_emb = self.action_encoder(flat_actions)  # (B*S*N, hidden_dim)
-        action_emb = action_emb.view(B * S, N, -1)      # (B*S, N, hidden_dim)
+        action_emb = action_emb.reshape(B * S, N, -1)      # (B*S, N, hidden_dim)
         
         # 3. Combine
         # Expand state to match N choices per sequence step
@@ -81,7 +81,8 @@ class ParametricImpalaQNetwork(nn.Module):
         
         # 4. Score
         q_flat = self.scorer(cat_features)
-        q_values = q_flat.view(B, S, N)
+        q_values = q_flat.reshape(B, S, N)
+
         
         return q_values
     

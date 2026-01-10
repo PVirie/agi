@@ -11,7 +11,7 @@ from interfaces.network import Policy_Network, Value_Network
 from interfaces.data_structure import Context_Collector
 from utilities.safe_torch_module import Safe_nn_Module
 
-from .base import convert_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, convert_np_array_to_bool_tensor
+from .base import convert_list_of_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, convert_np_array_to_bool_tensor
 from .base import masked_mean, masked_std
 
 
@@ -55,15 +55,14 @@ class PPO(RL_Learner, Safe_nn_Module):
 
     def learn(self, 
               obs: Any, actions: Any, rewards: List[Any], 
-              next_dones: List[List[bool]], last_value: Any, last_done: List[bool], 
+              next_dones: List[List[bool]],
               masks: Any = None, valid_actions: Any = None):
         """
-        obs: np array of shape (batch_size, context_length, ...)
+        obs: np array of shape (batch_size, context_length + 1, ...)
+        note that obs includes the last next_obs for computing the last value
         actions: np array of shape (batch_size, context_length, ...)
-        rewards: list of np array of shape (batch_size)
-        next_dones: list of bools of length batch_size
-        last_value: np array of shape (batch_size)
-        last_done: bools of length batch_size
+        rewards: list (context_length) of np array of shape (batch_size)
+        next_dones: list (context_length) of bools of length batch_size
         masks: np array of shape (batch_size, context_length)
         valid_actions: np array of shape (batch_size, context_length, ...)
         """
@@ -71,6 +70,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         obs = convert_np_array_to_float_tensor(obs, self.device)
         actions = convert_np_array_to_float_tensor(actions, self.device)
         rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
+        next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
         masks = torch.ones_like(rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
         valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
 
@@ -79,30 +79,29 @@ class PPO(RL_Learner, Safe_nn_Module):
         minibatch_size = min(batch_size // self.num_minibatches, 8)
 
         with torch.no_grad():
+            obs_without_last = obs[:, :-1, ...]  # (batch_size, context_length, ...)
+
             # Get old log probabilities and values
             logprobs, _ = self.policy_model.get_log_probability(
-                obs, 
+                obs_without_last, 
                 actions,
                 valid_actions
             )
             values = self.value_model.get_value(obs)
+            values_without_last = values[:, :-1, ...]  # (batch_size, context_length)
 
             # Bootstrap value if not done
             advantages = []
             lastgaelam = torch.zeros(batch_size).to(self.device)
             for t in reversed(range(sequence_size)):
-                if t == sequence_size - 1:
-                    nextnonterminal = 1.0 - convert_list_of_bool_to_float_tensor(last_done, self.device)
-                    nextvalues = convert_np_array_to_float_tensor(last_value, self.device)
-                else:
-                    nextnonterminal = 1.0 - convert_list_of_bool_to_float_tensor(next_dones[t], self.device)
-                    nextvalues = values[:, t + 1]
+                nextnonterminal = 1.0 - next_dones[:, t]
+                nextvalues = values[:, t + 1]
                 delta = rewards[:, t] + self.gamma * nextvalues * nextnonterminal - values[:, t]
                 lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
                 advantages.append(lastgaelam)
             advantages.reverse()
             advantages = torch.stack(advantages, dim=1)
-            returns = advantages + values
+            returns = advantages + values_without_last
 
         # Optimizing the policy and value network
         clipfracs = []
@@ -114,7 +113,7 @@ class PPO(RL_Learner, Safe_nn_Module):
                 mb_inds = b_inds[start:end]
 
                 mb_log_prob = logprobs[mb_inds, ...]
-                mb_value = values[mb_inds, ...]
+                mb_value = values_without_last[mb_inds, ...]
                 mb_advantages = advantages[mb_inds, ...] 
                 mb_returns = returns[mb_inds, ...]
                 mb_masks = masks[mb_inds, ...]
@@ -122,7 +121,7 @@ class PPO(RL_Learner, Safe_nn_Module):
                 if torch.sum(mb_masks) < 1e-8:
                     continue
 
-                mb_obs = obs[mb_inds, ...]
+                mb_obs = obs_without_last[mb_inds, ...]
                 mb_actions = actions[mb_inds, ...]
                 mb_valid_actions = valid_actions[mb_inds, ...] if valid_actions is not None else None
 

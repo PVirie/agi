@@ -4,8 +4,9 @@ import numpy as np
 from typing import Any, List
 
 
-def convert_list_of_bool_to_float_tensor(bool_list: List[bool], device) -> torch.Tensor:
-    return torch.tensor([1.0 if b else 0.0 for b in bool_list], dtype=torch.float32).to(device)
+def convert_list_of_list_of_bool_to_float_tensor(bool_list_of_list: List[List[bool]], device) -> torch.Tensor:
+    np_array = np.stack(bool_list_of_list, axis=1)
+    return torch.tensor(np_array.astype(np.float32), dtype=torch.float32).to(device)
 
 
 def convert_np_array_to_float_tensor(np_array: np.ndarray, device) -> torch.Tensor:

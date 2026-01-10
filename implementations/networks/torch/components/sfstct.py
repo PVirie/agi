@@ -49,8 +49,8 @@ class SpatialEncoder(nn.Module):
     def forward(self, x, vec):
         # x: (B, T, C, H, W) -> flattened to (B*T, C, H, W) for spatial processing
         b, t, c, h, w = x.shape
-        x = x.view(b * t, c, h, w) 
-        vec = vec.view(b * t, -1)
+        x = x.reshape(b * t, c, h, w) 
+        vec = vec.reshape(b * t, -1)
 
         # Create Patch Tokens
         x = self.patch_embed(x) # (B*T, 512, 16, 16)
@@ -74,7 +74,7 @@ class SpatialEncoder(nn.Module):
         cls_token = x[:, 0] # (B*T, 512)
 
         # Reshape back to temporal sequence: (B, T, 512)
-        return cls_token.view(b, t, -1)
+        return cls_token.reshape(b, t, -1)
 
 
 class TemporalEncoder(nn.Module):

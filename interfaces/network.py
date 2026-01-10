@@ -22,10 +22,6 @@ class Policy_Network(abc.ABC):
 class Value_Network(abc.ABC):
 
     @abc.abstractmethod
-    def get_latest_value(self, context):
-        pass
-
-    @abc.abstractmethod
     def get_value(self, context):
         pass
 

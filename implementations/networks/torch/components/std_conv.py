@@ -67,7 +67,7 @@ class ImpalaCNN(nn.Module):
             for layer in self.layers:
                 dummy = layer(dummy)
             dummy = self.relu(dummy)
-            self.flatten_dim = dummy.view(1, -1).size(1)
+            self.flatten_dim = dummy.reshape(1, -1).size(1)
             
         # Final fully connected layer to output_dims (standard in IMPALA paper)
         self.fc = nn.Sequential(
@@ -86,7 +86,7 @@ class ImpalaCNN(nn.Module):
             x = layer(x)
         
         x = self.relu(x)
-        x = x.view(x.size(0), -1) # Flatten
+        x = torch.flatten(x, start_dim=1)
         x = self.fc(x)
         return x
     

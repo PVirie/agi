@@ -99,10 +99,9 @@ class Game_State:
             self.diff_from_last = True
             self.delta_score = self.score
             return
-        if check_frame_difference(last_state.frame, self.frame):
-            self.diff_from_last = True
-            self.delta_score = self.score - last_state.score
-            return
+        self.delta_score = self.score - last_state.score
+        self.diff_from_last = check_frame_difference(last_state.frame, self.frame) or (abs(self.delta_score) > 1e-5)
+        return
 
 
 class ARCAGI3_Environment:

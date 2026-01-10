@@ -11,7 +11,7 @@ class RL_Learner(abc.ABC):
     @abc.abstractmethod
     def learn(self, 
               obs: Any, actions: Any, rewards: List[Any], 
-              next_dones: List[List[bool]], last_value: Any, last_done: List[bool], 
+              next_dones: List[List[bool]],
               masks: Any = None, valid_actions: Any = None):
         pass
 

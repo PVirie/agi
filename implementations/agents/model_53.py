@@ -119,7 +119,6 @@ class Model_53(Agent):
 
         content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
         reward = np.array([r for r in rewards])
-        next_done = [d for d in next_dones] # copy
 
         update_mask = np.zeros((batch_size, 1 + self.policy_model.position_size + self.policy_model.content_size), dtype=np.float32)
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
@@ -197,23 +196,18 @@ class Model_53(Agent):
                     trained_logprob_indices=[4] # only content part
                 )
 
-            # compute last value from the current context (past observation) and the recent observation
-            # this one return batch leading tensors (batch, 1)
-            last_value = self.value_model.get_latest_value(self.obs.make_batch(batch_led=True))
+            # learn RL
 
             # masks has shape (batch_size, context_length)
             masks = self.actions.make_mask(batch_led=True)
             # need to shift last_truncates by 1 to the left, because t signals whether t-1 is truncated
             masks = apply_cascading_masks(masks, self.last_truncates[1:])
 
-            # learn RL
             self.trainer.learn(
-                obs=self.obs[:-1].make_batch(batch_led=True), 
+                obs=self.obs.make_batch(batch_led=True), 
                 actions=self.actions.make_batch(batch_led=True), 
                 rewards=self.rewards[1:],
-                next_dones=self.next_dones[:-1], 
-                last_value=np.reshape(last_value, (-1)), 
-                last_done=next_done,
+                next_dones=self.next_dones[1:],
                 masks=masks,
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True)
             )
@@ -226,7 +220,7 @@ class Model_53(Agent):
             # reset
             self.trainer.reset(time=0.0)
 
-            left_over_slide = self.actions.mark()
+            self.actions.mark()
 
             left_over_slide = self.obs.mark(skip_last=True)
             self.valid_actions.mark(skip_last=True)

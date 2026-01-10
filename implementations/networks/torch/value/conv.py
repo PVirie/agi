@@ -57,17 +57,6 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         return values
     
 
-    def get_latest_value(self, context):
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        with torch.no_grad():
-            value = self.__compute(context)
-            
-        return value[:, -1, ...].cpu().numpy()
-    
-
     def get_value(self, context):
 
         if isinstance(context, np.ndarray):
