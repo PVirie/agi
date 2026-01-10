@@ -15,13 +15,16 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 APP_ROOT = os.getenv("APP_ROOT", "/app")
 
-import utilities
-from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_Type, ARCAGI3_Environment
+from utilities.package_install import install
+
+install("ale-py")
+
+from ale_py.vector_env import AtariVectorEnv
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.arcagi3 import ARCAGI3_Core
+from implementations.networks.torch.policy.atari import Atari_Core
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
@@ -31,79 +34,49 @@ from implementations.networks.energy_memory import Energy_Memory as Memory
 torch.autograd.set_detect_anomaly(True)
 
 
-def get_state_reward(state: Game_State) -> int:
-    reward = state.delta_score
-    state_type = state.state
-    if state_type == Game_State_Type.WIN:
-        reward = 10
-    elif state_type == Game_State_Type.GAME_OVER:
-        reward = -1
-    elif state_type == Game_State_Type.IDLE:
-        reward = 0
-    elif state_type == Game_State_Type.NOT_FINISHED:
-        reward = state.delta_score
-        if state.matched_relative_index >= 0:
-            reward = -0.1 # small penalty for action that causes looping
-    else:
-        reward = 0
-    return reward - 0.01  # small step penalty
-    
-
 async def run(env, agent):
 
-    all_games_info = await env.list_games()
-    all_public_game_ids = [game["game_id"] for game in all_games_info if game.get("game_type") == "public"]
-    # now duplicate game to have at least 3 games for each id
-    selected_game_ids = all_public_game_ids * 3
-    await env.start(selected_game_ids=selected_game_ids)
+    observations, info = env.reset()
+    rewards = [np.float32(0) for _ in observations]
+    last_idle = [False for _ in observations]
+    next_done = [False for _ in observations]
+    last_truncated = [False for _ in observations]
+    last_reset = [False for _ in observations]
 
-    actions = [(Action_Type.RESET, ) for _ in range(len(selected_game_ids))]
     start_time = time.perf_counter()
     steps = 0
     while True:
         elapsed_time = time.perf_counter() - start_time
         should_stop = elapsed_time > max_running_time  # run for the specified max time
 
-        has_event, states = await env.execute(actions)
-        last_idle = [
-            s.state == Game_State_Type.IDLE for s in states
-        ]
-        next_done = [
-            s.state == Game_State_Type.WIN or s.state == Game_State_Type.GAME_OVER for s in states
-        ]
-        last_truncated = [
-            s.state == Game_State_Type.TRUNCATED or s.state == Game_State_Type.RESET for s in states
-        ]
-        last_reset = [
-            s.state == Game_State_Type.RESET for s in states
-        ]
         actions = agent.choose_action(
             last_idles=last_idle,
             next_dones=next_done,
             last_truncates=last_truncated,
             last_resets=last_reset,
-            latest_frames=[state.frame for state in states],
-            rewards=[get_state_reward(s) for s in states],
+            latest_frames=[obs for obs in observations],
+            rewards=[r.item() for r in rewards],
             next_available_actions=[
-                [a.value for a in state.next_available_actions] for state in states
+                list(range(6)) for _ in observations
             ],
             force_train=steps % 10 == 9 or should_stop,
         )
-        actions = [
-            ((Action_Type(a[0].item()), a[1].item(), a[2].item()) if a is not None else None) if not d else (Action_Type.RESET, )
-            for a, d in zip(actions, next_done)
-        ]
-        await asyncio.sleep(1)
+        actions = [int(a[0].item()) if a is not None else None for a in actions]
+
+        observations, rewards, terminations, truncations, infos = env.step(np.array(actions, dtype=np.int32))
+
+        last_idle = [False for _ in observations]
+        next_done = [terminations[i] or truncations[i] for i in range(len(observations))]
+        last_truncated = [truncations[i] for i in range(len(observations))]
+        last_reset = [False for _ in observations]
 
         if should_stop:
             logging.info("Max running time reached, stopping the experiment.")
             break
 
         steps += 1
-        if steps % 10 == 0 or has_event:
-            log_str = "; ".join([s.short_str() for s in states])
-            logging.info(f"{steps}| States: [{log_str}]")
-            logging.info(f"{steps}| Rewards: {[get_state_reward(s) for s in states]}")
+        if steps % 100 == 0 or any(terminations) or any(truncations):
+            logging.info(f"{steps}| Rewards: {rewards}")
             logging.info(f"{steps}| Selected actions: {actions}")
 
             # save 
@@ -111,16 +84,15 @@ async def run(env, agent):
             value_core.save()
             ppo_learner.save()
             supervised_learner.save()
-            
 
-        if steps % 100 == 0:
+        if steps % 1000 == 0:
             # compute estimated time left
             logging.info(f"Completed {steps} steps.")
             logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
             logging.info(f"Expected time left: {max_running_time - elapsed_time:.2f} seconds.")
 
 
-    report = await env.close()
+    env.close()
 
 
 if __name__ == "__main__":
@@ -150,12 +122,12 @@ if __name__ == "__main__":
     logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(20251118)  
-    torch.manual_seed(20251118)
-    np.random.seed(20251118)
+    random.seed(20260111)  
+    torch.manual_seed(20260111)
+    np.random.seed(20260111)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/arcagi3_cognition"
+    experiment_path = f"{APP_ROOT}/experiments/atari"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -163,7 +135,18 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
-    env = ARCAGI3_Environment()
+    env = AtariVectorEnv(
+        game="pong",  # The ROM id not name, i.e., camel case compared to `gymnasium.make` name versions
+        num_envs=4,
+        img_height=64,           # Height to resize frames to
+        img_width=64,            # Width to resize frames to
+        maxpool=True,               # 1. Solves "Invisibility" (Flickering)
+        stack_num=4,                # 2. Solves "Motion" (Velocity)
+        frameskip=4,                # 3. Standard time resolution
+        grayscale=True,             # 4. Removes noise (Color is usually irrelevant in Atari)
+        episodic_life=True,         # Recommended for harder games (Breakout/Montezuma)
+        reward_clipping=True,
+    )
 
     random_agent = random_agent.Random_Agent("01")
 
@@ -185,15 +168,15 @@ if __name__ == "__main__":
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
-    policy_core = ARCAGI3_Core(
-        action_size=7, position_size=16,
+    policy_core = Atari_Core(
+        action_size=6, position_size=16,
         width=64, height=64, channel=4,
         hidden_size=hidden_size, layers=layers,
         history_steps=history_steps, max_temporal_len=32,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        action_size=7, position_size=16,
+        action_size=6, position_size=16,
         width=64, height=64, channel=4,
         layers=conv_layers,
         device=device, persistence_path=parameters_path

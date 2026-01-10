@@ -48,7 +48,7 @@ class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
         self.head_content = nn.Sequential(
-            nn.Sigmoid()
+            nn.ReLU()
         )
 
         self.position_step = nn.Sequential(
@@ -57,6 +57,9 @@ class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
             nn.Linear(hidden_size, position_size),
             nn.Sigmoid()
         )
+
+        # add parameter for Normal distribution scale
+        self.log_std = nn.Parameter(torch.zeros(1, 1, self.content_size))
 
         self.reset_parameters()
         self.load()
@@ -70,6 +73,8 @@ class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.head_action.apply(init_weights)
         self.head_content.apply(init_weights)
         self.position_step.apply(init_weights)
+
+        nn.init.constant_(self.log_std, 0.0)
 
 
     def __compute(self, context, action):
@@ -118,7 +123,7 @@ class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
-        props_content = Bernoulli(probs=pprobs_content)
+        props_content = Normal(loc=pprobs_content, scale=torch.exp(self.log_std))
 
         action_flag = props_flag.sample()
         action_action = props_action.sample()
@@ -173,7 +178,7 @@ class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
-        props_content = Bernoulli(probs=pprobs_content)
+        props_content = Normal(loc=pprobs_content, scale=torch.exp(self.log_std))
 
         if target_action is None:
             target_action = action

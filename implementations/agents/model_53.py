@@ -211,11 +211,6 @@ class Model_53(Agent):
                 masks=masks,
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True)
             )
-
-            self.supervised_trainer.save()
-            self.trainer.save()
-            self.policy_model.save()
-            self.value_model.save()
             
             # reset
             self.trainer.reset(time=0.0)
