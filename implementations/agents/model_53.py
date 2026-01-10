@@ -17,6 +17,31 @@ def make_valid_mask(valid_actions, action_size):
     return valid_mask
 
 
+def apply_cascading_masks(masks, *stop_conditions):
+    """
+    Updates masks by zeroing out elements where ANY stop_condition is True.
+    
+    Args:
+        masks (np.array): The initial mask array.
+        *stop_conditions (list): Variable number of lists/arrays to stack and filter by.
+                                 (e.g., last_idles, last_truncates)
+    """
+    combined_stop_flags = None
+
+    for cond in stop_conditions:
+        current_flags = np.stack(cond, axis=1).astype(bool)
+        if combined_stop_flags is None:
+            combined_stop_flags = current_flags
+        else:
+            # In-place logical_or is memory efficient and fast
+            np.logical_or(combined_stop_flags, current_flags, out=combined_stop_flags)
+
+    # ~combined_stop_flags turns True (stop) into False.
+    # .astype(float) turns False into 0.0, True into 1.0.
+    keep_factor = (~combined_stop_flags).astype(np.float32)
+    return masks * keep_factor
+
+
 class Model_53(Agent):
     
     def __init__(self, 
@@ -86,6 +111,7 @@ class Model_53(Agent):
             )
             self.last_truncates.append([True for _ in range(batch_size)])
             self.last_idles.append([False for _ in range(batch_size)])
+            self.next_dones.append([False for _ in range(batch_size)])
 
         for i, (idle, t) in enumerate(zip(last_idles, last_truncates)):
             if t:
@@ -94,12 +120,10 @@ class Model_53(Agent):
         content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
         reward = np.array([r for r in rewards])
         next_done = [d for d in next_dones] # copy
-        last_truncated = [t for t in last_truncates] # copy
-        last_idle = [idle for idle in last_idles] # copy
 
         update_mask = np.zeros((batch_size, 1 + self.policy_model.position_size + self.policy_model.content_size), dtype=np.float32)
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
-        for i, (idle, t, r) in enumerate(zip(last_idles, last_truncates, last_resets)):
+        for i, (idle, d, t, r) in enumerate(zip(last_idles, next_dones, last_truncates, last_resets)):
             if r:
                 memory_action[i] = Memory_Operation_Type.RESET
             if not idle:
@@ -109,6 +133,7 @@ class Model_53(Agent):
                 memory_action[i] = Memory_Operation_Type.CACHE
             self.last_truncates[-1][i] = t
             self.last_idles[-1][i] = idle
+            self.next_dones[-1][i] = d
 
         # replace the reward and content
         last_obs = self.obs.get_last()
@@ -139,7 +164,7 @@ class Model_53(Agent):
             operation=memory_action
         )
 
-        if (any(next_done) or any(last_truncated) or force_train) and current_cl > 1:
+        if (any(next_dones) or any(last_truncates) or force_train) and current_cl > 1:
             
             self.policy_model.train()
             self.value_model.train()
@@ -156,8 +181,12 @@ class Model_53(Agent):
                 
                 # masks has shape (batch_size, context_length)
                 masks = self.actions.make_mask(batch_led=True)
-                masks = masks * (1.0 - np.stack(self.last_idles[1:], axis=1, dtype=np.float32))
-                masks = masks * (1.0 - np.transpose(np.array(self.next_dones, dtype=np.float32), (1, 0)))
+                masks = apply_cascading_masks(
+                    masks,
+                    self.last_idles[1:],
+                    self.last_truncates[1:],
+                    self.next_dones[:-1]
+                )
 
                 self.supervised_trainer.train(
                     obs=self.obs[:-1].make_batch(batch_led=True),
@@ -175,14 +204,14 @@ class Model_53(Agent):
             # masks has shape (batch_size, context_length)
             masks = self.actions.make_mask(batch_led=True)
             # need to shift last_truncates by 1 to the left, because t signals whether t-1 is truncated
-            masks = masks * (1.0 - np.stack(self.last_truncates[1:], axis=1, dtype=np.float32))
+            masks = apply_cascading_masks(masks, self.last_truncates[1:])
 
             # learn RL
             self.trainer.learn(
                 obs=self.obs[:-1].make_batch(batch_led=True), 
                 actions=self.actions.make_batch(batch_led=True), 
                 rewards=self.rewards[1:],
-                next_dones=self.next_dones, 
+                next_dones=self.next_dones[:-1], 
                 last_value=np.reshape(last_value, (-1)), 
                 last_done=next_done,
                 masks=masks,
@@ -198,13 +227,13 @@ class Model_53(Agent):
             self.trainer.reset(time=0.0)
 
             left_over_slide = self.actions.mark()
-            self.next_dones = self.next_dones[left_over_slide]
 
             left_over_slide = self.obs.mark(skip_last=True)
             self.valid_actions.mark(skip_last=True)
             self.rewards = self.rewards[left_over_slide]
             self.last_truncates = self.last_truncates[left_over_slide]
             self.last_idles = self.last_idles[left_over_slide]
+            self.next_dones = self.next_dones[left_over_slide]
 
             self.policy_model.eval()
             self.value_model.eval()
@@ -281,7 +310,6 @@ class Model_53(Agent):
         
         # store last states
         self.actions.append(selected_actions)
-        self.next_dones.append(next_done)
 
         self.obs.append(reward, position, content)
         self.rewards.append(reward)
@@ -291,5 +319,39 @@ class Model_53(Agent):
         )
         self.last_truncates.append([False for _ in range(batch_size)])
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
+        self.next_dones.append([False for _ in range(batch_size)])
         
         return return_action
+    
+
+if __name__ == "__main__":
+    # test mask
+
+    masks = np.ones((2, 5), dtype=np.float32)
+    last_idles = [
+        [False, True],
+        [False, False],
+        [True, False],
+        [False, False],
+        [False, True],
+    ]
+    last_truncates = [
+        [False, False],
+        [True, False],
+        [False, False],
+        [True, False],
+        [False, False],
+    ]
+    next_dones = [
+        [False, False],
+        [False, True],
+        [False, False],
+        [True, True],
+        [False, False],
+    ]   
+    updated_masks = apply_cascading_masks(masks, last_idles, last_truncates, next_dones)
+    manual_masks = masks.copy()
+    manual_masks = manual_masks * (1.0 - np.stack(last_idles, axis=1).astype(np.float32))
+    manual_masks = manual_masks * (1.0 - np.stack(last_truncates, axis=1).astype(np.float32))
+    manual_masks = manual_masks * (1.0 - np.stack(next_dones, axis=1).astype(np.float32))
+    assert np.allclose(updated_masks, manual_masks), "Cascading mask application failed!"
