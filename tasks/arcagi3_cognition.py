@@ -59,6 +59,9 @@ async def run(env, agent):
     start_time = time.perf_counter()
     steps = 0
     while True:
+        elapsed_time = time.perf_counter() - start_time
+        should_stop = elapsed_time > max_running_time  # run for the specified max time
+
         has_event, states = await env.execute(actions)
         last_idle = [
             s.state == Game_State_Type.IDLE for s in states
@@ -82,7 +85,7 @@ async def run(env, agent):
             next_available_actions=[
                 [a.value for a in state.next_available_actions] for state in states
             ],
-            force_train=steps % 10 == 9
+            force_train=steps % 10 == 9 or should_stop,
         )
         actions = [
             ((Action_Type(a[0].item()), a[1].item(), a[2].item()) if a is not None else None) if not d else (Action_Type.RESET, )
@@ -90,8 +93,7 @@ async def run(env, agent):
         ]
         await asyncio.sleep(1)
 
-        elapsed_time = time.perf_counter() - start_time
-        if elapsed_time > max_running_time:  # run for the specified max time
+        if should_stop:
             logging.info("Max running time reached, stopping the experiment.")
             break
 
@@ -160,17 +162,17 @@ if __name__ == "__main__":
         history_steps = 0
         layers = 2
         hidden_size = 64
-        conv_layers = [2, 2, 2, 2]
+        conv_layers = [16, 32, 32] # basic impala
     elif args.scale == "medium":
         history_steps = 8
         layers = 4
         hidden_size = 128
-        conv_layers = [3, 4, 6, 3]
+        conv_layers = [16, 32, 64, 64] # medium impala
     else:  # large
         history_steps = 16
         layers = 6
         hidden_size = 256
-        conv_layers = [3, 4, 23, 3]
+        conv_layers = [32, 64, 128, 128, 256, 256] # large impala
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)

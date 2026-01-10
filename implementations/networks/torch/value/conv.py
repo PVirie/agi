@@ -9,6 +9,7 @@ import logging
 
 from interfaces.network import Value_Network
 from ..components.conv_resnet import ResNet, Bottleneck
+from ..components.std_conv import ImpalaCNN
 from utilities.safe_torch_module import Safe_nn_Module
 
 
@@ -29,14 +30,15 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.height = height
         self.channel = channel
 
-        self.resnet = ResNet(Bottleneck, layers, num_classes=1, num_channels=channel)
+        # self.conv_layers = ResNet(Bottleneck, layers, num_classes=1, num_channels=channel)
+        self.conv_layers = ImpalaCNN(input_dims=channel, output_dims=1, width=width, height=height, depths=layers)
 
         self.reset_parameters()
         self.load()
 
 
     def reset_parameters(self):
-        self.resnet.reset_parameters()
+        self.conv_layers.reset_parameters()
 
 
     def __compute(self, context):
@@ -49,7 +51,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         image_content = context[:, :, 1 + self.position_size:]
         image_part = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))
 
-        values = self.resnet(image_part)  # (batch_size * context_size, 1)
+        values = self.conv_layers(image_part)  # (batch_size * context_size, 1)
         values = torch.reshape(values, (batch_size, context_size, 1))
         
         return values
