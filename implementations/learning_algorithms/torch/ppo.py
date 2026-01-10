@@ -67,35 +67,35 @@ class PPO(RL_Learner, Safe_nn_Module):
         valid_actions: np array of shape (batch_size, context_length, ...)
         """
         # Use dim 0 as context length dimension
-        obs = convert_np_array_to_float_tensor(obs[:, :-1, ...], self.device)
-        obs_last = convert_np_array_to_float_tensor(obs[:, -1:, ...], self.device)
-        actions = convert_np_array_to_float_tensor(actions, self.device)
-        rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
-        next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
-        masks = torch.ones_like(rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
-        valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
+        b_obs = convert_np_array_to_float_tensor(obs[:, :-1, ...], self.device)
+        b_obs_last = convert_np_array_to_float_tensor(obs[:, -1:, ...], self.device)
+        b_actions = convert_np_array_to_float_tensor(actions, self.device)
+        b_rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
+        b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
+        b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
+        b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
 
-        batch_size = actions.shape[0]
-        sequence_size = actions.shape[1]
+        batch_size = b_actions.shape[0]
+        sequence_size = b_actions.shape[1]
         minibatch_size = min(batch_size // self.num_minibatches, 8)
 
         with torch.no_grad():
             # Get old log probabilities and values
             logprobs, _ = self.policy_model.get_log_probability(
-                obs, 
-                actions,
-                valid_actions
+                b_obs, 
+                b_actions,
+                b_valid_actions
             )
-            values_with_last = self.value_model.get_value(torch.cat([obs, obs_last], dim=1))
+            values_with_last = self.value_model.get_value(torch.cat([b_obs, b_obs_last], dim=1))
             values = values_with_last[:, :-1, ...]  # (batch_size, context_length)
 
             # Bootstrap value if not done
             advantages = []
             lastgaelam = torch.zeros(batch_size).to(self.device)
             for t in reversed(range(sequence_size)):
-                nextnonterminal = 1.0 - next_dones[:, t]
+                nextnonterminal = 1.0 - b_next_dones[:, t]
                 nextvalues = values_with_last[:, t + 1]
-                delta = rewards[:, t] + self.gamma * nextvalues * nextnonterminal - values_with_last[:, t]
+                delta = b_rewards[:, t] + self.gamma * nextvalues * nextnonterminal - values_with_last[:, t]
                 lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
                 advantages.append(lastgaelam)
             advantages.reverse()
@@ -115,14 +115,14 @@ class PPO(RL_Learner, Safe_nn_Module):
                 mb_value = values[mb_inds, ...]
                 mb_advantages = advantages[mb_inds, ...] 
                 mb_returns = returns[mb_inds, ...]
-                mb_masks = masks[mb_inds, ...]
+                mb_masks = b_masks[mb_inds, ...]
 
                 if torch.sum(mb_masks) < 1e-8:
                     continue
 
-                mb_obs = obs[mb_inds, ...]
-                mb_actions = actions[mb_inds, ...]
-                mb_valid_actions = valid_actions[mb_inds, ...] if valid_actions is not None else None
+                mb_obs = b_obs[mb_inds, ...]
+                mb_actions = b_actions[mb_inds, ...]
+                mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
 
                 b_newlogprob, b_entropy = self.policy_model.get_log_probability(
                     mb_obs, 

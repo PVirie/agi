@@ -37,13 +37,13 @@ def get_state_reward(state: Game_State) -> int:
     if state_type == Game_State_Type.WIN:
         reward = 10
     elif state_type == Game_State_Type.GAME_OVER:
-        reward = -0.1
+        reward = -1
     elif state_type == Game_State_Type.IDLE:
         reward = 0
     elif state_type == Game_State_Type.NOT_FINISHED:
         reward = state.delta_score
-        if not state.diff_from_last:
-            reward = -0.04 # small penalty for no change
+        if state.matched_relative_index >= 0:
+            reward = -0.1 # small penalty for action that causes looping
     else:
         reward = 0
     return reward - 0.01  # small step penalty

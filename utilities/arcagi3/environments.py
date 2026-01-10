@@ -84,24 +84,51 @@ class Game_State:
         self.score = score
         self.win_score = win_score
         self.next_available_actions = [Action_Type(action) for action in next_available_actions]
-        self.diff_from_last = False
         self.delta_score = 0
+        self.matched_relative_index = -1  # relative index in frame history of last different frame
 
     def short_str(self):
         return f"{self.state.value}|{self.score}/{self.win_score}"
     
     def set_difference_from_last(self, last_state):
         if last_state is None:
-            self.diff_from_last = True
             self.delta_score = self.score
             return
         if last_state.frame is None or self.frame is None:
-            self.diff_from_last = True
             self.delta_score = self.score
             return
         self.delta_score = self.score - last_state.score
-        self.diff_from_last = check_frame_difference(last_state.frame, self.frame) or (abs(self.delta_score) > 1e-5)
         return
+    
+    def set_matched_relative_index(self, index: int):
+        self.matched_relative_index = index
+    
+
+class Frame_History:
+    def __init__(self, max_length: int):
+        self.max_length = max_length
+        # only store frame hash
+        self.frame_hashes = []
+
+    def clear(self):
+        self.frame_hashes = []
+
+    def add_frame(self, frame):
+        frame_hash = hash(frame.tobytes())
+        self.frame_hashes.append(frame_hash)
+        if len(self.frame_hashes) > self.max_length:
+            self.frame_hashes.pop(0)
+
+    def find_matching_relative_index(self, frame) -> int:
+        """
+        return the relative index of the matching frame in history, 0 is the most recent frame
+        return -1 if not found
+        """
+        frame_hash = hash(frame.tobytes())
+        for i, prev_frame_hash in enumerate(reversed(self.frame_hashes)):
+            if frame_hash == prev_frame_hash:
+                return i
+        return -1
 
 
 class ARCAGI3_Environment:
@@ -118,6 +145,7 @@ class ARCAGI3_Environment:
         self.guids = None
 
         self.return_states = None
+        self.frame_histories = None
 
 
     async def list_games(self):
@@ -165,6 +193,9 @@ class ARCAGI3_Environment:
         self.is_started = True
         self.return_states = [
             Game_State(frame=None, state=Game_State_Type.NOT_STARTED.value, score=0, win_score=0, next_available_actions=[]) for _ in selected_game_ids
+        ]
+        self.frame_histories = [
+            Frame_History(max_length=4) for _ in selected_game_ids
         ]
     
 
@@ -214,6 +245,9 @@ class ARCAGI3_Environment:
                 response_json = response.json()
                 self.guids[i] = response_json.get("guid", None)
                 response_json["state"] = Game_State_Type.RESET if action_type == Action_Type.RESET else Game_State_Type.TRUNCATED
+
+                # clear frame history
+                self.frame_histories[i].clear()
             else:
                 json_payload = {
                     "card_id": self.score_card_id,
@@ -257,8 +291,18 @@ class ARCAGI3_Environment:
                 win_score=response_json.get("win_score", 0),
                 next_available_actions=[return_action_to_action_type[aa] for aa in response_json.get("available_actions", [])]
             )
+            
+            # update frame history
+            if game_state.frame is not None:
+                matched_index = self.frame_histories[i].find_matching_relative_index(game_state.frame)
+                game_state.set_matched_relative_index(matched_index)
+                self.frame_histories[i].add_frame(game_state.frame)
+
+            # check if something changed
             if game_state.score != self.return_states[i].score or game_state.state in [Game_State_Type.WIN, Game_State_Type.GAME_OVER]:
                 something_changed = True
+
+            # set difference from last
             game_state.set_difference_from_last(self.return_states[i])
             self.return_states[i] = game_state
         
