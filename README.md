@@ -41,11 +41,13 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 -   [x] Using available options to improve exploration
 -   [x] Penalize action without any effect
 -   [x] Memory store reward
+-   [ ] Atari environment
 -   [ ] RL baseline
+-   [ ] Model 57: Mind and Hands
+-   [ ] Model 53: Full cognitive ability
+    -   [ ] Use RL to select two observation modes
+        -   [ ] Jump to observed position
+        -   [ ] Override content at the predict position
 -   [ ] Learning by example
     -   [ ] Record successful exploration and playback
--   [ ] Use RL to select two observation modes
-    -   [ ] Jump to observed position
-    -   [ ] Override content at the predict position
--   [ ] Model 54: Position learning
--   [ ] Model 53: Full cognitive ability
+-   [ ] SAC Learner
