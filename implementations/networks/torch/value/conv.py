@@ -31,7 +31,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.channel = channel
 
         # self.conv_layers = ResNet(Bottleneck, layers, num_classes=1, num_channels=channel)
-        self.conv_layers = ImpalaCNN(input_dims=channel, output_dims=1, width=width, height=height, depths=layers)
+        self.conv_layers = ImpalaCNN(output_dims=1, input_channels=channel, width=width, height=height, depths=layers)
 
         self.reset_parameters()
         self.load()

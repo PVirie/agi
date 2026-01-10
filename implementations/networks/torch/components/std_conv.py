@@ -43,10 +43,10 @@ class ImpalaCNN(nn.Module):
     The IMPALA ResNet architecture.
     Standard configuration for Atari: Channels [16, 32, 32]
     """
-    def __init__(self, input_dims, output_dims, width, height, depths=[16, 32, 32]):
+    def __init__(self, output_dims, input_channels, width, height, depths=[16, 32, 32]):
         super(ImpalaCNN, self).__init__()
         
-        self.input_dims = input_dims
+        self.input_channels = input_channels
         self.output_dims = output_dims
         self.width = width
         self.height = height
@@ -54,7 +54,7 @@ class ImpalaCNN(nn.Module):
         self.layers = nn.ModuleList()
         
         # Build the 3 main blocks
-        current_channels = input_dims
+        current_channels = input_channels
         for depth in depths:
             self.layers.append(ImpalaBlock(current_channels, depth))
             current_channels = depth
@@ -63,7 +63,7 @@ class ImpalaCNN(nn.Module):
         
         # Calculate Flatten Dim dynamically
         with torch.no_grad():
-            dummy = torch.zeros(1, input_dims, height, width)
+            dummy = torch.zeros(1, input_channels, height, width)
             for layer in self.layers:
                 dummy = layer(dummy)
             dummy = self.relu(dummy)
@@ -92,7 +92,7 @@ class ImpalaCNN(nn.Module):
     
 
 if __name__ == "__main__":
-    model = ImpalaCNN(input_dims=3, output_dims=256, width=84, height=84)
+    model = ImpalaCNN(output_dims=256, input_channels=3, width=84, height=84)
     model.reset_parameters()
     x = torch.randn(2, 3, 84, 84)
     out = model(x)
