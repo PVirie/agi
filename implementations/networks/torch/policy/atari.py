@@ -13,18 +13,19 @@ from ..components.temporal_unet import TemporalUNet
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
+class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, history_steps=0, max_temporal_len=32, device=None, persistence_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="policy_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="atari_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.flag_size = 5  # num classes for flag
         self.action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
-        self.packed_action_size = 1 + 3 + self.content_size  # ext_flag + action + x + y + content
+        self.packed_action_size = 1 + 1 + self.content_size  # ext_flag + action + content
+        self.content_start_index = 2  # start index of content in packed action
 
         self.width = width
         self.height = height
@@ -84,11 +85,9 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, non_image_part)
         features = torch.reshape(features, (batch_size, context_size, self.temporal_unet.out_features))
-        x_logits = torch.reshape(x_logits, (batch_size, context_size, self.width))
-        y_logits = torch.reshape(y_logits, (batch_size, context_size, self.height))
         content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
         
-        return features, x_logits, y_logits, content_logits
+        return features, content_logits
     
 
     def get_action(self, context, action, valid_actions=None):
@@ -111,7 +110,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
         batch_size = context.size(0)
-        features, x_logits, y_logits, content_logits = self.__compute(context, action)
+        features, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
@@ -119,21 +118,15 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
-        props_x = Categorical(logits=x_logits)
-        probs_y = Categorical(logits=y_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
         action_flag = props_flag.sample()
         action_action = props_action.sample()
-        action_x = props_x.sample()
-        action_y = probs_y.sample()
         action_content = props_content.sample()
 
         action = torch.cat([
             action_flag.unsqueeze(-1),
             action_action.unsqueeze(-1),
-            action_x.unsqueeze(-1),
-            action_y.unsqueeze(-1),
             action_content
         ], dim=-1)
 
@@ -172,7 +165,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         batch_size = context.size(0)
         context_size = context.size(1)
-        features, x_logits, y_logits, content_logits = self.__compute(context, action)
+        features, content_logits = self.__compute(context, action)
 
         logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
@@ -180,8 +173,6 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
-        props_x = Categorical(logits=x_logits)
-        probs_y = Categorical(logits=y_logits)
         props_content = Bernoulli(probs=pprobs_content)
 
         if target_action is None:
@@ -189,9 +180,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         action_flag = target_action[:, :, 0]
         action_action = target_action[:, :, 1]
-        action_x = target_action[:, :, 2]
-        action_y = target_action[:, :, 3]
-        action_content = target_action[:, :, 4:]
+        action_content = target_action[:, :, 2:]
 
         # compute position
         last_position = context[:, :, 1:1 + self.position_size]
@@ -203,33 +192,27 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         log_prob_flag = props_flag.log_prob(action_flag)
         log_prob_action = props_action.log_prob(action_action)
-        log_prob_x = props_x.log_prob(action_x)
-        log_prob_y = probs_y.log_prob(action_y)
         log_prob_content = props_content.log_prob(action_content).mean(-1)
         log_prob_position = props_position.log_prob(position).mean(-1)
-        batch_log_prob = log_prob_flag + log_prob_action + log_prob_x + log_prob_y + log_prob_content + log_prob_position
+        batch_log_prob = log_prob_flag + log_prob_action + log_prob_content + log_prob_position
         
         entropy_flag = props_flag.entropy()
         entropy_action = props_action.entropy()
-        entropy_x = props_x.entropy()
-        entropy_y = probs_y.entropy()
         entropy_content = props_content.entropy().mean(-1)
         entropy_position = props_position.entropy().mean(-1)
-        batch_entropy = entropy_flag + entropy_action + entropy_x + entropy_y + entropy_content + entropy_position
+        batch_entropy = entropy_flag + entropy_action + entropy_content + entropy_position
 
 
         if only_logprob_components:
             # collapse last dimension
             log_prob_flag = torch.reshape(log_prob_flag, (batch_size, context_size))
             log_prob_action = torch.reshape(log_prob_action, (batch_size, context_size))
-            log_prob_x = torch.reshape(log_prob_x, (batch_size, context_size))
-            log_prob_y = torch.reshape(log_prob_y, (batch_size, context_size))
             log_prob_content = torch.reshape(log_prob_content, (batch_size, context_size))
             log_prob_position = torch.reshape(log_prob_position, (batch_size, context_size))
 
-            # return [log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content, log_prob_position]
+            # return [log_prob_flag, log_prob_action, log_prob_content, log_prob_position]
             return torch.stack([
-                log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content, log_prob_position
+                log_prob_flag, log_prob_action, log_prob_content, log_prob_position
             ], dim=-1)
         else:
             # collapse last dimension
@@ -244,8 +227,8 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         # return int_action, ext_action , content
 
         int_part = packed_action[:, 0].astype(int)
-        ext_part = packed_action[:, 1:4].astype(int)
-        content = packed_action[:, 4:].astype(float)
+        ext_part = packed_action[:, 1:2].astype(int)
+        content = packed_action[:, 2:].astype(float)
 
         return int_part, ext_part, content
     
@@ -268,7 +251,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         if b_int is None:
             b_int = np.zeros((batch_size,), dtype=int)
         if b_ext is None:
-            b_ext = np.zeros((batch_size, 3), dtype=int)
+            b_ext = np.zeros((batch_size, 1), dtype=int)
         if b_content is None:
             b_content = np.zeros((batch_size, self.content_size), dtype=float)
 

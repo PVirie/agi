@@ -21,7 +21,7 @@ from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_T
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.temporal_conv import Policy_Core
+from implementations.networks.torch.policy.arcagi3 import ARCAGI3_Core
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
@@ -178,7 +178,7 @@ if __name__ == "__main__":
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
-    policy_core = Policy_Core(
+    policy_core = ARCAGI3_Core(
         action_size=7, position_size=16,
         width=64, height=64, channel=4,
         hidden_size=hidden_size, layers=layers,

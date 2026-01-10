@@ -193,7 +193,7 @@ class Model_53(Agent):
                     target_actions=target_actions,
                     valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                     masks=masks,
-                    trained_logprob_indices=[4] # only content part
+                    trained_logprob_indices=[self.policy_model.content_start_index] # only content part
                 )
 
             # learn RL

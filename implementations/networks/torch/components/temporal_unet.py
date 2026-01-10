@@ -55,6 +55,7 @@ class Up(nn.Module):
     def forward(self, x1, x2):
         x1 = self.up(x1)
         
+        # Handle arbitrary sizes by padding x1 to match x2
         diffY = x2.size()[2] - x1.size()[2]
         diffX = x2.size()[3] - x1.size()[3]
         x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2], mode='reflect')
@@ -80,14 +81,12 @@ class DeepTemporalTransformer(nn.Module):
             norm_first=True # Improves gradient flow in deep networks
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
         self.register_buffer('full_mask', self._generate_mask(max_temporal_len))
 
 
     def _generate_mask(self, size):
         """Generates the causal + history limited mask."""
         mask = torch.full((size, size), float('-inf'))
-        
         if self.history_steps == 0:
             # Diagonal only
             mask.fill_diagonal_(0.0)
@@ -95,25 +94,22 @@ class DeepTemporalTransformer(nn.Module):
             # Create boolean valid mask
             # 1. Causality: Lower triangle
             valid = torch.tril(torch.ones(size, size, dtype=torch.bool))
-            
+
             # 2. History Limit: Upper triangle relative to diagonal -N
             if self.history_steps is not None:
                 history_constraint = torch.triu(torch.ones(size, size, dtype=torch.bool), diagonal=-self.history_steps)
                 valid = valid & history_constraint
                 
             mask.masked_fill_(valid, 0.0)
-            
+
         return mask
 
 
     def get_mask(self, x):
         """Returns the appropriate mask slice for input x."""
         T = x.shape[1]
-        
-        # Fast path: Slice the pre-calculated buffer
         if T <= self.max_temporal_len:
             return self.full_mask[:T, :T]
-        
         # Fallback: If input is longer than max_temporal_len, generate on the fly
         return self._generate_mask(T).to(x.device)
     
@@ -133,6 +129,11 @@ class TemporalUNet(nn.Module):
         self.n_channels = n_channels
         self.vec_dim = vec_dim
         self.bilinear = bilinear
+        
+        # --- Config for Arbitrary Input Support ---
+        # We force the bottleneck to be 4x4 so the Linear layers work 
+        # regardless of the actual input image aspect ratio or size.
+        self.bottleneck_size = 4 
 
         # --- Encoder ---
         self.inc = DoubleConv(n_channels, 32)
@@ -147,7 +148,9 @@ class TemporalUNet(nn.Module):
 
         # --- Temporal Bottleneck ---
         self.bottleneck_channels = 512 // factor
-        self.flat_features = self.bottleneck_channels * 4 * 4
+        
+        # Fixed size feature map for Transformer (C * 4 * 4)
+        self.flat_features = self.bottleneck_channels * self.bottleneck_size * self.bottleneck_size
         self.attn_input_dim = self.flat_features + 32
         
         self.temporal_attn = DeepTemporalTransformer(
@@ -191,50 +194,70 @@ class TemporalUNet(nn.Module):
         x: [Batch, Time, Channels, Height, Width]
         v: [Batch, Time, VecDim]
         Returns:
-            sampled_features: [Batch, Time, Features]
-            heatmap_logits: [Batch, Time, H, W]
-            content_logits: [Batch, Time, C, H, W]
+            sampled_features: [Batch, Time, out_features]
+            x_logits: [Batch, Time, Width]
+            y_logits: [Batch, Time, Height]
+            content_logits: [Batch, Time, Channels, Height, Width]
         """
         B, T, C, H, W = x.shape
         
-        # --- U-Net Encoder/Decoder (Batch+Time folded) ---
+        # --- U-Net Encoder (Batch+Time folded) ---
         x_reshaped = x.reshape(B * T, C, H, W)
         x1 = self.inc(x_reshaped)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x4 = self.down3(x3)
-        x5 = self.down4(x4)
+        x5 = self.down4(x4) # Shape: [B*T, 512, H/16, W/16]
 
-        # Temporal Attention Input Construction
-        flat_x5 = x5.reshape(B, T, -1)
+        # --- Temporal Attention Input Construction ---
+        # 1. Adaptive Pool to fixed size (4x4) to handle arbitrary input H, W
+        # # REVISION: Replaced adaptive_avg_pool2d with F.interpolate for determinism.
+        # We use 'bilinear' to resize the feature map to the fixed 4x4 bottleneck size.
+        # This acts as a spatial compression step compatible with any input resolution.
+        x5_pooled = F.interpolate(
+            x5, 
+            size=(self.bottleneck_size, self.bottleneck_size), 
+            mode='bilinear', 
+            align_corners=True
+        )
+
+        # 2. Flatten spatial dims
+        flat_x5 = x5_pooled.reshape(B, T, -1) # [B, T, flat_features]
+        
         projected_v = self.temporal_proj(v) # [B, T, 32]
         combined = torch.cat([flat_x5, projected_v], dim=2)
 
-        # Pass through Transformer
+        # 3. Pass through Transformer
         attn_out = self.temporal_attn(combined)
         
+        # 4. Fuse and Reshape
         fused = self.fusion(attn_out.reshape(B * T, -1)) # [B*T, flat_features]
-        x4_ = fused.reshape_as(x5)
+        x4_small = fused.reshape(B * T, self.bottleneck_channels, self.bottleneck_size, self.bottleneck_size)
         
+        # 5. Interpolate back to original bottleneck spatial size (H/16, W/16)
+        # This is crucial: x5 spatial size might be e.g., (2, 4) if input is 32x64
+        x4_ = F.interpolate(x4_small, size=x5.shape[-2:], mode='bilinear', align_corners=True)
+        
+        # --- U-Net Decoder ---
         x3_ = self.up1(x4_, x4)
         x2_ = self.up2(x3_, x3)
         x1_ = self.up3(x2_, x2)
         x_features = self.up4(x1_, x1) # [B*T, 128, 64, 64]
         
-        # --- Extract Sampled Features ---
+        # --- Extract Sampled Features (Global Average Pool) ---
         sampled_features = x3.mean(dim=(2, 3)) # [B*T, 32]
 
         # --- Generate Heatmap ---
-        heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, 64, 64]
+        heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, H, W]
         
-        # max over Height (dim 2) to get X distribution (Width)
+        # max over Height (dim 2) -> X distribution (Width)
         x_logits = heatmap_logits.max(dim=2).values # [B*T, 1, W]
 
-        # max over Width (dim 3) to get Y distribution (Height)
+        # max over Width (dim 3) -> Y distribution (Height)
         y_logits = heatmap_logits.max(dim=3).values # [B*T, 1, H]
         
         # --- Compute direct content ---
-        content_logits = self.head_content(x_features) # [B*T, C, 64, 64]
+        content_logits = self.head_content(x_features) # [B*T, C, H, W]
         
         # --- Reshape and Return ---
         sampled_features = sampled_features.reshape(B, T, -1)
@@ -247,16 +270,16 @@ class TemporalUNet(nn.Module):
 
 if __name__ == "__main__":
     # max_temporal_len defaults to 32, we pass 32 to be explicit or test with it.
-    model = TemporalUNet(n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=2, max_temporal_len=32)
-    img = torch.randn(2, 5, 1, 64, 64)
+    model = TemporalUNet(n_channels=3, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=2, max_temporal_len=32)
+    img = torch.randn(2, 5, 3, 210, 160)
     vec = torch.randn(2, 5, 128)
     
     features, x_logits, y_logits, content_logits = model(img, vec)
     
     assert features.shape == (2, 5, model.out_features)
-    assert x_logits.shape == (2, 5, 64)
-    assert y_logits.shape == (2, 5, 64)
-    assert content_logits.shape == (2, 5, 1, 64, 64)
+    assert x_logits.shape == (2, 5, 160)
+    assert y_logits.shape == (2, 5, 210)
+    assert content_logits.shape == (2, 5, 3, 210, 160)
 
     print("Forward pass successful.")
 
