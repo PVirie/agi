@@ -68,8 +68,9 @@ async def run(env, agent):
         last_idle = [
             s.state == Game_State_Type.IDLE for s in states
         ]
-        next_done = [
-            s.state == Game_State_Type.WIN or s.state == Game_State_Type.GAME_OVER for s in states
+        last_done = [
+            s.state == Game_State_Type.WIN or s.state == Game_State_Type.GAME_OVER or s.state == Game_State_Type.TRUNCATED or s.state == Game_State_Type.RESET
+            for s in states
         ]
         last_truncated = [
             s.state == Game_State_Type.TRUNCATED or s.state == Game_State_Type.RESET for s in states
@@ -79,7 +80,7 @@ async def run(env, agent):
         ]
         actions = agent.choose_action(
             last_idles=last_idle,
-            next_dones=next_done,
+            last_dones=last_done,
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=[state.frame for state in states],
@@ -90,8 +91,8 @@ async def run(env, agent):
             force_train=steps % 10 == 9 or should_stop,
         )
         actions = [
-            ((Action_Type(a[0].item()), a[1].item(), a[2].item()) if a is not None else None) if not d else (Action_Type.RESET, )
-            for a, d in zip(actions, next_done)
+            (Action_Type(a[0].item()), a[1].item(), a[2].item()) if a is not None else None 
+            for a in actions
         ]
         await asyncio.sleep(1)
 
@@ -111,7 +112,6 @@ async def run(env, agent):
             value_core.save()
             ppo_learner.save()
             supervised_learner.save()
-            
 
         if steps % 100 == 0:
             # compute estimated time left

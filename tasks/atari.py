@@ -39,10 +39,11 @@ async def run(env, agent):
     observations, info = env.reset()
     rewards = [np.float32(0) for _ in observations]
     last_idle = [False for _ in observations]
-    next_done = [False for _ in observations]
+    last_done = [False for _ in observations]
     last_truncated = [False for _ in observations]
     last_reset = [False for _ in observations]
 
+    total_scores = [0 for _ in observations]
     start_time = time.perf_counter()
     steps = 0
     while True:
@@ -51,7 +52,7 @@ async def run(env, agent):
 
         actions = agent.choose_action(
             last_idles=last_idle,
-            next_dones=next_done,
+            last_dones=last_done,
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=[obs for obs in observations],
@@ -66,17 +67,20 @@ async def run(env, agent):
         observations, rewards, terminations, truncations, infos = env.step(np.array(actions, dtype=np.int32))
 
         last_idle = [False for _ in observations]
-        next_done = [terminations[i] or truncations[i] for i in range(len(observations))]
+        last_done = [terminations[i] or truncations[i] for i in range(len(observations))]
         last_truncated = [truncations[i] for i in range(len(observations))]
         last_reset = [False for _ in observations]
 
-        if should_stop:
-            logging.info("Max running time reached, stopping the experiment.")
-            break
+        total_scores = [
+            total_scores[i] + rewards[i].item() for i in range(len(observations))
+        ]
 
         steps += 1
-        if steps % 100 == 0 or any(terminations) or any(truncations):
+        if any([r > 0 for r in rewards]):
             logging.info(f"{steps}| Rewards: {rewards}")
+
+        if steps % 100 == 0 or should_stop:
+            logging.info(f"{steps}| Scores: {total_scores}")
             logging.info(f"{steps}| Selected actions: {actions}")
 
             # save 
@@ -91,6 +95,9 @@ async def run(env, agent):
             logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
             logging.info(f"Expected time left: {max_running_time - elapsed_time:.2f} seconds.")
 
+        if should_stop:
+            logging.info("Max running time reached, stopping the experiment.")
+            break
 
     env.close()
 

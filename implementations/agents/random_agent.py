@@ -1,5 +1,6 @@
 import random
 import logging
+import numpy as np
 
 from interfaces.agent import Agent
 
@@ -15,14 +16,14 @@ class Random_Agent(Agent):
 
 
     def choose_action(self, 
-                      last_idles, next_dones, last_truncates, last_resets, 
+                      last_idles, last_dones, last_truncates, last_resets, 
                       latest_frames, rewards, next_available_actions, 
                       force_train=False):
         logging.info(f"Random agent {self.id} choosing action...")
         actions = []
-        for d in next_dones:
+        for _ in latest_frames:
             if random.random() < 0.5:
-                actions.append([random.randint(0, 6) if not d else -1, random.randint(0, 63), random.randint(0, 63)])
+                actions.append(np.array([random.randint(0, 6), random.randint(0, 63), random.randint(0, 63)], dtype=np.int32))
             else:
                 actions.append(None)
         return actions

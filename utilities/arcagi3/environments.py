@@ -78,27 +78,17 @@ class Game_State_Type(str, Enum):
 
 
 class Game_State:
-    def __init__(self, frame, state: str, score: int, win_score: int, next_available_actions: List):
+    def __init__(self, frame, state: str, score: int, delta_score: int, win_score: int, next_available_actions: List):
         self.frame = frame
         self.state = Game_State_Type(state)
         self.score = score
         self.win_score = win_score
         self.next_available_actions = [Action_Type(action) for action in next_available_actions]
-        self.delta_score = 0
+        self.delta_score = delta_score
         self.matched_relative_index = -1  # relative index in frame history of last different frame
 
     def short_str(self):
         return f"{self.state.value}|{self.score}/{self.win_score}"
-    
-    def set_difference_from_last(self, last_state):
-        if last_state is None:
-            self.delta_score = self.score
-            return
-        if last_state.frame is None or self.frame is None:
-            self.delta_score = self.score
-            return
-        self.delta_score = self.score - last_state.score
-        return
     
     def set_matched_relative_index(self, index: int):
         self.matched_relative_index = index
@@ -192,7 +182,7 @@ class ARCAGI3_Environment:
         # set flag
         self.is_started = True
         self.return_states = [
-            Game_State(frame=None, state=Game_State_Type.NOT_STARTED.value, score=0, win_score=0, next_available_actions=[]) for _ in selected_game_ids
+            Game_State(frame=None, state=Game_State_Type.NOT_STARTED.value, score=0, delta_score=0, win_score=0, next_available_actions=[]) for _ in selected_game_ids
         ]
         self.frame_histories = [
             Frame_History(max_length=4) for _ in selected_game_ids
@@ -217,6 +207,65 @@ class ARCAGI3_Environment:
         return response.json()
     
 
+    def reset_item(self, i, action_type):
+        response = self.request_session.post(
+            base_url + cmd_format_endpoint.format(cmd="RESET"),
+            json={
+                "card_id": self.score_card_id,
+                "game_id": self.selected_game_ids[i],
+                "guid": self.guids[i] if action_type != Action_Type.RESET else None
+            }
+        )
+        response.raise_for_status()
+        response_json = response.json()
+        
+        game_state = Game_State(
+            frame=extract_frame(response_json.get("frame", None)),
+            state=Game_State_Type.RESET if action_type == Action_Type.RESET else Game_State_Type.TRUNCATED,
+            score=response_json.get("score", 0),
+            delta_score=0,
+            win_score=response_json.get("win_score", 0),
+            next_available_actions=[return_action_to_action_type[aa] for aa in response_json.get("available_actions", [])]
+        )
+    
+        # clear frame history
+        self.guids[i] = response_json.get("guid", None)
+        self.frame_histories[i].clear()
+
+        return game_state
+
+
+    def act_item(self, i, action_type: Action_Type, x: int = None, y: int = None):
+        json_payload = {
+            "card_id": self.score_card_id,
+            "game_id": self.selected_game_ids[i],
+            "guid": self.guids[i]
+        }
+
+        if action_type == Action_Type.A6:
+            json_payload["x"] = x
+            json_payload["y"] = y
+
+        response = self.request_session.post(
+            base_url + cmd_format_endpoint.format(cmd=action_type_to_str[action_type]),
+            json=json_payload
+        )
+        response.raise_for_status()
+        response_json = response.json()
+
+        game_state = Game_State(
+            frame=extract_frame(response_json.get("frame", None)),
+            state=response_json.get("state", None),
+            score=response_json.get("score", 0),
+            delta_score=0,
+            win_score=response_json.get("win_score", 0),
+            next_available_actions=[return_action_to_action_type[aa] for aa in response_json.get("available_actions", [])]
+        )
+        game_state.delta_score = game_state.score - (self.return_states[i].score if self.return_states[i] is not None else 0)
+
+        return game_state
+
+
     async def execute(self, actions):
         """
         actions is a list of tuple [(action_type: Action_Type, x: int, y: int)]
@@ -230,81 +279,45 @@ class ARCAGI3_Environment:
         for i, at in enumerate(actions):
             if at is None:
                 self.return_states[i].state = Game_State_Type.IDLE
+                self.return_states[i].delta_score = 0  # no change
                 continue
-            
+
             action_type = at[0]
             if action_type == Action_Type.RESET or action_type == Action_Type.RESTART:
-                response = self.request_session.post(
-                    base_url + cmd_format_endpoint.format(cmd="RESET"),
-                    json={
-                        "card_id": self.score_card_id,
-                        "game_id": self.selected_game_ids[i],
-                        "guid": self.guids[i] if action_type != Action_Type.RESET else None
-                    }
-                )
-                response_json = response.json()
-                self.guids[i] = response_json.get("guid", None)
-                response_json["state"] = Game_State_Type.RESET if action_type == Action_Type.RESET else Game_State_Type.TRUNCATED
+                game_state = self.reset_item(i, action_type)
+                game_state.delta_score = 0
+                self.return_states[i] = game_state
 
-                # clear frame history
-                self.frame_histories[i].clear()
             else:
-                json_payload = {
-                    "card_id": self.score_card_id,
-                    "game_id": self.selected_game_ids[i],
-                    "guid": self.guids[i]
-                }
-
-                if action_type == Action_Type.A6:
-                    x = at[1] if len(at) > 1 else None
-                    y = at[2] if len(at) > 2 else None
-                    json_payload["x"] = x
-                    json_payload["y"] = y
-
                 try:
-                    response = self.request_session.post(
-                        base_url + cmd_format_endpoint.format(cmd=action_type_to_str[action_type]),
-                        json=json_payload
-                    )
-                    response.raise_for_status()
-                    response_json = response.json()
+                    game_state = self.act_item(i, action_type, x=at[1] if len(at) > 1 else None, y=at[2] if len(at) > 2 else None)
+                    self.return_states[i] = game_state
+
+                    # if WIN or GAME_OVER, need to reset the game
+                    if game_state.state in [Game_State_Type.WIN.value, Game_State_Type.GAME_OVER.value]:
+                        logging.info(f"Game {self.selected_game_ids[i]} ended with state {game_state.state}. Resetting...")
+                        reset_game_state = self.reset_item(i, Action_Type.RESET)
+                        reset_game_state.state = game_state.state # preserve the end state
+                        reset_game_state.delta_score = game_state.delta_score # preserve the delta score
+                        self.return_states[i] = reset_game_state
+
                 except Exception as e:
                     logging.warning(f"Error executing action {action_type} for game {self.selected_game_ids[i]}: {e}")
                     logging.info(f"Reset and set state to TRUNCATED.")
-                    response = self.request_session.post(
-                        base_url + cmd_format_endpoint.format(cmd="RESET"),
-                        json={
-                            "card_id": self.score_card_id,
-                            "game_id": self.selected_game_ids[i],
-                            "guid": self.guids[i]
-                        }
-                    )
-                    response.raise_for_status()
-                    response_json = response.json()
-                    response_json["state"] = Game_State_Type.TRUNCATED
-                    continue
-
-            game_state = Game_State(
-                frame=extract_frame(response_json.get("frame", None)),
-                state=response_json.get("state", None),
-                score=response_json.get("score", 0),
-                win_score=response_json.get("win_score", 0),
-                next_available_actions=[return_action_to_action_type[aa] for aa in response_json.get("available_actions", [])]
-            )
+                    game_state = self.reset_item(i, Action_Type.RESTART)
+                    game_state.delta_score = 0
+                    self.return_states[i] = game_state
             
             # update frame history
-            if game_state.frame is not None:
-                matched_index = self.frame_histories[i].find_matching_relative_index(game_state.frame)
-                game_state.set_matched_relative_index(matched_index)
-                self.frame_histories[i].add_frame(game_state.frame)
+            if self.return_states[i].frame is not None:
+                matched_index = self.frame_histories[i].find_matching_relative_index(self.return_states[i].frame)
+                self.return_states[i].set_matched_relative_index(matched_index)
+                self.frame_histories[i].add_frame(self.return_states[i].frame)
 
             # check if something changed
-            if game_state.score != self.return_states[i].score or game_state.state in [Game_State_Type.WIN, Game_State_Type.GAME_OVER]:
+            if self.return_states[i].delta_score != 0 or self.return_states[i].state in [Game_State_Type.WIN, Game_State_Type.GAME_OVER]:
                 something_changed = True
 
-            # set difference from last
-            game_state.set_difference_from_last(self.return_states[i])
-            self.return_states[i] = game_state
         
         return something_changed, self.return_states
     

@@ -76,7 +76,7 @@ class Model_53(Agent):
         self.actions.clear()
         self.valid_actions.clear()
         self.rewards = []
-        self.next_dones = []
+        self.last_dones = []
         self.last_truncates = []
         self.last_idles = []
 
@@ -87,7 +87,7 @@ class Model_53(Agent):
 
 
     def choose_action(self, 
-                      last_idles, next_dones, last_truncates, last_resets, 
+                      last_idles, last_dones, last_truncates, last_resets, 
                       latest_frames, rewards, next_available_actions, 
                       force_train=False):
 
@@ -111,10 +111,10 @@ class Model_53(Agent):
             )
             self.last_truncates.append([True for _ in range(batch_size)])
             self.last_idles.append([False for _ in range(batch_size)])
-            self.next_dones.append([False for _ in range(batch_size)])
+            self.last_dones.append([False for _ in range(batch_size)])
 
-        for i, (idle, t) in enumerate(zip(last_idles, last_truncates)):
-            if t:
+        for i, (idle, d, t) in enumerate(zip(last_idles, last_dones, last_truncates)):
+            if d or t:
                 self.thought_steps[i] = 0
 
         content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
@@ -122,7 +122,7 @@ class Model_53(Agent):
 
         update_mask = np.zeros((batch_size, 1 + self.policy_model.position_size + self.policy_model.content_size), dtype=np.float32)
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
-        for i, (idle, d, t, r) in enumerate(zip(last_idles, next_dones, last_truncates, last_resets)):
+        for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
             if r:
                 memory_action[i] = Memory_Operation_Type.RESET
             if not idle:
@@ -132,7 +132,7 @@ class Model_53(Agent):
                 memory_action[i] = Memory_Operation_Type.CACHE
             self.last_truncates[-1][i] = t
             self.last_idles[-1][i] = idle
-            self.next_dones[-1][i] = d
+            self.last_dones[-1][i] = d
 
         # replace the reward and content
         last_obs = self.obs.get_last()
@@ -163,7 +163,7 @@ class Model_53(Agent):
             operation=memory_action
         )
 
-        if (any(next_dones) or any(last_truncates) or force_train) and current_cl > 1:
+        if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
             
             self.policy_model.train()
             self.value_model.train()
@@ -184,7 +184,7 @@ class Model_53(Agent):
                     masks,
                     self.last_idles[1:],
                     self.last_truncates[1:],
-                    self.next_dones[:-1]
+                    self.last_dones[1:]
                 )
 
                 self.supervised_trainer.train(
@@ -207,7 +207,7 @@ class Model_53(Agent):
                 obs=self.obs.make_batch(batch_led=True), 
                 actions=self.actions.make_batch(batch_led=True), 
                 rewards=self.rewards[1:],
-                next_dones=self.next_dones[1:],
+                next_dones=self.last_dones[1:],
                 masks=masks,
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True)
             )
@@ -222,7 +222,7 @@ class Model_53(Agent):
             self.rewards = self.rewards[left_over_slide]
             self.last_truncates = self.last_truncates[left_over_slide]
             self.last_idles = self.last_idles[left_over_slide]
-            self.next_dones = self.next_dones[left_over_slide]
+            self.last_dones = self.last_dones[left_over_slide]
 
             self.policy_model.eval()
             self.value_model.eval()
@@ -245,7 +245,7 @@ class Model_53(Agent):
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         memory_fetch_index = [-1 for _ in range(batch_size)]
         selected_int_action = np.zeros((batch_size,), dtype=int)
-        for i, d in enumerate(next_dones):
+        for i in range(batch_size):
             flag = int_action[i].item()
             self.thought_steps[i] += 1
             if flag == 0 or self.thought_steps[i] >= self.max_num_thought_steps:
@@ -277,8 +277,6 @@ class Model_53(Agent):
                     memory_action[i] = Memory_Operation_Type.IDLE
                     selected_int_action[i] = 1
 
-            if d:
-                self.thought_steps[i] = 0
 
         reward, position, content = self.memory.operate(
             tuple_record=(
@@ -308,7 +306,7 @@ class Model_53(Agent):
         )
         self.last_truncates.append([False for _ in range(batch_size)])
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
-        self.next_dones.append([False for _ in range(batch_size)])
+        self.last_dones.append([False for _ in range(batch_size)])
         
         return return_action
     
@@ -331,16 +329,16 @@ if __name__ == "__main__":
         [True, False],
         [False, False],
     ]
-    next_dones = [
+    last_dones = [
         [False, False],
         [False, True],
         [False, False],
         [True, True],
         [False, False],
     ]   
-    updated_masks = apply_cascading_masks(masks, last_idles, last_truncates, next_dones)
+    updated_masks = apply_cascading_masks(masks, last_idles, last_truncates, last_dones)
     manual_masks = masks.copy()
     manual_masks = manual_masks * (1.0 - np.stack(last_idles, axis=1).astype(np.float32))
     manual_masks = manual_masks * (1.0 - np.stack(last_truncates, axis=1).astype(np.float32))
-    manual_masks = manual_masks * (1.0 - np.stack(next_dones, axis=1).astype(np.float32))
+    manual_masks = manual_masks * (1.0 - np.stack(last_dones, axis=1).astype(np.float32))
     assert np.allclose(updated_masks, manual_masks), "Cascading mask application failed!"
