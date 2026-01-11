@@ -76,7 +76,7 @@ async def run(env, agent):
         ]
 
         steps += 1
-        if any([r > 0 for r in rewards]):
+        if any([r != 0 for r in rewards]):
             logging.info(f"{steps}| Rewards: {rewards}")
 
         if steps % 100 == 0 or should_stop:

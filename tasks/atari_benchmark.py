@@ -1,15 +1,7 @@
 import os
 import sys
-import subprocess
-import logging
-import random
-import argparse
-import numpy as np
-import shutil
-import asyncio
 import time
-
-import torch
+from PIL import Image
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -21,8 +13,6 @@ install("ale-py")
 install("gymnasium[atari]")
 
 from ale_py.vector_env import AtariVectorEnv
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Create a vector environment with 4 parallel instances of Breakout
 envs = AtariVectorEnv(
@@ -54,6 +44,13 @@ for _ in range(10000):
         break
 
 print(f"Throughput: {total_steps / elapsed_time:.2f} steps/second")
+
+# now draw one frame from each environment and save as images to /artifacts/log
+artifacts_path = f"{APP_ROOT}/log"
+os.makedirs(artifacts_path, exist_ok=True)
+for i, frame in enumerate(observations):
+    img = Image.fromarray(frame[-1, ...], mode='L')  # 'L' mode for grayscale
+    img.save(f"{artifacts_path}/pong_env_{i}.png")
 
 # Close the environment when done
 envs.close()
