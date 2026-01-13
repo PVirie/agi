@@ -27,6 +27,10 @@ class Context_Collector(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def get_last_batch(self, batch_led=True, append_last=False):
+        pass
+
+    @abc.abstractmethod
     def make_batch(self, batch_led=True, append_last=False):
         pass
 

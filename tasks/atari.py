@@ -34,7 +34,7 @@ from implementations.networks.energy_memory import Energy_Memory as Memory
 torch.autograd.set_detect_anomaly(True)
 
 
-async def run(env, agent):
+async def run(env, agent, rollout_length=16):
 
     observations, info = env.reset()
     rewards = [np.float32(0) for _ in observations]
@@ -60,7 +60,7 @@ async def run(env, agent):
             next_available_actions=[
                 list(range(6)) for _ in observations
             ],
-            force_train=steps % 128 == 127 or should_stop,
+            force_train=steps % rollout_length == (rollout_length - 1) or should_stop,
         )
         actions = [int(a[0].item()) if a is not None else None for a in actions]
 
@@ -79,7 +79,7 @@ async def run(env, agent):
         if any([r != 0 for r in rewards]):
             logging.info(f"{steps}| Rewards: {rewards}")
 
-        if steps % 128 == 0 or should_stop:
+        if steps % rollout_length == 0 or should_stop:
             logging.info(f"{steps}| Scores: {total_scores}")
             logging.info(f"{steps}| Selected actions: {actions}")
             total_scores = [0 for _ in observations]
@@ -90,7 +90,7 @@ async def run(env, agent):
             ppo_learner.save()
             supervised_learner.save()
 
-        if steps % 1024 == 0:
+        if steps % (rollout_length * 10) == 0:
             # compute estimated time left
             logging.info(f"Completed {steps} steps.")
             logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
@@ -160,19 +160,22 @@ if __name__ == "__main__":
 
     if args.scale == "small":
         history_steps = 0
-        layers = 2
-        hidden_size = 64
-        conv_layers = [16, 32, 32] # basic impala
+        layers = 1
+        hidden_size = 32
+        conv_layers = [16, 16, 16] # basic impala
+        rollout_length = 32
     elif args.scale == "medium":
         history_steps = 8
         layers = 4
         hidden_size = 128
         conv_layers = [16, 32, 64, 64] # medium impala
+        rollout_length = 64
     else:  # large
         history_steps = 16
         layers = 6
         hidden_size = 256
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
+        rollout_length = 128
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -213,4 +216,4 @@ if __name__ == "__main__":
         use_memory=args.use_memory,
     )
 
-    asyncio.run(run(env, model_53_agent))
+    asyncio.run(run(env, model_53_agent, rollout_length))

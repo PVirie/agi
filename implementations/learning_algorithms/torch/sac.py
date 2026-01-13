@@ -61,8 +61,8 @@ class SAC(RL_Learner, Safe_nn_Module):
         b_actions = convert_np_array_to_float_tensor(actions, self.device)
         b_rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
-        b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
+        b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
 
         batch_size = actions.shape[0]
         sequence_size = actions.shape[1]

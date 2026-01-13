@@ -49,7 +49,7 @@ def get_state_reward(state: Game_State) -> int:
     return reward - 0.01  # small step penalty
     
 
-async def run(env, agent):
+async def run(env, agent, rollout_length=16):
 
     all_games_info = await env.list_games()
     all_public_game_ids = [game["game_id"] for game in all_games_info if game.get("game_type") == "public"]
@@ -88,7 +88,7 @@ async def run(env, agent):
             next_available_actions=[
                 [a.value for a in state.next_available_actions] for state in states
             ],
-            force_train=steps % 128 == 127 or should_stop,
+            force_train=steps % rollout_length == (rollout_length - 1) or should_stop,
         )
         actions = [
             (Action_Type(a[0].item()), a[1].item(), a[2].item()) if a is not None else None 
@@ -101,7 +101,7 @@ async def run(env, agent):
             break
 
         steps += 1
-        if steps % 128 == 0 or has_event:
+        if steps % rollout_length == 0 or has_event:
             log_str = "; ".join([s.short_str() for s in states])
             logging.info(f"{steps}| States: [{log_str}]")
             logging.info(f"{steps}| Rewards: {[get_state_reward(s) for s in states]}")
@@ -113,7 +113,7 @@ async def run(env, agent):
             ppo_learner.save()
             supervised_learner.save()
 
-        if steps % 1024 == 0:
+        if steps % (rollout_length * 10) == 0:
             # compute estimated time left
             logging.info(f"Completed {steps} steps.")
             logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
@@ -172,16 +172,19 @@ if __name__ == "__main__":
         layers = 2
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
+        rollout_length = 32
     elif args.scale == "medium":
         history_steps = 8
         layers = 4
         hidden_size = 128
         conv_layers = [16, 32, 64, 64] # medium impala
+        rollout_length = 64
     else:  # large
         history_steps = 16
         layers = 6
         hidden_size = 256
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
+        rollout_length = 128
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -222,4 +225,4 @@ if __name__ == "__main__":
         use_memory=args.use_memory,
     )
 
-    asyncio.run(run(env, model_53_agent))
+    asyncio.run(run(env, model_53_agent, rollout_length))

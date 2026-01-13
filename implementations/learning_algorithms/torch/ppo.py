@@ -34,7 +34,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.target_kl = None
 
         self.update_epochs = 4
-        self.num_minibatches = 4
+        self.num_minibatches = 8
 
         all_parameters = list(self.policy_model.parameters()) + list(self.value_model.parameters())
         self.optimizer = optim.Adam(all_parameters, lr=self.lr, eps=1e-5)
@@ -72,8 +72,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_actions = convert_np_array_to_float_tensor(actions, self.device)
         b_rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
-        b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
+        b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
 
         batch_size = b_actions.shape[0]
         sequence_size = b_actions.shape[1]
@@ -81,12 +81,37 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         with torch.no_grad():
             # Get old log probabilities and values
-            logprobs, _ = self.policy_model.get_log_probability(
-                context=b_obs, 
-                action=b_actions,
-                valid_actions=b_valid_actions
-            )
-            values_with_last = self.value_model.get_value(torch.cat([b_obs, b_obs_last], dim=1))
+            # logprobs, _ = self.policy_model.get_log_probability(
+            #     context=b_obs, 
+            #     action=b_actions,
+            #     valid_actions=b_valid_actions
+            # )
+            # values_with_last = self.value_model.get_value(torch.cat([b_obs, b_obs_last], dim=1))
+
+            # the last section consume too much v_ram, need to split into minibatches
+            logprobs_list = []
+            for start in range(0, batch_size, minibatch_size):
+                end = start + minibatch_size
+                mb_obs = b_obs[start:end, ...]
+                mb_actions = b_actions[start:end, ...]
+                mb_valid_actions = b_valid_actions[start:end, ...] if b_valid_actions is not None else None
+
+                mb_logprob, _ = self.policy_model.get_log_probability(
+                    context=mb_obs, 
+                    action=mb_actions,
+                    valid_actions=mb_valid_actions
+                )
+                logprobs_list.append(mb_logprob)
+            logprobs = torch.cat(logprobs_list, dim=0)
+
+            values_with_last_list = []
+            for start in range(0, batch_size, minibatch_size):
+                end = start + minibatch_size
+                mb_obs = torch.cat([b_obs[start:end, ...], b_obs_last[start:end, ...]], dim=1)
+                mb_values = self.value_model.get_value(mb_obs)
+                values_with_last_list.append(mb_values)
+            values_with_last = torch.cat(values_with_last_list, dim=0)
+
             values = values_with_last[:, :-1, ...]  # (batch_size, context_length)
 
             # Bootstrap value if not done

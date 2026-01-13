@@ -86,6 +86,28 @@ class State_Sequence(Context_Collector):
         return State_Sequence(self.max_history, self.data[start:stop], self.mask[start:stop])
     
 
+    def get_last_batch(self, batch_led=True, append_last=False):
+        # return tensor of shape (batch_size, seq_len, :) if batch_led else (seq_len, batch_size, :)
+        # if append_last is True, seq_len = max_history + 2 else seq_len = max_history + 1
+        if len(self.data) == 0:
+            return None
+        
+        start_index = max(0, len(self.data) - self.max_history - 1)
+        data_to_stack = self.data[start_index:]
+
+        if append_last:
+            extra = np.zeros_like(self.data[0])
+            data_to_stack = data_to_stack + [extra]
+        else:
+            data_to_stack = data_to_stack
+
+        if batch_led:
+            data_tensor = np.stack(data_to_stack, axis=1)
+        else:
+            data_tensor = np.stack(data_to_stack, axis=0)
+        return data_tensor
+
+
     def make_batch(self, batch_led=True, append_last=False):
         # return tensor of shape (batch_size, len(data), :) if batch_led else (len(data), batch_size, :)
         if len(self.data) == 0:
@@ -144,6 +166,11 @@ if __name__ == "__main__":
     assert mark_slice == slice(4, 10)
     batch3 = seq.make_batch(batch_led=True)
     assert batch3.shape == (2, 6, 5)
+    batch4 = seq.get_last_batch(batch_led=True)
+    assert batch4.shape == (2, 6, 5)
+    batch5 = seq.get_last_batch(batch_led=True, append_last=True)
+    assert batch5.shape == (2, 7, 5)
+
 
     # test zero max_history
     seq = State_Sequence(max_history=0)
@@ -152,3 +179,13 @@ if __name__ == "__main__":
     seq2 = seq[7:8]
     batch2 = seq2.make_batch(batch_led=True)
     assert batch2.shape == (2, 1, 5)
+    batch3 = seq.get_last_batch(batch_led=True)
+    assert batch3.shape == (2, 1, 5)
+    
+
+    # test get last batch when no data
+    seq = State_Sequence(max_history=5)
+    batch = seq.get_last_batch(batch_led=True, append_last=False)
+    assert batch is None
+    batch = seq.get_last_batch(batch_led=True, append_last=True)
+    assert batch is None

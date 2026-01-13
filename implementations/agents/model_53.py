@@ -229,11 +229,10 @@ class Model_53(Agent):
 
 
         # Choose a random action
-        # this one return batch leading tensors (batch, 1, ...)
         packed_action, position = self.policy_model.get_action(
-            self.obs.make_batch(batch_led=True),
-            self.actions.make_batch(batch_led=True, append_last=True),
-            self.valid_actions.make_batch(batch_led=True)
+            self.obs.get_last_batch(batch_led=True),
+            self.actions.get_last_batch(batch_led=True, append_last=True),
+            self.valid_actions.get_last_batch(batch_led=True)
         )
 
         # extract output here

@@ -23,6 +23,7 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         self.max_grad_norm = 0.5
 
         self.update_epochs = 1
+        self.num_minibatches = 8
 
         self.optimizer = optim.Adam(self.policy_model.parameters(), lr=self.lr, eps=1e-5)
         
@@ -48,25 +49,46 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
         """
-        obs = convert_np_array_to_float_tensor(obs, self.device)
-        actions = convert_np_array_to_float_tensor(actions, self.device)
-        target_actions = convert_np_array_to_float_tensor(target_actions, self.device)
-        valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
-        masks = convert_np_array_to_float_tensor(masks, self.device) if masks is not None else None
+        b_obs = convert_np_array_to_float_tensor(obs, self.device)
+        b_actions = convert_np_array_to_float_tensor(actions, self.device)
+        b_target_actions = convert_np_array_to_float_tensor(target_actions, self.device)
+        b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
+        b_masks = convert_np_array_to_float_tensor(masks, self.device) if masks is not None else None
+
+        batch_size = b_actions.shape[0]
+        sequence_size = b_actions.shape[1]
+        minibatch_size = min(batch_size // self.num_minibatches, 8)
 
         for epoch in range(self.update_epochs):
-            logprobs, _ = self.policy_model.get_log_probability(
-                context=obs, 
-                action=actions,
-                valid_actions=valid_actions,
-                target_action=target_actions
-            )
+            # logprobs, _ = self.policy_model.get_log_probability(
+            #     context=obs, 
+            #     action=actions,
+            #     valid_actions=valid_actions,
+            #     target_action=target_actions
+            # )
+            # the last section consume too much v_ram, need to split into minibatches
+            logprobs_list = []
+            for start in range(0, batch_size, minibatch_size):
+                end = start + minibatch_size
+                mb_obs = b_obs[start:end, ...]
+                mb_actions = b_actions[start:end, ...]
+                mb_valid_actions = b_valid_actions[start:end, ...] if b_valid_actions is not None else None
+                mb_target_actions = b_target_actions[start:end, ...]
+
+                mb_logprob, _ = self.policy_model.get_log_probability(
+                    context=mb_obs, 
+                    action=mb_actions,
+                    valid_actions=mb_valid_actions,
+                    target_action=mb_target_actions
+                )
+                logprobs_list.append(mb_logprob)
+            logprobs = torch.cat(logprobs_list, dim=0)
 
             # now attempt to minimize negative log likelihood
-            if masks is None:
+            if b_masks is None:
                 loss = -logprobs.mean()
             else:
-                loss = -masked_mean(logprobs, masks)
+                loss = -masked_mean(logprobs, b_masks)
 
             self.optimizer.zero_grad()
             loss.backward()
