@@ -60,7 +60,7 @@ async def run(env, agent, rollout_length=16):
             next_available_actions=[
                 list(range(6)) for _ in observations
             ],
-            force_train=steps % rollout_length == (rollout_length - 1) or should_stop,
+            force_train=steps % rollout_length == 0 or should_stop,
         )
         actions = [int(a[0].item()) if a is not None else None for a in actions]
 
@@ -79,7 +79,7 @@ async def run(env, agent, rollout_length=16):
         if any([r != 0 for r in rewards]):
             logging.info(f"{steps}| Rewards: {rewards}")
 
-        if steps % rollout_length == 0 or should_stop:
+        if steps % (rollout_length * 4) == 0 or should_stop:
             logging.info(f"{steps}| Scores: {total_scores}")
             logging.info(f"{steps}| Selected actions: {actions}")
             total_scores = [0 for _ in observations]
@@ -163,19 +163,22 @@ if __name__ == "__main__":
         layers = 1
         hidden_size = 32
         conv_layers = [16, 16, 16] # basic impala
-        rollout_length = 32
+        rollout_length = 128
+        minibatch_size = 2
     elif args.scale == "medium":
         history_steps = 8
         layers = 4
         hidden_size = 128
         conv_layers = [16, 32, 64, 64] # medium impala
-        rollout_length = 64
+        rollout_length = 128
+        minibatch_size = 2
     else:  # large
         history_steps = 16
         layers = 6
         hidden_size = 256
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 128
+        minibatch_size = 4
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -194,11 +197,11 @@ if __name__ == "__main__":
     ).to(device)
     ppo_learner = PPO(
         policy_model=Action_Projector(policy_core), value_model=value_core,
-        device=device, persistence_path=parameters_path
+        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     supervised_learner = Basic_Learner(
         policy_model=Content_Projector(policy_core), 
-        device=device, persistence_path=parameters_path
+        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Memory(
         sizes=(1, 16, policy_core.content_size),

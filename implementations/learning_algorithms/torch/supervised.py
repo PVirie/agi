@@ -15,7 +15,7 @@ from .base import masked_mean
 
 class Basic_Learner(Supervised_Learner, Safe_nn_Module):
 
-    def __init__(self, policy_model: Policy_Network, device, persistence_path=None):
+    def __init__(self, policy_model: Policy_Network, device, persistence_path=None, minibatch_size=8):
         self.policy_model = policy_model
         self.device = device
 
@@ -23,7 +23,7 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         self.max_grad_norm = 0.5
 
         self.update_epochs = 1
-        self.num_minibatches = 8
+        self.minibatch_size = minibatch_size
 
         self.optimizer = optim.Adam(self.policy_model.parameters(), lr=self.lr, eps=1e-5)
         
@@ -49,31 +49,30 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
         """
+        batch_size = actions.shape[0]
+        sequence_size = actions.shape[1]
+
         b_obs = convert_np_array_to_float_tensor(obs, self.device)
         b_actions = convert_np_array_to_float_tensor(actions, self.device)
         b_target_actions = convert_np_array_to_float_tensor(target_actions, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
-        b_masks = convert_np_array_to_float_tensor(masks, self.device) if masks is not None else None
+        b_masks = torch.ones(batch_size, sequence_size).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
 
-        batch_size = b_actions.shape[0]
-        sequence_size = b_actions.shape[1]
-        minibatch_size = min(batch_size // self.num_minibatches, 8)
-
+        b_inds = np.arange(batch_size)
         for epoch in range(self.update_epochs):
-            # logprobs, _ = self.policy_model.get_log_probability(
-            #     context=obs, 
-            #     action=actions,
-            #     valid_actions=valid_actions,
-            #     target_action=target_actions
-            # )
-            # the last section consume too much v_ram, need to split into minibatches
-            logprobs_list = []
-            for start in range(0, batch_size, minibatch_size):
-                end = start + minibatch_size
-                mb_obs = b_obs[start:end, ...]
-                mb_actions = b_actions[start:end, ...]
-                mb_valid_actions = b_valid_actions[start:end, ...] if b_valid_actions is not None else None
-                mb_target_actions = b_target_actions[start:end, ...]
+            np.random.shuffle(b_inds)
+            for start in range(0, batch_size, self.minibatch_size):
+                end = start + self.minibatch_size
+                mb_inds = b_inds[start:end]
+
+                mb_obs = b_obs[mb_inds, ...]
+                mb_actions = b_actions[mb_inds, ...]
+                mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
+                mb_target_actions = b_target_actions[mb_inds, ...]
+                mb_masks = b_masks[mb_inds, ...]
+
+                if torch.sum(mb_masks) < 1e-8:
+                    continue
 
                 mb_logprob, _ = self.policy_model.get_log_probability(
                     context=mb_obs, 
@@ -81,17 +80,12 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
                     valid_actions=mb_valid_actions,
                     target_action=mb_target_actions
                 )
-                logprobs_list.append(mb_logprob)
-            logprobs = torch.cat(logprobs_list, dim=0)
 
-            # now attempt to minimize negative log likelihood
-            if b_masks is None:
-                loss = -logprobs.mean()
-            else:
-                loss = -masked_mean(logprobs, b_masks)
+                # now attempt to minimize negative log likelihood
+                loss = -masked_mean(mb_logprob, mb_masks)
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.max_grad_norm)
-            self.optimizer.step()
+                self.optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.max_grad_norm)
+                self.optimizer.step()
 

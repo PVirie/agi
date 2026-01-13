@@ -17,7 +17,7 @@ from .base import masked_mean, masked_std
 
 class PPO(RL_Learner, Safe_nn_Module):
 
-    def __init__(self, policy_model: Policy_Network, value_model: Value_Network, device, persistence_path=None):
+    def __init__(self, policy_model: Policy_Network, value_model: Value_Network, device, persistence_path=None, minibatch_size=8):
         self.policy_model = policy_model
         self.value_model = value_model
         self.device = device
@@ -34,7 +34,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.target_kl = None
 
         self.update_epochs = 4
-        self.num_minibatches = 8
+        self.minibatch_size = minibatch_size
 
         all_parameters = list(self.policy_model.parameters()) + list(self.value_model.parameters())
         self.optimizer = optim.Adam(all_parameters, lr=self.lr, eps=1e-5)
@@ -77,7 +77,6 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         batch_size = b_actions.shape[0]
         sequence_size = b_actions.shape[1]
-        minibatch_size = min(batch_size // self.num_minibatches, 8)
 
         with torch.no_grad():
             # Get old log probabilities and values
@@ -90,9 +89,11 @@ class PPO(RL_Learner, Safe_nn_Module):
 
             # the last section consume too much v_ram, need to split into minibatches
             logprobs_list = []
-            for start in range(0, batch_size, minibatch_size):
-                end = start + minibatch_size
+            values_with_last_list = []
+            for start in range(0, batch_size, self.minibatch_size):
+                end = start + self.minibatch_size
                 mb_obs = b_obs[start:end, ...]
+                mb_obs_last = b_obs_last[start:end, ...]
                 mb_actions = b_actions[start:end, ...]
                 mb_valid_actions = b_valid_actions[start:end, ...] if b_valid_actions is not None else None
 
@@ -102,14 +103,11 @@ class PPO(RL_Learner, Safe_nn_Module):
                     valid_actions=mb_valid_actions
                 )
                 logprobs_list.append(mb_logprob)
-            logprobs = torch.cat(logprobs_list, dim=0)
 
-            values_with_last_list = []
-            for start in range(0, batch_size, minibatch_size):
-                end = start + minibatch_size
-                mb_obs = torch.cat([b_obs[start:end, ...], b_obs_last[start:end, ...]], dim=1)
-                mb_values = self.value_model.get_value(mb_obs)
+                mb_values = self.value_model.get_value(torch.cat([mb_obs, mb_obs_last], dim=1))
                 values_with_last_list.append(mb_values)
+
+            logprobs = torch.cat(logprobs_list, dim=0)
             values_with_last = torch.cat(values_with_last_list, dim=0)
 
             values = values_with_last[:, :-1, ...]  # (batch_size, context_length)
@@ -132,8 +130,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_inds = np.arange(batch_size)
         for epoch in range(self.update_epochs):
             np.random.shuffle(b_inds)
-            for start in range(0, batch_size, minibatch_size):
-                end = start + minibatch_size
+            for start in range(0, batch_size, self.minibatch_size):
+                end = start + self.minibatch_size
                 mb_inds = b_inds[start:end]
 
                 mb_log_prob = logprobs[mb_inds, ...]
@@ -149,14 +147,14 @@ class PPO(RL_Learner, Safe_nn_Module):
                 mb_actions = b_actions[mb_inds, ...]
                 mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
 
-                b_newlogprob, b_entropy = self.policy_model.get_log_probability(
+                mb_newlogprob, mb_entropy = self.policy_model.get_log_probability(
                     context=mb_obs, 
                     action=mb_actions,
                     valid_actions=mb_valid_actions
                 )
-                b_newvalue = self.value_model.get_value(mb_obs)
+                mb_newvalue = self.value_model.get_value(mb_obs)
                 
-                logratio = b_newlogprob - mb_log_prob
+                logratio = mb_newlogprob - mb_log_prob
                 logratio = torch.clamp(logratio, -10.0, 10.0)
                 ratio = logratio.exp()
 
@@ -178,9 +176,9 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 # Value loss
                 if self.clip_vloss:
-                    v_loss_unclipped = (b_newvalue - mb_returns) ** 2
+                    v_loss_unclipped = (mb_newvalue - mb_returns) ** 2
                     v_clipped = mb_value + torch.clamp(
-                        b_newvalue - mb_value,
+                        mb_newvalue - mb_value,
                         -self.clip_coef,
                         self.clip_coef,
                     )
@@ -188,9 +186,9 @@ class PPO(RL_Learner, Safe_nn_Module):
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                     v_loss = 0.5 * masked_mean(v_loss_max, mb_masks)
                 else:
-                    v_loss = 0.5 * masked_mean((b_newvalue - mb_returns) ** 2, mb_masks)
+                    v_loss = 0.5 * masked_mean((mb_newvalue - mb_returns) ** 2, mb_masks)
 
-                entropy_loss = masked_mean(b_entropy, mb_masks)
+                entropy_loss = masked_mean(mb_entropy, mb_masks)
                 loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
 
                 self.optimizer.zero_grad()

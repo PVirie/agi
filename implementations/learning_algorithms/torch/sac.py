@@ -17,7 +17,7 @@ from .base import masked_mean, masked_std
 
 class SAC(RL_Learner, Safe_nn_Module):
 
-    def __init__(self, policy_model: Policy_Network, device, persistence_path=None):
+    def __init__(self, policy_model: Policy_Network, device, persistence_path=None, minibatch_size=8):
         self.policy_model = policy_model
         self.device = device
 
@@ -31,6 +31,8 @@ class SAC(RL_Learner, Safe_nn_Module):
         self.target_network_frequency = 1
         self.alpha = 0.2
         self.autotune = True
+
+        self.minibatch_size = minibatch_size
 
         Safe_nn_Module.__init__(self, name="sac_learner", device=device, persistence_path=persistence_path, module=self.optimizer)
 
@@ -66,7 +68,6 @@ class SAC(RL_Learner, Safe_nn_Module):
 
         batch_size = actions.shape[0]
         sequence_size = actions.shape[1]
-        minibatch_size = min(batch_size // self.num_minibatches, 8)
 
 
 
