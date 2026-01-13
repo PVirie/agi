@@ -160,9 +160,9 @@ if __name__ == "__main__":
 
     if args.scale == "small":
         history_steps = 0
-        layers = 1
+        layers = 2
         hidden_size = 32
-        conv_layers = [16, 16, 16] # basic impala
+        conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 2
     elif args.scale == "medium":
@@ -171,7 +171,7 @@ if __name__ == "__main__":
         hidden_size = 128
         conv_layers = [16, 32, 64, 64] # medium impala
         rollout_length = 128
-        minibatch_size = 2
+        minibatch_size = 4
     else:  # large
         history_steps = 16
         layers = 6
