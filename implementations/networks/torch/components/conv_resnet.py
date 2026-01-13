@@ -1,10 +1,7 @@
 import torch
 import torch.nn as nn
 
-try:
-    from ..components.base import init_weights
-except ImportError:
-    from implementations.networks.torch.components.base import init_weights
+from implementations.networks.torch.components.base import init_weights
 
 
 class Block(nn.Module):

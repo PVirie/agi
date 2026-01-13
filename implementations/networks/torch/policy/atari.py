@@ -8,8 +8,8 @@ import numpy as np
 import logging
 
 from interfaces.network import Policy_Network
-from ..components.base import init_weights, Categorical_With_Mask
-from ..components.temporal_unet import TemporalUNet
+from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask
+from implementations.networks.torch.components.temporal_unet import TemporalUNet
 from utilities.safe_torch_module import Safe_nn_Module
 
 
@@ -281,3 +281,52 @@ class Content_Projector:
         log_probs = all_logprobs[:, :, 2]  # content logprob
         entropy = all_entropy[:, :, 2]
         return log_probs, entropy
+    
+
+
+if __name__ == "__main__":
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    position_size = 2
+    width = 32
+    height = 64
+    channel = 4
+    core = Atari_Core(
+        action_size=2,
+        position_size=position_size,
+        width=width,
+        height=height,
+        channel=channel,
+        hidden_size=16,
+        layers=2,
+        history_steps=4,
+        max_temporal_len=32,
+        device=device
+    ).to(device)
+
+    batch_size = 2
+    context_length = 10
+
+    context = np.random.rand(batch_size, context_length, 1 + position_size + channel * width * height).astype(np.float32)
+    action = None
+
+    packed_action, position = core.get_action(context, action)
+    print("packed_action:", packed_action.shape)
+    print("position:", position.shape)
+
+    log_prob, entropy = core.get_log_probability(context, packed_action)
+    print("log_prob:", log_prob.shape)
+    print("entropy:", entropy.shape)
+
+    assert packed_action.shape == (batch_size, context_length, core.packed_action_size)
+    assert position.shape == (batch_size, context_length, core.position_size)
+    assert log_prob.shape == (batch_size, context_length, 4)
+    assert entropy.shape == (batch_size, context_length, 4)
+
+    # test gradient step
+    optimizer = optim.Adam(core.parameters(), lr=1e-3)
+    optimizer.zero_grad()
+    log_prob, entropy = core.get_log_probability(context, packed_action)
+    loss = -torch.mean(log_prob + 0.01 * entropy)
+    loss.backward()
+    optimizer.step()

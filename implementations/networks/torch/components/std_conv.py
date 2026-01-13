@@ -1,10 +1,7 @@
 import torch
 import torch.nn as nn
 
-try:
-    from ..components.base import init_weights
-except ImportError:
-    from implementations.networks.torch.components.base import init_weights
+from implementations.networks.torch.components.base import init_weights
 
 
 class ImpalaBlock(nn.Module):
@@ -92,8 +89,17 @@ class ImpalaCNN(nn.Module):
     
 
 if __name__ == "__main__":
-    model = ImpalaCNN(output_dims=256, input_channels=3, width=84, height=84)
+    model = ImpalaCNN(output_dims=256, input_channels=3, width=32, height=64)
     model.reset_parameters()
-    x = torch.randn(2, 3, 84, 84)
+    x = torch.randn(2, 3, 64, 32)
     out = model(x)
     assert out.shape == (2, 256)
+
+    # now test optimizer step
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer.zero_grad()
+    loss = out.sum()
+    loss.backward()
+    optimizer.step()
+
+    print("Optimizer step successful.")

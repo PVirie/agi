@@ -8,8 +8,8 @@ import numpy as np
 import logging
 
 from interfaces.network import Policy_Network
-from ..components.base import init_weights, Categorical_With_Mask
-from ..components.temporal_unet import TemporalUNet
+from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask
+from implementations.networks.torch.components.temporal_unet import TemporalUNet
 from utilities.safe_torch_module import Safe_nn_Module
 
 

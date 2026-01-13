@@ -9,14 +9,9 @@ import logging
 import copy
 
 from interfaces.network import Q_Network
-try:
-    from ..components.base import init_weights, Categorical_With_Mask
-    from ..components.conv_resnet import ResNet, Bottleneck, Block
-    from ..components.std_conv import ImpalaCNN
-except ImportError:
-    from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask
-    from implementations.networks.torch.components.conv_resnet import ResNet, Bottleneck, Block
-    from implementations.networks.torch.components.std_conv import ImpalaCNN
+from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask
+from implementations.networks.torch.components.conv_resnet import ResNet, Bottleneck, Block
+from implementations.networks.torch.components.std_conv import ImpalaCNN
 from utilities.safe_torch_module import Safe_nn_Module
 
 

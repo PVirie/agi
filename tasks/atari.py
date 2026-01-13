@@ -147,7 +147,7 @@ if __name__ == "__main__":
         game="pong",  # The ROM id not name, i.e., camel case compared to `gymnasium.make` name versions
         num_envs=16,                # Number of parallel environments
         img_height=64,              # Height to resize frames to
-        img_width=64,               # Width to resize frames to
+        img_width=32,               # Width to resize frames to
         maxpool=True,               # 1. Solves "Invisibility" (Flickering)
         stack_num=4,                # 2. Solves "Motion" (Velocity)
         frameskip=4,                # 3. Standard time resolution
@@ -184,14 +184,14 @@ if __name__ == "__main__":
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Atari_Core(
         action_size=6, position_size=16,
-        width=64, height=64, channel=4,
+        width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=layers,
         history_steps=history_steps, max_temporal_len=32,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
         action_size=6, position_size=16,
-        width=64, height=64, channel=4,
+        width=32, height=64, channel=4,
         layers=conv_layers,
         device=device, persistence_path=parameters_path
     ).to(device)

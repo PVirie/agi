@@ -2,10 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-try:
-    from ..components.base import init_weights
-except ImportError:
-    from implementations.networks.torch.components.base import init_weights
+from implementations.networks.torch.components.base import init_weights
 
 
 class DoubleConv(nn.Module):
@@ -270,7 +267,7 @@ class TemporalUNet(nn.Module):
 
 if __name__ == "__main__":
     # max_temporal_len defaults to 32, we pass 32 to be explicit or test with it.
-    model = TemporalUNet(n_channels=3, width=32, height=64, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=2, max_temporal_len=32)
+    model = TemporalUNet(n_channels=3, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=2, max_temporal_len=32)
     img = torch.randn(2, 5, 3, 64, 32)
     vec = torch.randn(2, 5, 128)
     
@@ -285,9 +282,16 @@ if __name__ == "__main__":
 
     # test full mask
     mask = nn.Transformer.generate_square_subsequent_mask(5, device=img.device)
-    model2 = TemporalUNet(n_channels=1, width=32, height=64, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=5, max_temporal_len=32)
+    model2 = TemporalUNet(n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=5, max_temporal_len=32)
     assert torch.allclose(mask, model2.temporal_attn.get_mask(torch.randn(1, 5, 128)))
     assert not torch.allclose(mask, model.temporal_attn.get_mask(torch.randn(2, 5, 128)))
 
     print("Mask generation successful.")
-    
+
+    # now test optimizer step
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer.zero_grad()
+    loss = features.sum() + x_logits.sum() + y_logits.sum() + content_logits.sum()
+    loss.backward()
+    optimizer.step()
+    print("Optimizer step successful.")

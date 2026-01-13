@@ -8,8 +8,8 @@ import numpy as np
 import logging
 
 from interfaces.network import Value_Network
-from ..components.conv_resnet import ResNet, Bottleneck
-from ..components.std_conv import ImpalaCNN
+from implementations.networks.torch.components.conv_resnet import ResNet, Bottleneck
+from implementations.networks.torch.components.std_conv import ImpalaCNN
 from utilities.safe_torch_module import Safe_nn_Module
 
 
