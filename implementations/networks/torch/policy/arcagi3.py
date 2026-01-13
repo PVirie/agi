@@ -25,7 +25,6 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.position_size = position_size
         self.content_size = channel * width * height
         self.packed_action_size = 1 + 3 + self.content_size  # ext_flag + action + x + y + content
-        self.content_start_index = 4  # start index of content in packed action
 
         self.width = width
         self.height = height
@@ -152,7 +151,7 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         return action, position
     
 
-    def get_log_probability(self, context, action, valid_actions=None, target_action=None, only_logprob_components=False):
+    def get_log_probability(self, context, action, valid_actions=None, target_action=None):
 
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
@@ -208,7 +207,6 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         log_prob_y = probs_y.log_prob(action_y)
         log_prob_content = props_content.log_prob(action_content).mean(-1)
         log_prob_position = props_position.log_prob(position).mean(-1)
-        batch_log_prob = log_prob_flag + log_prob_action + log_prob_x + log_prob_y + log_prob_content + log_prob_position
         
         entropy_flag = props_flag.entropy()
         entropy_action = props_action.entropy()
@@ -216,28 +214,12 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         entropy_y = probs_y.entropy()
         entropy_content = props_content.entropy().mean(-1)
         entropy_position = props_position.entropy().mean(-1)
-        batch_entropy = entropy_flag + entropy_action + entropy_x + entropy_y + entropy_content + entropy_position
 
-
-        if only_logprob_components:
-            # collapse last dimension
-            log_prob_flag = torch.reshape(log_prob_flag, (batch_size, context_size))
-            log_prob_action = torch.reshape(log_prob_action, (batch_size, context_size))
-            log_prob_x = torch.reshape(log_prob_x, (batch_size, context_size))
-            log_prob_y = torch.reshape(log_prob_y, (batch_size, context_size))
-            log_prob_content = torch.reshape(log_prob_content, (batch_size, context_size))
-            log_prob_position = torch.reshape(log_prob_position, (batch_size, context_size))
-
-            # return [log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content, log_prob_position]
-            return torch.stack([
-                log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content, log_prob_position
-            ], dim=-1)
-        else:
-            # collapse last dimension
-            batch_log_prob = torch.reshape(batch_log_prob, (batch_size, context_size))
-            batch_entropy = torch.reshape(batch_entropy, (batch_size, context_size))
-
-            return batch_log_prob, batch_entropy
+        return torch.stack([
+            log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content, log_prob_position
+        ], dim=-1), torch.stack([
+            entropy_flag, entropy_action, entropy_x, entropy_y, entropy_content, entropy_position
+        ], dim=-1)
 
 
     def unpack_action(self, packed_action):
@@ -281,3 +263,32 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         return packed_action
     
+
+# return only action log prob
+class Action_Projector:
+    def __init__(self, master_core):
+        self.master_core = master_core
+
+    def parameters(self):
+        return self.master_core.parameters()
+    
+    def get_log_probability(self, context, action, valid_actions=None, target_action=None):
+        all_logprobs, all_entropy = self.master_core.get_log_probability(context, action, valid_actions, target_action)
+        log_probs = all_logprobs[:, :, [0, 1, 2, 3, 5]].sum(dim=-1)  # sum over selected logprob components
+        entropy = all_entropy[:, :, [0, 1, 2, 3]].sum(dim=-1)
+        return log_probs, entropy
+    
+
+# return only content log prob
+class Content_Projector:
+    def __init__(self, master_core):
+        self.master_core = master_core
+
+    def parameters(self):
+        return self.master_core.parameters()
+    
+    def get_log_probability(self, context, action, valid_actions=None, target_action=None):
+        all_logprobs, all_entropy = self.master_core.get_log_probability(context, action, valid_actions, target_action)
+        log_probs = all_logprobs[:, :, 4]  # content logprob
+        entropy = all_entropy[:, :, 4]
+        return log_probs, entropy

@@ -24,7 +24,7 @@ from ale_py.vector_env import AtariVectorEnv
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.atari import Atari_Core
+from implementations.networks.torch.policy.atari import Atari_Core, Action_Projector, Content_Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
@@ -55,12 +55,12 @@ async def run(env, agent):
             last_dones=last_done,
             last_truncates=last_truncated,
             last_resets=last_reset,
-            latest_frames=[obs for obs in observations],
+            latest_frames=[obs.astype(np.float32) / 255.0 for obs in observations],
             rewards=[r.item() for r in rewards],
             next_available_actions=[
                 list(range(6)) for _ in observations
             ],
-            force_train=steps % 10 == 9 or should_stop,
+            force_train=steps % 128 == 127 or should_stop,
         )
         actions = [int(a[0].item()) if a is not None else None for a in actions]
 
@@ -79,9 +79,10 @@ async def run(env, agent):
         if any([r != 0 for r in rewards]):
             logging.info(f"{steps}| Rewards: {rewards}")
 
-        if steps % 100 == 0 or should_stop:
+        if steps % 128 == 0 or should_stop:
             logging.info(f"{steps}| Scores: {total_scores}")
             logging.info(f"{steps}| Selected actions: {actions}")
+            total_scores = [0 for _ in observations]
 
             # save 
             policy_core.save()
@@ -89,7 +90,7 @@ async def run(env, agent):
             ppo_learner.save()
             supervised_learner.save()
 
-        if steps % 1000 == 0:
+        if steps % 1024 == 0:
             # compute estimated time left
             logging.info(f"Completed {steps} steps.")
             logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
@@ -144,9 +145,9 @@ if __name__ == "__main__":
 
     env = AtariVectorEnv(
         game="pong",  # The ROM id not name, i.e., camel case compared to `gymnasium.make` name versions
-        num_envs=4,
-        img_height=64,           # Height to resize frames to
-        img_width=64,            # Width to resize frames to
+        num_envs=16,                # Number of parallel environments
+        img_height=64,              # Height to resize frames to
+        img_width=64,               # Width to resize frames to
         maxpool=True,               # 1. Solves "Invisibility" (Flickering)
         stack_num=4,                # 2. Solves "Motion" (Velocity)
         frameskip=4,                # 3. Standard time resolution
@@ -189,11 +190,11 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=policy_core, value_model=value_core,
+        policy_model=Action_Projector(policy_core), value_model=value_core,
         device=device, persistence_path=parameters_path
     )
     supervised_learner = Basic_Learner(
-        policy_model=policy_core, 
+        policy_model=Content_Projector(policy_core), 
         device=device, persistence_path=parameters_path
     )
     memory = Memory(

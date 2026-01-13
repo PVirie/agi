@@ -46,14 +46,14 @@ class SAC(RL_Learner, Safe_nn_Module):
     def learn(self, 
               obs: Any, actions: Any, rewards: List[Any], 
               next_dones: List[List[bool]],
-              masks: Any = None, valid_actions: Any = None):
+              valid_actions: Any = None, masks: Any = None):
         """
         obs: np array of shape (batch_size, context_length, ...)
         actions: np array of shape (batch_size, context_length, ...)
         rewards: list of np array of shape (batch_size)
         next_dones: list of bools of length batch_size
-        masks: np array of shape (batch_size, context_length)
         valid_actions: np array of shape (batch_size, context_length, ...)
+        masks: np array of shape (batch_size, context_length)
         """
         # Use dim 0 as context length dimension
         b_obs = convert_np_array_to_float_tensor(obs[:, :-1, ...], self.device)

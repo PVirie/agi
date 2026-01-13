@@ -3,7 +3,7 @@ import abc
 class Policy_Network(abc.ABC):
     
     @abc.abstractmethod
-    def get_log_probability(self, context, action, valid_actions=None, target_action=None, only_logprob_components=False):
+    def get_log_probability(self, context, action, valid_actions=None, target_action=None):
         pass
 
     @abc.abstractmethod

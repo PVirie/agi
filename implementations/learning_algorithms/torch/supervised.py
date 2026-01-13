@@ -40,14 +40,13 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         self.optimizer.param_groups[0]["lr"] = lrnow
 
 
-    def train(self, obs: Any, actions: Any, target_actions: Any, valid_actions: Any = None, masks: Any = None, trained_logprob_indices: List[int] = None):
+    def train(self, obs: Any, actions: Any, target_actions: Any, valid_actions: Any = None, masks: Any = None):
         """
         obs: np array of shape (batch_size, context_length, ...)
         actions: np array of shape (batch_size, context_length, ...)
         target_actions: np array of shape (batch_size, context_length, ...)
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
-        trained_logprob_indices: List of int indices to select which logprob components to train on
         """
         obs = convert_np_array_to_float_tensor(obs, self.device)
         actions = convert_np_array_to_float_tensor(actions, self.device)
@@ -56,25 +55,18 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         masks = convert_np_array_to_float_tensor(masks, self.device) if masks is not None else None
 
         for epoch in range(self.update_epochs):
-            logprobs = self.policy_model.get_log_probability(
+            logprobs, _ = self.policy_model.get_log_probability(
                 context=obs, 
                 action=actions,
                 valid_actions=valid_actions,
-                target_action=target_actions,
-                only_logprob_components=True
+                target_action=target_actions
             )
-
-            if trained_logprob_indices is not None:
-                # select only the logprob components we want to train on from the last dimension
-                logprobs = logprobs[:, :, trained_logprob_indices]
-                
-            sum_log_probs = logprobs.sum(dim=-1)  # sum over logprob components
 
             # now attempt to minimize negative log likelihood
             if masks is None:
-                loss = -sum_log_probs.mean()
+                loss = -logprobs.mean()
             else:
-                loss = -masked_mean(sum_log_probs, masks)
+                loss = -masked_mean(logprobs, masks)
 
             self.optimizer.zero_grad()
             loss.backward()

@@ -33,7 +33,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.max_grad_norm = 0.5
         self.target_kl = None
 
-        self.update_epochs = 10
+        self.update_epochs = 4
         self.num_minibatches = 4
 
         all_parameters = list(self.policy_model.parameters()) + list(self.value_model.parameters())
@@ -56,15 +56,15 @@ class PPO(RL_Learner, Safe_nn_Module):
     def learn(self, 
               obs: Any, actions: Any, rewards: List[Any], 
               next_dones: List[List[bool]],
-              masks: Any = None, valid_actions: Any = None):
+              valid_actions: Any = None, masks: Any = None):
         """
         obs: np array of shape (batch_size, context_length + 1, ...)
         note that obs includes the last next_obs for computing the last value
         actions: np array of shape (batch_size, context_length, ...)
         rewards: list (context_length) of np array of shape (batch_size)
         next_dones: list (context_length) of bools of length batch_size
-        masks: np array of shape (batch_size, context_length)
         valid_actions: np array of shape (batch_size, context_length, ...)
+        masks: np array of shape (batch_size, context_length)
         """
         # Use dim 0 as context length dimension
         b_obs = convert_np_array_to_float_tensor(obs[:, :-1, ...], self.device)
@@ -82,9 +82,9 @@ class PPO(RL_Learner, Safe_nn_Module):
         with torch.no_grad():
             # Get old log probabilities and values
             logprobs, _ = self.policy_model.get_log_probability(
-                b_obs, 
-                b_actions,
-                b_valid_actions
+                context=b_obs, 
+                action=b_actions,
+                valid_actions=b_valid_actions
             )
             values_with_last = self.value_model.get_value(torch.cat([b_obs, b_obs_last], dim=1))
             values = values_with_last[:, :-1, ...]  # (batch_size, context_length)
@@ -125,9 +125,9 @@ class PPO(RL_Learner, Safe_nn_Module):
                 mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
 
                 b_newlogprob, b_entropy = self.policy_model.get_log_probability(
-                    mb_obs, 
-                    mb_actions,
-                    mb_valid_actions
+                    context=mb_obs, 
+                    action=mb_actions,
+                    valid_actions=mb_valid_actions
                 )
                 b_newvalue = self.value_model.get_value(mb_obs)
                 

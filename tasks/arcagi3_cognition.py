@@ -21,7 +21,7 @@ from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_T
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.arcagi3 import ARCAGI3_Core
+from implementations.networks.torch.policy.arcagi3 import ARCAGI3_Core, Action_Projector, Content_Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
@@ -88,7 +88,7 @@ async def run(env, agent):
             next_available_actions=[
                 [a.value for a in state.next_available_actions] for state in states
             ],
-            force_train=steps % 10 == 9 or should_stop,
+            force_train=steps % 128 == 127 or should_stop,
         )
         actions = [
             (Action_Type(a[0].item()), a[1].item(), a[2].item()) if a is not None else None 
@@ -101,7 +101,7 @@ async def run(env, agent):
             break
 
         steps += 1
-        if steps % 10 == 0 or has_event:
+        if steps % 128 == 0 or has_event:
             log_str = "; ".join([s.short_str() for s in states])
             logging.info(f"{steps}| States: [{log_str}]")
             logging.info(f"{steps}| Rewards: {[get_state_reward(s) for s in states]}")
@@ -113,7 +113,7 @@ async def run(env, agent):
             ppo_learner.save()
             supervised_learner.save()
 
-        if steps % 100 == 0:
+        if steps % 1024 == 0:
             # compute estimated time left
             logging.info(f"Completed {steps} steps.")
             logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
@@ -199,11 +199,11 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=policy_core, value_model=value_core,
+        policy_model=Action_Projector(policy_core), value_model=value_core,
         device=device, persistence_path=parameters_path
     )
     supervised_learner = Basic_Learner(
-        policy_model=policy_core, 
+        policy_model=Content_Projector(policy_core), 
         device=device, persistence_path=parameters_path
     )
     memory = Memory(

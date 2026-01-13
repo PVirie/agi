@@ -163,7 +163,8 @@ class Model_53(Agent):
             operation=memory_action
         )
 
-        if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
+        # if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
+        if force_train and current_cl > 1:
             
             self.policy_model.train()
             self.value_model.train()
@@ -192,8 +193,7 @@ class Model_53(Agent):
                     actions=self.actions.make_batch(batch_led=True), 
                     target_actions=target_actions,
                     valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
-                    masks=masks,
-                    trained_logprob_indices=[self.policy_model.content_start_index] # only content part
+                    masks=masks
                 )
 
             # learn RL
@@ -208,8 +208,8 @@ class Model_53(Agent):
                 actions=self.actions.make_batch(batch_led=True), 
                 rewards=self.rewards[1:],
                 next_dones=self.last_dones[1:],
-                masks=masks,
-                valid_actions=self.valid_actions[:-1].make_batch(batch_led=True)
+                valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
+                masks=masks
             )
             
             # reset
