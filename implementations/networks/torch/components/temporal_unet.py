@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from implementations.networks.torch.components.rope import RoPETransformer
 from implementations.networks.torch.components.base import init_weights
 
 
@@ -61,65 +62,6 @@ class Up(nn.Module):
         return self.conv(x)
 
 
-class DeepTemporalTransformer(nn.Module):
-    def __init__(self, input_dim, num_heads=8, num_layers=3, dropout=0.1, history_steps=8, max_temporal_len=32):
-        super().__init__()
-        self.history_steps = history_steps
-        self.max_temporal_len = max_temporal_len
-
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=input_dim,
-            nhead=num_heads,
-            # Since input_dim is large (~4000), we keep feedforward dim equal to input_dim
-            # to prevent parameter explosion, but standard is usually 4 * input_dim.
-            dim_feedforward=input_dim, 
-            dropout=dropout,
-            batch_first=True,
-            norm_first=True # Improves gradient flow in deep networks
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.register_buffer('full_mask', self._generate_mask(max_temporal_len))
-
-
-    def _generate_mask(self, size):
-        """Generates the causal + history limited mask."""
-        mask = torch.full((size, size), float('-inf'))
-        if self.history_steps == 0:
-            # Diagonal only
-            mask.fill_diagonal_(0.0)
-        else:
-            # Create boolean valid mask
-            # 1. Causality: Lower triangle
-            valid = torch.tril(torch.ones(size, size, dtype=torch.bool))
-
-            # 2. History Limit: Upper triangle relative to diagonal -N
-            if self.history_steps is not None:
-                history_constraint = torch.triu(torch.ones(size, size, dtype=torch.bool), diagonal=-self.history_steps)
-                valid = valid & history_constraint
-                
-            mask.masked_fill_(valid, 0.0)
-
-        return mask
-
-
-    def get_mask(self, x):
-        """Returns the appropriate mask slice for input x."""
-        T = x.shape[1]
-        if T <= self.max_temporal_len:
-            return self.full_mask[:T, :T]
-        # Fallback: If input is longer than max_temporal_len, generate on the fly
-        return self._generate_mask(T).to(x.device)
-    
-
-    def forward(self, x):
-        """
-        x: [Batch, Time, Features]
-        """
-        mask = self.get_mask(x)
-        out = self.transformer(x, mask=mask)
-        return out
-
-
 class TemporalUNet(nn.Module):
     def __init__(self, n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=8, max_temporal_len=32):
         super(TemporalUNet, self).__init__()
@@ -150,23 +92,23 @@ class TemporalUNet(nn.Module):
         self.flat_features = self.bottleneck_channels * self.bottleneck_size * self.bottleneck_size
         self.attn_input_dim = self.flat_features + 32
         
-        self.temporal_attn = DeepTemporalTransformer(
-            input_dim=self.attn_input_dim,
-            num_heads=8,
-            num_layers=num_temporal_layers,
-            dropout=0.1,
-            history_steps=history_steps,
-            max_temporal_len=max_temporal_len
+        self.temporal_attn = RoPETransformer(
+            d_model=self.attn_input_dim, 
+            num_heads=8, 
+            num_layers=num_temporal_layers, 
+            d_ff=1024, 
+            dropout=0.1, 
+            history_steps=history_steps
         )
+
         self.fusion = nn.Linear(self.attn_input_dim, self.flat_features)
+        self.out_features = self.flat_features
 
         # --- Decoder ---
         self.up1 = Up(self.bottleneck_channels, 256 // factor, 256, bilinear)
         self.up2 = Up(256 // factor, 128 // factor, 128, bilinear)
         self.up3 = Up(128 // factor, 64 // factor, 64, bilinear)
         self.up4 = Up(64 // factor, 32, 32, bilinear)
-
-        self.out_features = 128
 
         self.head_heatmap = nn.Sequential(
             nn.Conv2d(32, 16, kernel_size=3, padding=1),
@@ -241,8 +183,7 @@ class TemporalUNet(nn.Module):
         x1_ = self.up3(x2_, x2)
         x_features = self.up4(x1_, x1) # [B*T, 128, 64, 64]
         
-        # --- Extract Sampled Features (Global Average Pool) ---
-        sampled_features = x3.mean(dim=(2, 3)) # [B*T, 32]
+        sampled_features = fused
 
         # --- Generate Heatmap ---
         heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, H, W]

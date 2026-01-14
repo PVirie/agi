@@ -49,8 +49,9 @@ print(f"Throughput: {total_steps / elapsed_time:.2f} steps/second")
 artifacts_path = f"{APP_ROOT}/log"
 os.makedirs(artifacts_path, exist_ok=True)
 for i, frame in enumerate(observations):
-    img = Image.fromarray(frame[-1, ...], mode='L')  # 'L' mode for grayscale
-    img.save(f"{artifacts_path}/pong_env_{i}.png")
+    for j in range(frame.shape[0]):
+        img = Image.fromarray(frame[j, ...], mode='L')  # 'L' mode for grayscale
+        img.save(f"{artifacts_path}/pong_env_{i}_{j}.png")
 
 # Close the environment when done
 envs.close()
