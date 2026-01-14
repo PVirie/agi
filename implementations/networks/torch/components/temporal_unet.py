@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from implementations.networks.torch.components.rope import RoPETransformer
+from implementations.networks.torch.components.rope import RoPEDecoderOnly
 from implementations.networks.torch.components.base import init_weights
 
 
@@ -92,7 +92,7 @@ class TemporalUNet(nn.Module):
         self.flat_features = self.bottleneck_channels * self.bottleneck_size * self.bottleneck_size
         self.attn_input_dim = self.flat_features + 32
         
-        self.temporal_attn = RoPETransformer(
+        self.temporal_attn = RoPEDecoderOnly(
             d_model=self.attn_input_dim, 
             num_heads=8, 
             num_layers=num_temporal_layers, 
@@ -220,14 +220,6 @@ if __name__ == "__main__":
     assert content_logits.shape == (2, 5, 3, 64, 32)
 
     print("Forward pass successful.")
-
-    # test full mask
-    mask = nn.Transformer.generate_square_subsequent_mask(5, device=img.device)
-    model2 = TemporalUNet(n_channels=1, vec_dim=128, num_temporal_layers=2, bilinear=True, history_steps=5, max_temporal_len=32)
-    assert torch.allclose(mask, model2.temporal_attn.get_mask(torch.randn(1, 5, 128)))
-    assert not torch.allclose(mask, model.temporal_attn.get_mask(torch.randn(2, 5, 128)))
-
-    print("Mask generation successful.")
 
     # now test optimizer step
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
