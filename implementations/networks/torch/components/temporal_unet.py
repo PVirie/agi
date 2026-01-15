@@ -102,7 +102,6 @@ class TemporalUNet(nn.Module):
         )
 
         self.fusion = nn.Linear(self.attn_input_dim, self.flat_features)
-        self.out_features = self.flat_features
 
         # --- Decoder ---
         self.up1 = Up(self.bottleneck_channels, 256 // factor, 256, bilinear)
@@ -110,6 +109,12 @@ class TemporalUNet(nn.Module):
         self.up3 = Up(128 // factor, 64 // factor, 64, bilinear)
         self.up4 = Up(64 // factor, 32, 32, bilinear)
 
+        self.out_features = 256
+        self.head_feature = nn.Sequential(
+            nn.Linear(self.flat_features, self.out_features),
+            nn.LayerNorm(self.out_features),
+            nn.ReLU()
+        )
         self.head_heatmap = nn.Sequential(
             nn.Conv2d(32, 16, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -183,7 +188,7 @@ class TemporalUNet(nn.Module):
         x1_ = self.up3(x2_, x2)
         x_features = self.up4(x1_, x1) # [B*T, 128, 64, 64]
         
-        sampled_features = fused
+        sampled_features = self.head_feature(fused) # [B*T, out_features]
 
         # --- Generate Heatmap ---
         heatmap_logits = self.head_heatmap(x_features) # [B*T, 1, H, W]
@@ -198,7 +203,7 @@ class TemporalUNet(nn.Module):
         content_logits = self.head_content(x_features) # [B*T, C, H, W]
         
         # --- Reshape and Return ---
-        sampled_features = sampled_features.reshape(B, T, -1)
+        sampled_features = sampled_features.reshape(B, T, self.out_features)
         x_logits = x_logits.reshape(B, T, W)
         y_logits = y_logits.reshape(B, T, H)
         content_logits = content_logits.reshape(B, T, C, H, W)

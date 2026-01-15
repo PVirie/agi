@@ -263,8 +263,8 @@ class Action_Projector:
     
     def get_log_probability(self, context, action, valid_actions=None, target_action=None):
         all_logprobs, all_entropy = self.master_core.get_log_probability(context, action, valid_actions, target_action)
-        log_probs = all_logprobs[:, :, [0, 1, 3]].sum(dim=-1)  # sum over selected logprob components
-        entropy = all_entropy[:, :, [0, 1, 3]].sum(dim=-1)
+        log_probs = all_logprobs[:, :, [0, 1]].sum(dim=-1)  # sum over selected logprob components
+        entropy = all_entropy[:, :, [0, 1]].sum(dim=-1)
         return log_probs, entropy
     
     

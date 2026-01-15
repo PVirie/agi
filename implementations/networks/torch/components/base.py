@@ -10,7 +10,9 @@ import numpy as np
 
 def init_weights(m):
     if isinstance(m, nn.Linear):
-        nn.init.xavier_normal_(m.weight)
+        # Orthogonal init is generally better for RL (PPO/A2C)
+        # nn.init.xavier_normal_(m.weight)
+        nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
         if m.bias is not None:
             nn.init.constant_(m.bias, 0)
     elif isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):

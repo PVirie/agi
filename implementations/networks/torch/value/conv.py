@@ -1,14 +1,9 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.distributions.normal import Normal
-from torch.distributions.categorical import Categorical
-from torch.distributions import Bernoulli
 import numpy as np
 import logging
 
 from interfaces.network import Value_Network
-from implementations.networks.torch.components.conv_resnet import ResNet, Bottleneck
 from implementations.networks.torch.components.std_conv import ImpalaCNN
 from utilities.safe_torch_module import Safe_nn_Module
 
@@ -30,8 +25,12 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.height = height
         self.channel = channel
 
-        # self.conv_layers = ResNet(Bottleneck, layers, num_classes=1, num_channels=channel)
-        self.conv_layers = ImpalaCNN(output_dims=1, input_channels=channel, width=width, height=height, depths=layers)
+        self.conv_layers = ImpalaCNN(output_dims=32, input_channels=channel, width=width, height=height, depths=layers)
+        self.read_out_layers = nn.Sequential(
+            nn.Linear(32, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1)
+        )
 
         self.reset_parameters()
         self.load()
@@ -51,7 +50,8 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         image_content = context[:, :, 1 + self.position_size:]
         image_part = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))
 
-        values = self.conv_layers(image_part)  # (batch_size * context_size, 1)
+        values = self.conv_layers(image_part)  # (batch_size * context_size, conv_output_size)
+        values = self.read_out_layers(values)  # (batch_size * context_size, 1)
         values = torch.reshape(values, (batch_size, context_size, 1))
         
         return values

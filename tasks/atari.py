@@ -162,14 +162,14 @@ if __name__ == "__main__":
         history_steps = 0
         layers = 2
         hidden_size = 32
-        conv_layers = [16, 32, 32] # basic impala
+        conv_layers = [16, 32, 64, 128] # basic impala
         rollout_length = 128
         minibatch_size = 2
     elif args.scale == "medium":
         history_steps = 8
         layers = 4
         hidden_size = 128
-        conv_layers = [16, 32, 64, 64] # medium impala
+        conv_layers = [16, 32, 64, 128, 256] # medium impala
         rollout_length = 128
         minibatch_size = 4
     else:  # large
@@ -186,7 +186,7 @@ if __name__ == "__main__":
         action_size=6, position_size=16,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=layers,
-        history_steps=history_steps, max_temporal_len=32,
+        history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(

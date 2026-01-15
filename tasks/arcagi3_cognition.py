@@ -195,7 +195,7 @@ if __name__ == "__main__":
         action_size=7, position_size=16,
         width=64, height=64, channel=4,
         hidden_size=hidden_size, layers=layers,
-        history_steps=history_steps, max_temporal_len=32,
+        history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
