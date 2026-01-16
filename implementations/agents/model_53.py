@@ -80,6 +80,8 @@ class Model_53(Agent):
         self.last_truncates = []
         self.last_idles = []
 
+        self.last_position = None
+
         self.policy_model.eval()
         self.value_model.eval()
 
@@ -99,7 +101,6 @@ class Model_53(Agent):
             self.thought_steps = [0 for _ in range(batch_size)]
             self.obs.append(
                 np.zeros((batch_size, 1), dtype=np.float32), 
-                np.zeros((batch_size, self.policy_model.position_size), dtype=np.float32), 
                 np.zeros((batch_size, self.policy_model.content_size), dtype=np.float32)
             )
             self.rewards.append(
@@ -113,6 +114,7 @@ class Model_53(Agent):
             self.last_idles.append([False for _ in range(batch_size)])
             self.last_dones.append([False for _ in range(batch_size)])
 
+            self.last_position = np.zeros((batch_size, self.policy_model.position_size), dtype=np.float32)
         for i, (idle, d, t) in enumerate(zip(last_idles, last_dones, last_truncates)):
             if d or t:
                 self.thought_steps[i] = 0
@@ -120,29 +122,21 @@ class Model_53(Agent):
         content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
         reward = np.array([r for r in rewards])
 
-        update_mask = np.zeros((batch_size, 1 + self.policy_model.position_size + self.policy_model.content_size), dtype=np.float32)
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
             if r:
                 memory_action[i] = Memory_Operation_Type.RESET
             if not idle:
-                # update only reward and content
-                update_mask[i, 0] = 1.0
-                update_mask[i, (1 + self.policy_model.position_size):] = 1.0
                 memory_action[i] = Memory_Operation_Type.CACHE
             self.last_truncates[-1][i] = t
             self.last_idles[-1][i] = idle
             self.last_dones[-1][i] = d
 
         # replace the reward and content
-        last_obs = self.obs.get_last()
-        new_value = np.concatenate([
+        self.obs.update_last(
             np.reshape(reward, (-1, 1)), 
-            np.zeros((batch_size, self.policy_model.position_size), dtype=np.float32), 
             content
-        ], axis=1)
-        update_value = last_obs * (1.0 - update_mask) + new_value * update_mask
-        self.obs.update_last(update_value)
+        )
         self.rewards[-1] = reward
         self.valid_actions.update_last(
             make_valid_mask([
@@ -153,11 +147,10 @@ class Model_53(Agent):
         )
 
         # cache new observation into memory
-        position = last_obs[:, 1:1 + self.policy_model.position_size]
         self.memory.operate(
             tuple_record=(
                 np.reshape(reward, (-1, 1)), 
-                position, 
+                self.last_position,
                 content
             ), 
             operation=memory_action
@@ -176,7 +169,7 @@ class Model_53(Agent):
                 recorded_obs = self.obs.make_batch(batch_led=True)[:, 1:, :]  # shape (batch_size, context_length, obs_size)
                 target_actions = np.concatenate([
                     np.zeros((recorded_obs.shape[0], recorded_obs.shape[1], self.policy_model.packed_action_size - self.policy_model.content_size), dtype=np.float32),
-                    recorded_obs[:, :, 1 + self.policy_model.position_size:]  # content part
+                    recorded_obs[:, :, 1:]  # content part
                 ], axis=-1)
                 
                 # masks has shape (batch_size, context_length)
@@ -229,15 +222,14 @@ class Model_53(Agent):
 
 
         # Choose a random action
-        packed_action, position = self.policy_model.get_action(
+        packed_action = self.policy_model.get_action(
             self.obs.get_last_batch(batch_led=True),
-            self.actions.get_last_batch(batch_led=True, append_last=True),
+            self.actions.get_last_batch(batch_led=True),
             self.valid_actions.get_last_batch(batch_led=True)
         )
 
         # extract output here
-        int_action, ext_action, content = self.policy_model.unpack_action(packed_action[:, -1, ...])
-        position = position[:, -1, ...]
+        int_action, ext_action, position, content = self.policy_model.unpack_action(packed_action[:, -1, ...])
 
         # if next done, reset score and thought steps
         return_action = [None for _ in range(batch_size)]
@@ -286,18 +278,20 @@ class Model_53(Agent):
             operation=memory_action,
             index=memory_fetch_index
         )
+        self.last_position = position
 
         # off-policy warning: here we store the corrected action after memory fetch
         selected_actions = self.policy_model.pack_action(
             b_int=selected_int_action,
             b_ext=ext_action,
+            b_position=position,
             b_content=content
         )
         
         # store last states
         self.actions.append(selected_actions)
 
-        self.obs.append(reward, position, content)
+        self.obs.append(reward, content)
         self.rewards.append(reward)
         self.valid_actions.append(
             np.ones((batch_size, self.policy_model.flag_size), dtype=np.bool),

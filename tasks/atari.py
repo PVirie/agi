@@ -163,11 +163,11 @@ if __name__ == "__main__":
 
     if args.scale == "small":
         history_steps = 0
-        layers = 2
+        layers = 1
         hidden_size = 32
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
-        minibatch_size = 2
+        minibatch_size = 4
         position_size = 1
     elif args.scale == "medium":
         history_steps = 8
@@ -196,7 +196,6 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        action_size=6, position_size=position_size,
         width=32, height=64, channel=4,
         layers=conv_layers,
         device=device, persistence_path=parameters_path

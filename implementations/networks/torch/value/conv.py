@@ -10,16 +10,13 @@ from utilities.safe_torch_module import Safe_nn_Module
 
 class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
-    def __init__(self, action_size, position_size, width, height, channel, layers, device=None, persistence_path=None):
+    def __init__(self, width, height, channel, layers, device=None, persistence_path=None):
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="value_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.flag_size = 5  # num classes for flag
-        self.action_size = action_size
-        self.position_size = position_size
         self.content_size = channel * width * height
-        self.packed_action_size = 1 + 3 + self.content_size  # ext_flag + action + x + y + content
 
         self.width = width
         self.height = height
@@ -41,13 +38,12 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
 
     def __compute(self, context):
-        # context has shape (batch, context_size, 1 + position_size + content_size)
-        # action has shape (batch, context_size, self.packed_action_size)
+        # context has shape (batch, context_size, 1 + content_size)
         batch_size = context.size(0)
         context_size = context.size(1)
 
         # first slice the image content
-        image_content = context[:, :, 1 + self.position_size:]
+        image_content = context[:, :, 1:]
         image_part = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))
 
         values = self.conv_layers(image_part)  # (batch_size * context_size, conv_output_size)

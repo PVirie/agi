@@ -168,7 +168,7 @@ if __name__ == "__main__":
     random_agent = random_agent.Random_Agent("01")
 
     if args.scale == "small":
-        history_steps = 0
+        history_steps = 1
         layers = 2
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
@@ -199,7 +199,6 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        action_size=7, position_size=16,
         width=64, height=64, channel=4,
         layers=conv_layers,
         device=device, persistence_path=parameters_path
