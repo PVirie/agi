@@ -78,6 +78,9 @@ class PPO(RL_Learner, Safe_nn_Module):
         batch_size = b_rewards.shape[0]
         sequence_size = b_rewards.shape[1]
 
+        self.policy_model.eval()
+        self.value_model.eval()
+
         with torch.no_grad():
             logprobs_list = []
             values_with_last_list = []
@@ -115,6 +118,9 @@ class PPO(RL_Learner, Safe_nn_Module):
             advantages.reverse()
             advantages = torch.stack(advantages, dim=1)
             returns = advantages + values
+
+        self.policy_model.train()
+        self.value_model.train()
 
         # Optimizing the policy and value network
         clipfracs = []
@@ -192,4 +198,6 @@ class PPO(RL_Learner, Safe_nn_Module):
             if self.target_kl is not None and approx_kl > self.target_kl:
                 break
 
+        self.policy_model.eval()
+        self.value_model.eval()
 

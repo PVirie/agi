@@ -59,6 +59,7 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         self.reset_parameters()
         self.load()
+        self.eval()
 
 
     def reset_parameters(self):
@@ -279,6 +280,12 @@ class Action_Projector:
         entropy = all_entropy[:, :, [0, 1, 2, 3, 4]].sum(dim=-1)
         return log_probs, entropy
     
+    def train(self):
+        self.master_core.train()
+
+    def eval(self):
+        self.master_core.eval()
+
 
 # return only content log prob
 class Content_Projector:
@@ -293,3 +300,9 @@ class Content_Projector:
         log_probs = all_logprobs[:, :, 5]  # content logprob
         entropy = all_entropy[:, :, 5]
         return log_probs, entropy
+    
+    def train(self):
+        self.master_core.train()
+
+    def eval(self):
+        self.master_core.eval()

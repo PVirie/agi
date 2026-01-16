@@ -44,6 +44,8 @@ class ParametricImpalaQNetwork(nn.Module):
         
         self.reset_parameters()
 
+        self.eval()
+
 
     def reset_parameters(self):
         self.state_projector.apply(init_weights)

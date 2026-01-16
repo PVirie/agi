@@ -56,6 +56,8 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
         b_masks = torch.ones(batch_size, sequence_size).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
 
+        self.policy_model.train()
+
         b_inds = np.arange(batch_size)
         for epoch in range(self.update_epochs):
             np.random.shuffle(b_inds)
@@ -86,3 +88,4 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
                 nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
+        self.policy_model.eval()

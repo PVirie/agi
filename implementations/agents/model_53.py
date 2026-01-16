@@ -80,9 +80,6 @@ class Model_53(Agent):
         self.last_truncates = []
         self.last_idles = []
 
-        self.policy_model.eval()
-        self.value_model.eval()
-
         self.thought_steps = None
 
 
@@ -173,9 +170,6 @@ class Model_53(Agent):
         # if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
         if force_train and current_cl > 1:
             
-            self.policy_model.train()
-            self.value_model.train()
-
             if self.do_supervision:
                 # learn Supervise content
 
@@ -221,9 +215,6 @@ class Model_53(Agent):
             self.last_truncates = self.last_truncates[left_over_slide]
             self.last_idles = self.last_idles[left_over_slide]
             self.last_dones = self.last_dones[left_over_slide]
-
-            self.policy_model.eval()
-            self.value_model.eval()
 
 
         # Choose a random action

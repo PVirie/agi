@@ -31,6 +31,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
         self.reset_parameters()
         self.load()
+        self.eval()
 
 
     def reset_parameters(self):
