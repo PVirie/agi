@@ -59,52 +59,43 @@ class PPO(RL_Learner, Safe_nn_Module):
               valid_actions: Any = None, masks: Any = None):
         """
         obs: np array of shape (batch_size, context_length + 1, ...)
-        note that obs includes the last next_obs for computing the last value
-        actions: np array of shape (batch_size, context_length, ...)
+        actions: np array of shape (batch_size, context_length + 1, ...)
         rewards: list (context_length) of np array of shape (batch_size)
         next_dones: list (context_length) of bools of length batch_size
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
+
+        note that obs and actions include the context length + 1 items for computing the transition
         """
         # Use dim 0 as context length dimension
-        b_obs = convert_np_array_to_float_tensor(obs[:, :-1, ...], self.device)
-        b_obs_last = convert_np_array_to_float_tensor(obs[:, -1:, ...], self.device)
+        b_obs = convert_np_array_to_float_tensor(obs, self.device)
         b_actions = convert_np_array_to_float_tensor(actions, self.device)
         b_rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
         b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
 
-        batch_size = b_actions.shape[0]
-        sequence_size = b_actions.shape[1]
+        batch_size = b_rewards.shape[0]
+        sequence_size = b_rewards.shape[1]
 
         with torch.no_grad():
-            # Get old log probabilities and values
-            # logprobs, _ = self.policy_model.get_log_probability(
-            #     context=b_obs, 
-            #     action=b_actions,
-            #     valid_actions=b_valid_actions
-            # )
-            # values_with_last = self.value_model.get_value(torch.cat([b_obs, b_obs_last], dim=1))
-
-            # the last section consume too much v_ram, need to split into minibatches
             logprobs_list = []
             values_with_last_list = []
             for start in range(0, batch_size, self.minibatch_size):
                 end = start + self.minibatch_size
                 mb_obs = b_obs[start:end, ...]
-                mb_obs_last = b_obs_last[start:end, ...]
                 mb_actions = b_actions[start:end, ...]
                 mb_valid_actions = b_valid_actions[start:end, ...] if b_valid_actions is not None else None
 
                 mb_logprob, _ = self.policy_model.get_log_probability(
-                    context=mb_obs, 
-                    action=mb_actions,
-                    valid_actions=mb_valid_actions
+                    context=mb_obs[:, :-1, ...],
+                    action=mb_actions[:, :-1, ...],
+                    valid_actions=mb_valid_actions,
+                    target_action=mb_actions[:, 1:, ...]
                 )
                 logprobs_list.append(mb_logprob)
 
-                mb_values = self.value_model.get_value(torch.cat([mb_obs, mb_obs_last], dim=1))
+                mb_values = self.value_model.get_value(mb_obs)
                 values_with_last_list.append(mb_values)
 
             logprobs = torch.cat(logprobs_list, dim=0)
@@ -143,14 +134,15 @@ class PPO(RL_Learner, Safe_nn_Module):
                 if torch.sum(mb_masks) < 1e-8:
                     continue
 
-                mb_obs = b_obs[mb_inds, ...]
+                mb_obs = b_obs[mb_inds, :-1, ...]
                 mb_actions = b_actions[mb_inds, ...]
                 mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
 
                 mb_newlogprob, mb_entropy = self.policy_model.get_log_probability(
-                    context=mb_obs, 
-                    action=mb_actions,
-                    valid_actions=mb_valid_actions
+                    context=mb_obs,
+                    action=mb_actions[:, :-1, ...],
+                    valid_actions=mb_valid_actions,
+                    target_action=mb_actions[:, 1:, ...]
                 )
                 mb_newvalue = self.value_model.get_value(mb_obs)
                 

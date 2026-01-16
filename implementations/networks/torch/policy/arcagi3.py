@@ -100,11 +100,6 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         if action is None:
             action = torch.zeros((context.size(0), context.size(1), self.packed_action_size), dtype=torch.float32).to(self.device)
         elif isinstance(action, np.ndarray):
-            if action.shape[1] < context.shape[1]:
-                # left pad action with zeros
-                pad_size = context.shape[1] - action.shape[1]
-                pad_action = np.zeros((action.shape[0], pad_size, action.shape[2]), dtype=action.dtype)
-                action = np.concatenate([pad_action, action], axis=1)
             action = torch.tensor(action, dtype=torch.float32).to(self.device)
 
         available_flags = None

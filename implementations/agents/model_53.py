@@ -80,8 +80,6 @@ class Model_53(Agent):
         self.last_truncates = []
         self.last_idles = []
 
-        self.last_position = None
-
         self.policy_model.eval()
         self.value_model.eval()
 
@@ -103,6 +101,9 @@ class Model_53(Agent):
                 np.zeros((batch_size, 1), dtype=np.float32), 
                 np.zeros((batch_size, self.policy_model.content_size), dtype=np.float32)
             )
+            self.actions.append(
+                np.zeros((batch_size, self.policy_model.packed_action_size), dtype=np.float32)
+            )
             self.rewards.append(
                 np.zeros((batch_size,), dtype=np.float32)
             )
@@ -113,8 +114,7 @@ class Model_53(Agent):
             self.last_truncates.append([True for _ in range(batch_size)])
             self.last_idles.append([False for _ in range(batch_size)])
             self.last_dones.append([False for _ in range(batch_size)])
-
-            self.last_position = np.zeros((batch_size, self.policy_model.position_size), dtype=np.float32)
+        
         for i, (idle, d, t) in enumerate(zip(last_idles, last_dones, last_truncates)):
             if d or t:
                 self.thought_steps[i] = 0
@@ -146,14 +146,28 @@ class Model_53(Agent):
             make_valid_mask(next_available_actions, self.policy_model.action_size)
         )
 
+        # get last action's position
+        last_action = self.actions.get_last()
+        last_int, last_ext, last_position, _ = self.policy_model.unpack_action(last_action)
+
         # cache new observation into memory
         self.memory.operate(
             tuple_record=(
                 np.reshape(reward, (-1, 1)), 
-                self.last_position,
+                last_position,
                 content
             ), 
             operation=memory_action
+        )
+
+        # replace last action
+        self.actions.update_last(
+            self.policy_model.pack_action(
+                b_int=last_int,
+                b_ext=last_ext,
+                b_position=last_position,
+                b_content=content
+            )
         )
 
         # if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
@@ -165,15 +179,8 @@ class Model_53(Agent):
             if self.do_supervision:
                 # learn Supervise content
 
-                # make action format
-                recorded_obs = self.obs.make_batch(batch_led=True)[:, 1:, :]  # shape (batch_size, context_length, obs_size)
-                target_actions = np.concatenate([
-                    np.zeros((recorded_obs.shape[0], recorded_obs.shape[1], self.policy_model.packed_action_size - self.policy_model.content_size), dtype=np.float32),
-                    recorded_obs[:, :, 1:]  # content part
-                ], axis=-1)
-                
                 # masks has shape (batch_size, context_length)
-                masks = self.actions.make_mask(batch_led=True)
+                masks = self.actions.make_mask(batch_led=True)[:, :-1]
                 masks = apply_cascading_masks(
                     masks,
                     self.last_idles[1:],
@@ -183,8 +190,7 @@ class Model_53(Agent):
 
                 self.supervised_trainer.train(
                     obs=self.obs[:-1].make_batch(batch_led=True),
-                    actions=self.actions.make_batch(batch_led=True), 
-                    target_actions=target_actions,
+                    actions=self.actions.make_batch(batch_led=True),
                     valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                     masks=masks
                 )
@@ -192,7 +198,7 @@ class Model_53(Agent):
             # learn RL
 
             # masks has shape (batch_size, context_length)
-            masks = self.actions.make_mask(batch_led=True)
+            masks = self.actions.make_mask(batch_led=True)[:, :-1]
             # need to shift last_truncates by 1 to the left, because t signals whether t-1 is truncated
             masks = apply_cascading_masks(masks, self.last_truncates[1:])
 
@@ -208,9 +214,8 @@ class Model_53(Agent):
             # reset
             self.trainer.reset(time=0.0)
 
-            self.actions.mark()
-
             left_over_slide = self.obs.mark(skip_last=True)
+            self.actions.mark(skip_last=True)
             self.valid_actions.mark(skip_last=True)
             self.rewards = self.rewards[left_over_slide]
             self.last_truncates = self.last_truncates[left_over_slide]
@@ -278,7 +283,6 @@ class Model_53(Agent):
             operation=memory_action,
             index=memory_fetch_index
         )
-        self.last_position = position
 
         # off-policy warning: here we store the corrected action after memory fetch
         selected_actions = self.policy_model.pack_action(
@@ -289,14 +293,13 @@ class Model_53(Agent):
         )
         
         # store last states
-        self.actions.append(selected_actions)
-
         self.obs.append(reward, content)
-        self.rewards.append(reward)
+        self.actions.append(selected_actions)
         self.valid_actions.append(
             np.ones((batch_size, self.policy_model.flag_size), dtype=np.bool),
             np.ones((batch_size, self.policy_model.action_size), dtype=np.bool)
         )
+        self.rewards.append(reward)
         self.last_truncates.append([False for _ in range(batch_size)])
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         self.last_dones.append([False for _ in range(batch_size)])

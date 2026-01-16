@@ -41,11 +41,10 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
         self.optimizer.param_groups[0]["lr"] = lrnow
 
 
-    def train(self, obs: Any, actions: Any, target_actions: Any, valid_actions: Any = None, masks: Any = None):
+    def train(self, obs: Any, actions: Any, valid_actions: Any = None, masks: Any = None):
         """
         obs: np array of shape (batch_size, context_length, ...)
-        actions: np array of shape (batch_size, context_length, ...)
-        target_actions: np array of shape (batch_size, context_length, ...)
+        actions: np array of shape (batch_size, context_length + 1, ...)
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
         """
@@ -54,7 +53,6 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
 
         b_obs = convert_np_array_to_float_tensor(obs, self.device)
         b_actions = convert_np_array_to_float_tensor(actions, self.device)
-        b_target_actions = convert_np_array_to_float_tensor(target_actions, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
         b_masks = torch.ones(batch_size, sequence_size).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
 
@@ -68,7 +66,6 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
                 mb_obs = b_obs[mb_inds, ...]
                 mb_actions = b_actions[mb_inds, ...]
                 mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
-                mb_target_actions = b_target_actions[mb_inds, ...]
                 mb_masks = b_masks[mb_inds, ...]
 
                 if torch.sum(mb_masks) < 1e-8:
@@ -76,9 +73,9 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
 
                 mb_logprob, _ = self.policy_model.get_log_probability(
                     context=mb_obs, 
-                    action=mb_actions,
+                    action=mb_actions[:, :-1, ...],
                     valid_actions=mb_valid_actions,
-                    target_action=mb_target_actions
+                    target_action=mb_actions[:, 1:, ...]
                 )
 
                 # now attempt to minimize negative log likelihood
