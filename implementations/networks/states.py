@@ -42,7 +42,7 @@ class State_Sequence(Context_Collector):
         for key in kwargs:
             all_args.append(kwargs[key])
 
-        self.data[-1] =  np.concatenate(all_args, axis=1)
+        self.data[-1] = np.concatenate(all_args, axis=1)
 
 
     def get_last(self):

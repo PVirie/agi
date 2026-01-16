@@ -17,7 +17,7 @@ from ale_py.vector_env import AtariVectorEnv
 # Create a vector environment with 4 parallel instances of Breakout
 envs = AtariVectorEnv(
     game="pong",  # The ROM id not name, i.e., camel case compared to `gymnasium.make` name versions
-    num_envs=4,
+    num_envs=8,
     img_height=64,           # Height to resize frames to
     img_width=32,            # Width to resize frames to
     maxpool=True,               # 1. Solves "Invisibility" (Flickering)

@@ -44,6 +44,8 @@ async def run(env, agent, rollout_length=16):
     last_reset = [False for _ in observations]
 
     total_scores = [0 for _ in observations]
+    session_score_stat = 0
+    session_score_update_alpha = 0.95
     start_time = time.perf_counter()
     steps = 0
     while True:
@@ -71,18 +73,19 @@ async def run(env, agent, rollout_length=16):
         last_truncated = [truncations[i] for i in range(len(observations))]
         last_reset = [False for _ in observations]
 
-        total_scores = [
-            total_scores[i] + rewards[i].item() for i in range(len(observations))
-        ]
+        for i in range(len(observations)):
+            total_scores[i] += rewards[i].item()
+            if terminations[i] or truncations[i]:
+                session_score_stat = session_score_update_alpha * total_scores[i] + (1 - session_score_update_alpha) * session_score_stat
+                total_scores[i] = 0
 
         steps += 1
         if any([r != 0 for r in rewards]):
             logging.info(f"{steps}| Rewards: {rewards}")
 
         if steps % (rollout_length * 4) == 0 or should_stop:
-            logging.info(f"{steps}| Scores: {total_scores}")
+            logging.info(f"{steps}| Session score stat: {session_score_stat}")
             logging.info(f"{steps}| Selected actions: {actions}")
-            total_scores = [0 for _ in observations]
 
             # save 
             policy_core.save()
@@ -162,9 +165,10 @@ if __name__ == "__main__":
         history_steps = 0
         layers = 2
         hidden_size = 32
-        conv_layers = [16, 32, 64, 128] # basic impala
+        conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 2
+        position_size = 1
     elif args.scale == "medium":
         history_steps = 8
         layers = 4
@@ -172,6 +176,7 @@ if __name__ == "__main__":
         conv_layers = [16, 32, 64, 128, 256] # medium impala
         rollout_length = 128
         minibatch_size = 4
+        position_size = 16
     else:  # large
         history_steps = 16
         layers = 6
@@ -179,18 +184,19 @@ if __name__ == "__main__":
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 128
         minibatch_size = 4
+        position_size = 64
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Atari_Core(
-        action_size=6, position_size=16,
+        action_size=6, position_size=position_size,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        action_size=6, position_size=16,
+        action_size=6, position_size=position_size,
         width=32, height=64, channel=4,
         layers=conv_layers,
         device=device, persistence_path=parameters_path
@@ -204,7 +210,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Memory(
-        sizes=(1, 16, policy_core.content_size),
+        sizes=(1, position_size, policy_core.content_size),
         max_slot_size=256
     )
     model_53_agent = model_53.Model_53(

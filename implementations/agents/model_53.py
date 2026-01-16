@@ -128,7 +128,7 @@ class Model_53(Agent):
             if not idle:
                 # update only reward and content
                 update_mask[i, 0] = 1.0
-                update_mask[i, 1 + self.policy_model.position_size:] = 1.0
+                update_mask[i, (1 + self.policy_model.position_size):] = 1.0
                 memory_action[i] = Memory_Operation_Type.CACHE
             self.last_truncates[-1][i] = t
             self.last_idles[-1][i] = idle

@@ -33,7 +33,7 @@ class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         # feature always has size 32
         self.temporal_unet = TemporalUNet(
-            n_channels=channel, vec_dim=1 + position_size, num_temporal_layers=layers, 
+            n_channels=channel, vec_dim=1 + position_size, num_temporal_layers=layers, hidden_dim=hidden_size,
             bilinear=True, history_steps=history_steps, max_temporal_len=max_temporal_len)
 
         self.head_flag = nn.Sequential(
@@ -263,8 +263,8 @@ class Action_Projector:
     
     def get_log_probability(self, context, action, valid_actions=None, target_action=None):
         all_logprobs, all_entropy = self.master_core.get_log_probability(context, action, valid_actions, target_action)
-        log_probs = all_logprobs[:, :, [0, 1]].sum(dim=-1)  # sum over selected logprob components
-        entropy = all_entropy[:, :, [0, 1]].sum(dim=-1)
+        log_probs = all_logprobs[:, :, [0, 1, 3]].sum(dim=-1)  # sum over selected logprob components
+        entropy = all_entropy[:, :, [0, 1, 3]].sum(dim=-1)
         return log_probs, entropy
     
     
