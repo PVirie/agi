@@ -193,14 +193,14 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         action_content = target_action[:, :, 4 + self.position_size:]
 
         # make one hot encoding for action, location
-        action_onehot = torch.nn.functional.one_hot(action_action.long(), num_classes=self.action_size).float()
+        action_onehot = torch.nn.functional.one_hot(action_action, num_classes=self.action_size).float()
         logits_position = self.position_step(torch.concat([last_position, action_onehot], dim=-1))
         props_position = Bernoulli(probs=logits_position)
 
-        log_prob_flag = props_flag.log_prob(action_flag.long())
-        log_prob_action = props_action.log_prob(action_action.long())
-        log_prob_x = props_x.log_prob(action_x.long())
-        log_prob_y = probs_y.log_prob(action_y.long())
+        log_prob_flag = props_flag.log_prob(action_flag)
+        log_prob_action = props_action.log_prob(action_action)
+        log_prob_x = props_x.log_prob(action_x)
+        log_prob_y = probs_y.log_prob(action_y)
         log_prob_position = props_position.log_prob(current_position).mean(-1)
         log_prob_content = props_content.log_prob(action_content).mean(-1)
         
@@ -248,9 +248,9 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
             raise ValueError("At least one of b_int, b_ext, b_content must be provided")
         
         if b_int is None:
-            b_int = np.zeros((batch_size,), dtype=int)
+            b_int = np.zeros((batch_size,), dtype=float)
         if b_ext is None:
-            b_ext = np.zeros((batch_size, 3), dtype=int)
+            b_ext = np.zeros((batch_size, 3), dtype=float)
         if b_position is None:
             b_position = np.zeros((batch_size, self.position_size), dtype=float)
         if b_content is None:

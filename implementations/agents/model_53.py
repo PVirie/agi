@@ -231,7 +231,6 @@ class Model_53(Agent):
         return_action = [None for _ in range(batch_size)]
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         memory_fetch_index = [-1 for _ in range(batch_size)]
-        selected_int_action = np.zeros((batch_size,), dtype=int)
         for i in range(batch_size):
             flag = int_action[i].item()
             self.thought_steps[i] += 1
@@ -240,29 +239,23 @@ class Model_53(Agent):
                 return_action[i] = ext_action[i]
                 self.thought_steps[i] = 0
                 memory_action[i] = Memory_Operation_Type.IDLE
-                selected_int_action[i] = 0
             else:
                 if self.use_memory:
                     if flag == 1:
                         memory_action[i] = Memory_Operation_Type.IDLE
-                        selected_int_action[i] = 1
                     elif flag == 2:
                         # position based retrieve
                         memory_action[i] = Memory_Operation_Type.FETCH
                         memory_fetch_index[i] = 1
-                        selected_int_action[i] = 2
                     elif flag == 3:
                         # content based retrieve
                         memory_action[i] = Memory_Operation_Type.FETCH
                         memory_fetch_index[i] = 2
-                        selected_int_action[i] = 3
                     elif flag == 4:
                         # record node
                         memory_action[i] = Memory_Operation_Type.CACHE
-                        selected_int_action[i] = 4
                 else:
                     memory_action[i] = Memory_Operation_Type.IDLE
-                    selected_int_action[i] = 1
 
 
         reward, position, content = self.memory.operate(
@@ -277,7 +270,7 @@ class Model_53(Agent):
 
         # off-policy warning: here we store the corrected action after memory fetch
         selected_actions = self.policy_model.pack_action(
-            b_int=selected_int_action,
+            b_int=int_action,
             b_ext=ext_action,
             b_position=position,
             b_content=content

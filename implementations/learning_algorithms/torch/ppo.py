@@ -123,7 +123,6 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.value_model.train()
 
         # Optimizing the policy and value network
-        clipfracs = []
         b_inds = np.arange(batch_size)
         for epoch in range(self.update_epochs):
             np.random.shuffle(b_inds)
@@ -153,14 +152,12 @@ class PPO(RL_Learner, Safe_nn_Module):
                 mb_newvalue = self.value_model.get_value(mb_obs)
                 
                 logratio = mb_newlogprob - mb_log_prob
-                logratio = torch.clamp(logratio, -10.0, 10.0)
                 ratio = logratio.exp()
 
                 with torch.no_grad():
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = masked_mean(-logratio, mb_masks)
                     approx_kl = masked_mean((ratio - 1) - logratio, mb_masks)
-                    clipfracs += [masked_mean(((ratio - 1.0).abs() > self.clip_coef).float(), mb_masks).item()]
 
                 if self.norm_adv and torch.numel(mb_advantages) > 1:
                     mb_adv_mean = masked_mean(mb_advantages, mb_masks)
@@ -191,8 +188,8 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.max_grad_norm)
-                nn.utils.clip_grad_norm_(self.value_model.parameters(), self.max_grad_norm)
+                all_parameters = list(self.policy_model.parameters()) + list(self.value_model.parameters())
+                nn.utils.clip_grad_norm_(all_parameters, self.max_grad_norm)
                 self.optimizer.step()
 
             if self.target_kl is not None and approx_kl > self.target_kl:
