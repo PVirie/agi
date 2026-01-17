@@ -42,15 +42,12 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 - [x] Penalize action without any effect
 - [x] Memory store reward
 - [x] Atari environment
-- [ ] RL baseline
-- [ ] Model 57: Mind and Hands
+- [x] RL baseline (With simple models, too complex models tend to have high variance and very slow learning.)
+- [ ] Algebra core
 - [ ] Model 53: Full cognitive ability
     - [ ] Use RL to select two observation modes
         - [ ] Jump to observed position
         - [ ] Override content at the predict position
-- [ ] Learning by example
-    - [ ] Record successful exploration and playback
-    - [ ] SAC Learner
 
 ## RL Environment Observation Handling: Standard vs. Vectorized
 
