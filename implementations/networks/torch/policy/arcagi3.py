@@ -180,7 +180,7 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         action_content = selected_action[:, :, 4 + self.position_size:]
 
         # make one hot encoding for action, location
-        action_onehot = torch.nn.functional.one_hot(action_action, num_classes=self.action_size).float()
+        action_onehot = torch.nn.functional.one_hot(action_action.long(), num_classes=self.action_size).float()
         logits_position = self.position_step(torch.concat([last_position, action_onehot], dim=-1))
         props_position = Bernoulli(probs=logits_position)
 

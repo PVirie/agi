@@ -65,7 +65,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
 
-        note that obs and last_actions include the context length + 1 items for computing the transition
+        Note that obs and last_actions include the context length + 1 items.
+        This corresponds to the observations after taking the last actions.
         """
         # Use dim 0 as context length dimension
         b_obs = convert_np_array_to_float_tensor(obs, self.device)

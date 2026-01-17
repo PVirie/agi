@@ -101,7 +101,7 @@ async def run(env, agent, rollout_length=16):
             break
 
         steps += 1
-        if steps % (rollout_length * 4) == 0 or has_event:
+        if steps % (rollout_length) == 0 or has_event:
             log_str = "; ".join([s.short_str() for s in states])
             logging.info(f"{steps}| States: [{log_str}]")
             logging.info(f"{steps}| Rewards: {[get_state_reward(s) for s in states]}")
