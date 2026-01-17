@@ -3,11 +3,11 @@ import abc
 class Policy_Network(abc.ABC):
     
     @abc.abstractmethod
-    def get_log_probability(self, context, action, valid_actions=None, target_action=None):
+    def get_log_probability(self, context, selected_action, valid_actions=None):
         pass
 
     @abc.abstractmethod
-    def get_action(self, context, action, valid_actions=None):
+    def get_action(self, context, valid_actions=None):
         pass
 
     @abc.abstractmethod
@@ -15,7 +15,7 @@ class Policy_Network(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def pack_action(self, b_int=None, b_ext=None, b_content=None):
+    def pack_context(self, b_reward=None, b_position=None, b_content=None):
         pass
 
 

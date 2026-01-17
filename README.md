@@ -33,24 +33,24 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 
 ## To do
 
--   [x] Implement core AGI algorithms
--   [x] Save and load model checkpoints
--   [x] Supervised learning module (Teacher forcing)
--   [x] Asynchronous external action handle
--   [x] External memory module
--   [x] Using available options to improve exploration
--   [x] Penalize action without any effect
--   [x] Memory store reward
--   [ ] Atari environment
--   [ ] RL baseline
--   [ ] Model 57: Mind and Hands
--   [ ] Model 53: Full cognitive ability
-    -   [ ] Use RL to select two observation modes
-        -   [ ] Jump to observed position
-        -   [ ] Override content at the predict position
--   [ ] Learning by example
-    -   [ ] Record successful exploration and playback
--   [ ] SAC Learner
+- [x] Implement core AGI algorithms
+- [x] Save and load model checkpoints
+- [x] Supervised learning module (Teacher forcing)
+- [x] Asynchronous external action handle
+- [x] External memory module
+- [x] Using available options to improve exploration
+- [x] Penalize action without any effect
+- [x] Memory store reward
+- [x] Atari environment
+- [ ] RL baseline
+- [ ] Model 57: Mind and Hands
+- [ ] Model 53: Full cognitive ability
+    - [ ] Use RL to select two observation modes
+        - [ ] Jump to observed position
+        - [ ] Override content at the predict position
+- [ ] Learning by example
+    - [ ] Record successful exploration and playback
+    - [ ] SAC Learner
 
 ## RL Environment Observation Handling: Standard vs. Vectorized
 
@@ -60,17 +60,17 @@ In Reinforcement Learning, handling the transition between episodes correctly is
 
 #### Standard Environments (e.g., `gymnasium.Env`)
 
--   **Mechanism:** "Stop and Wait."
--   **Behavior:** When `terminated` or `truncated` returns `True`, the environment pauses.
--   **Observation:** The `next_obs` returned is the **actual final state** of the episode (e.g., the frame where the agent died).
--   **Action:** The user must explicitly call `reset()` to begin the next episode.
+- **Mechanism:** "Stop and Wait."
+- **Behavior:** When `terminated` or `truncated` returns `True`, the environment pauses.
+- **Observation:** The `next_obs` returned is the **actual final state** of the episode (e.g., the frame where the agent died).
+- **Action:** The user must explicitly call `reset()` to begin the next episode.
 
 #### Vectorized Environments (e.g., `gymnasium.vector.VectorEnv`, `stable_baselines3.VecEnv`)
 
--   **Mechanism:** "Auto-Reset."
--   **Behavior:** To maintain a constant batch size for GPU efficiency, sub-environments cannot pause. The wrapper automatically resets any finished environment immediately within the same `step()`.
--   **Observation:** The `next_obs` returned is the **initial state (t=0)** of the _new_ episode.
--   **Action:** The user does not call reset. The **actual final state** of the old episode is moved to the `info` dictionary to prevent it from being overwritten.
+- **Mechanism:** "Auto-Reset."
+- **Behavior:** To maintain a constant batch size for GPU efficiency, sub-environments cannot pause. The wrapper automatically resets any finished environment immediately within the same `step()`.
+- **Observation:** The `next_obs` returned is the **initial state (t=0)** of the _new_ episode.
+- **Action:** The user does not call reset. The **actual final state** of the old episode is moved to the `info` dictionary to prevent it from being overwritten.
 
 ### 2. Comparison Matrix
 
@@ -133,6 +133,6 @@ final_loss.backward()
 
 ### References
 
--   [Basic gym interface](https://gymnasium.farama.org/introduction/basic_usage/)
--   [New standard Vector Environments](https://ale.farama.org/vector-environment/)
--   [Basic Vector Environments](https://stable-baselines3.readthedocs.io/en/master/guide/vec_envs.html)
+- [Basic gym interface](https://gymnasium.farama.org/introduction/basic_usage/)
+- [New standard Vector Environments](https://ale.farama.org/vector-environment/)
+- [Basic Vector Environments](https://stable-baselines3.readthedocs.io/en/master/guide/vec_envs.html)

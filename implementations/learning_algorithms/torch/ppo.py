@@ -54,22 +54,22 @@ class PPO(RL_Learner, Safe_nn_Module):
 
 
     def learn(self, 
-              obs: Any, actions: Any, rewards: List[Any], 
+              obs: Any, last_actions: Any, rewards: List[Any], 
               next_dones: List[List[bool]],
               valid_actions: Any = None, masks: Any = None):
         """
         obs: np array of shape (batch_size, context_length + 1, ...)
-        actions: np array of shape (batch_size, context_length + 1, ...)
+        last_actions: np array of shape (batch_size, context_length + 1, ...)
         rewards: list (context_length) of np array of shape (batch_size)
         next_dones: list (context_length) of bools of length batch_size
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
 
-        note that obs and actions include the context length + 1 items for computing the transition
+        note that obs and last_actions include the context length + 1 items for computing the transition
         """
         # Use dim 0 as context length dimension
         b_obs = convert_np_array_to_float_tensor(obs, self.device)
-        b_actions = convert_np_array_to_float_tensor(actions, self.device)
+        b_actions = convert_np_array_to_float_tensor(last_actions, self.device)
         b_rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
@@ -92,9 +92,8 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 mb_logprob, _ = self.policy_model.get_log_probability(
                     context=mb_obs[:, :-1, ...],
-                    action=mb_actions[:, :-1, ...],
+                    selected_action=mb_actions[:, 1:, ...],
                     valid_actions=mb_valid_actions,
-                    target_action=mb_actions[:, 1:, ...]
                 )
                 logprobs_list.append(mb_logprob)
 
@@ -140,14 +139,13 @@ class PPO(RL_Learner, Safe_nn_Module):
                     continue
 
                 mb_obs = b_obs[mb_inds, :-1, ...]
-                mb_actions = b_actions[mb_inds, ...]
+                mb_actions = b_actions[mb_inds, 1:, ...]
                 mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
 
                 mb_newlogprob, mb_entropy = self.policy_model.get_log_probability(
                     context=mb_obs,
-                    action=mb_actions[:, :-1, ...],
+                    selected_action=mb_actions,
                     valid_actions=mb_valid_actions,
-                    target_action=mb_actions[:, 1:, ...]
                 )
                 mb_newvalue = self.value_model.get_value(mb_obs)
                 

@@ -196,6 +196,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
+        position_size=position_size,
         width=32, height=64, channel=4,
         layers=conv_layers,
         device=device, persistence_path=parameters_path

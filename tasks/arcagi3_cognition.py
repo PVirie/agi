@@ -174,6 +174,7 @@ if __name__ == "__main__":
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 32
         minibatch_size = 16
+        position_size = 16
     elif args.scale == "medium":
         history_steps = 8
         layers = 4
@@ -181,6 +182,7 @@ if __name__ == "__main__":
         conv_layers = [16, 32, 64, 64] # medium impala
         rollout_length = 32
         minibatch_size = 4
+        position_size = 16
     else:  # large
         history_steps = 16
         layers = 6
@@ -188,17 +190,19 @@ if __name__ == "__main__":
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 32
         minibatch_size = 2
+        position_size = 16
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = ARCAGI3_Core(
-        action_size=7, position_size=16,
+        action_size=7, position_size=position_size,
         width=64, height=64, channel=4,
         hidden_size=hidden_size, layers=layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
+        position_size=position_size,
         width=64, height=64, channel=4,
         layers=conv_layers,
         device=device, persistence_path=parameters_path
@@ -212,7 +216,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Memory(
-        sizes=(1, 16, policy_core.content_size),
+        sizes=(1, position_size, policy_core.content_size),
         max_slot_size=256
     )
     model_53_agent = model_53.Model_53(

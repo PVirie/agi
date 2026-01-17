@@ -74,10 +74,9 @@ class Basic_Learner(Supervised_Learner, Safe_nn_Module):
                     continue
 
                 mb_logprob, _ = self.policy_model.get_log_probability(
-                    context=mb_obs, 
-                    action=mb_actions[:, :-1, ...],
+                    context=mb_obs,
+                    selected_action=mb_actions[:, 1:, ...],
                     valid_actions=mb_valid_actions,
-                    target_action=mb_actions[:, 1:, ...]
                 )
 
                 # now attempt to minimize negative log likelihood
