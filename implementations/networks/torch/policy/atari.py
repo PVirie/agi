@@ -34,7 +34,7 @@ class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         # feature always has size 32
         self.temporal_unet = TemporalUNet(
-            n_channels=channel, vec_dim=1 + position_size, num_temporal_layers=layers, hidden_dim=hidden_size,
+            n_channels=channel, vec_dim=1 + position_size, hidden_dim=hidden_size,
             bilinear=True, history_steps=history_steps, max_temporal_len=max_temporal_len)
 
         self.head_flag = nn.Sequential(

@@ -169,7 +169,7 @@ if __name__ == "__main__":
 
     if args.scale == "small":
         history_steps = 1
-        layers = 2
+        layers = 1
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 32
@@ -177,7 +177,7 @@ if __name__ == "__main__":
         position_size = 16
     elif args.scale == "medium":
         history_steps = 8
-        layers = 4
+        layers = 1
         hidden_size = 128
         conv_layers = [16, 32, 64, 64] # medium impala
         rollout_length = 32
@@ -185,7 +185,7 @@ if __name__ == "__main__":
         position_size = 16
     else:  # large
         history_steps = 16
-        layers = 6
+        layers = 1
         hidden_size = 256
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 32

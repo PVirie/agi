@@ -1,16 +1,9 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.distributions.normal import Normal
-from torch.distributions.categorical import Categorical
-from torch.distributions import Bernoulli
-import numpy as np
-import logging
 import copy
 
 from interfaces.network import Q_Network
-from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask
-from implementations.networks.torch.components.conv_resnet import ResNet, Bottleneck, Block
+from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.std_conv import ImpalaCNN
 from utilities.safe_torch_module import Safe_nn_Module
 

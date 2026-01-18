@@ -276,7 +276,6 @@ if __name__ == "__main__":
     output_ed = model_ed(src_emb, tgt_emb, src_pad_mask=src_pad_mask, tgt_pad_mask=tgt_pad_mask)
     assert output_ed.shape == (2, 12, 256)
 
-
     # test full mask
     mask = nn.Transformer.generate_square_subsequent_mask(5, device=device)
     mask2 = MaskGenerationMixin(history_steps=2)._generate_structural_mask(5, device=device)
@@ -290,3 +289,15 @@ if __name__ == "__main__":
     print("Mask generation successful.")
 
 
+    # now test whether relative position embeddings do not change output values at different positions
+    history_steps = 2
+    data = torch.randn(1, 8 + history_steps * 2, 16).to(device)
+    shifted_data = torch.roll(data, shifts=history_steps, dims=1)
+    # 0 < history_steps < inf only work for one layer, because higher layer expand the receptive field
+    model_test = RoPEDecoderOnly(d_model=16, history_steps=history_steps, num_layers=1).to(device)
+    # stop undeterminism by setting model to eval
+    model_test.eval()
+    out1 = model_test(data)[:, history_steps:(data.shape[1]-history_steps), :]
+    out2 = model_test(shifted_data)[:, (2*history_steps):, :]
+    assert torch.allclose(out1, out2, atol=1e-4)
+    print("Relative position embeddings test successful.")

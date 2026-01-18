@@ -6,21 +6,34 @@ from implementations.networks.torch.components.rope import RoPEDecoderOnly
 from implementations.networks.torch.components.base import init_weights
 
 
+# instead use DoubleConv in Impala style (without BatchNorm and residuals)
 class DoubleConv(nn.Module):
-    """(convolution => [BN] => ReLU) * 2"""
+    """
+    A single block of the IMPALA architecture.
+    Structure: Conv -> MaxPool -> ResBlock -> ResBlock
+    """
     def __init__(self, in_channels, out_channels, mid_channels=None):
-        super().__init__()
-        if not mid_channels:
-            mid_channels = out_channels
-        self.double_conv = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False, padding_mode='reflect'),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False, padding_mode='reflect'),
-            nn.ReLU(inplace=True)
+        super(DoubleConv, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.res1 = self._build_res_pair(out_channels)
+        self.res2 = self._build_res_pair(out_channels)
+        self.norm = nn.BatchNorm2d(out_channels)
+
+
+    def _build_res_pair(self, channels):
+        return nn.Sequential(
+            nn.ReLU(),
+            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         )
 
     def forward(self, x):
-        return self.double_conv(x)
+        x = self.conv(x)
+        x = x + self.res1(x)
+        x = x + self.res2(x)
+        x = self.norm(x)
+        return x        
 
 
 class Down(nn.Module):
@@ -61,7 +74,7 @@ class Up(nn.Module):
 
 
 class TemporalUNet(nn.Module):
-    def __init__(self, n_channels=1, vec_dim=128, num_temporal_layers=2, hidden_dim=32, bilinear=True, history_steps=8, max_temporal_len=32):
+    def __init__(self, n_channels=1, vec_dim=128, hidden_dim=32, bilinear=True, history_steps=8, max_temporal_len=32):
         super(TemporalUNet, self).__init__()
         self.n_channels = n_channels
         self.vec_dim = vec_dim
@@ -70,7 +83,7 @@ class TemporalUNet(nn.Module):
         # --- Config for Arbitrary Input Support ---
         # We force the bottleneck to be 4x4 so the Linear layers work 
         # regardless of the actual input image aspect ratio or size.
-        self.bottleneck_size = 2
+        self.bottleneck_size = 4
 
         f1 = n_channels * 4
         f2 = n_channels * 8
@@ -86,26 +99,25 @@ class TemporalUNet(nn.Module):
         factor = 2 if bilinear else 1
         self.down4 = Down(f4, f5 // factor)
 
-        # Flat feature projector
-        self.temporal_proj = nn.Linear(vec_dim, hidden_dim)
-
         # --- Temporal Bottleneck ---
         self.bottleneck_channels = f5 // factor
         
         # Fixed size feature map for Transformer (C * 4 * 4)
         self.flat_features = self.bottleneck_channels * self.bottleneck_size * self.bottleneck_size
-        self.attn_input_dim = self.flat_features + hidden_dim
-        
+
+        # projectors
+        self.flat_feature_proj = nn.Linear(self.flat_features, hidden_dim)
+        self.temporal_proj = nn.Linear(vec_dim, hidden_dim)
+        self.backward_proj = nn.Linear(hidden_dim, self.flat_features)
+
         self.temporal_attn = RoPEDecoderOnly(
-            d_model=self.attn_input_dim, 
-            num_heads=8, 
-            num_layers=num_temporal_layers, 
-            d_ff=1024, 
+            d_model=hidden_dim,
+            num_heads=max(8, hidden_dim // 64),
+            num_layers=1, # can only use 1 layer to not violate history constraint
+            d_ff=hidden_dim * 2, 
             dropout=0.1, 
             history_steps=history_steps
         )
-
-        self.fusion = nn.Linear(self.attn_input_dim, self.flat_features)
 
         # --- Decoder ---
         self.up_c_1 = Up(self.bottleneck_channels, f4 // factor, f4, bilinear)
@@ -121,7 +133,7 @@ class TemporalUNet(nn.Module):
 
         self.out_features = hidden_dim
         self.head_feature = nn.Sequential(
-            nn.Linear(self.flat_features, self.out_features),
+            nn.Linear(hidden_dim, self.out_features),
             nn.LayerNorm(self.out_features),
             nn.ReLU()
         )
@@ -178,14 +190,15 @@ class TemporalUNet(nn.Module):
         # 2. Flatten spatial dims
         flat_x5 = x5_pooled.reshape(B, T, -1) # [B, T, flat_features]
         
+        projected_x5 = self.flat_feature_proj(flat_x5)  # [B, T, hidden_dim]
         projected_v = self.temporal_proj(v) # [B, T, hidden_dim]
-        combined = torch.cat([flat_x5, projected_v], dim=2)
+        combined = projected_x5 + projected_v  # [B, T, flat_features] -> broadcast add
 
         # 3. Pass through Transformer
         attn_out = self.temporal_attn(combined)
         
         # 4. Fuse and Reshape
-        fused = self.fusion(attn_out.reshape(B * T, -1)) # [B*T, flat_features]
+        fused = self.backward_proj(attn_out.reshape(B * T, -1)) # [B*T, flat_features]
         x4_small = fused.reshape(B * T, self.bottleneck_channels, self.bottleneck_size, self.bottleneck_size)
         
         # 5. Interpolate back to original bottleneck spatial size (H/16, W/16)
@@ -198,7 +211,7 @@ class TemporalUNet(nn.Module):
         xc1_ = self.up_c_3(xc2_, x2)
         xc_features = self.up_c_4(xc1_, x1) # [B*T, C, H, W]
         
-        sampled_features = self.head_feature(fused) # [B*T, out_features]
+        sampled_features = self.head_feature(attn_out) # [B*T, out_features]
 
         xh3_ = self.up_h_1(x4_, x4)
         xh2_ = self.up_h_2(xh3_, x3)
@@ -228,7 +241,7 @@ class TemporalUNet(nn.Module):
 
 if __name__ == "__main__":
     # max_temporal_len defaults to 32, we pass 32 to be explicit or test with it.
-    model = TemporalUNet(n_channels=3, vec_dim=128, num_temporal_layers=2, hidden_dim=16, bilinear=True, history_steps=2, max_temporal_len=32)
+    model = TemporalUNet(n_channels=3, vec_dim=128, hidden_dim=16, bilinear=True, history_steps=2, max_temporal_len=32)
     img = torch.randn(2, 5, 3, 64, 32)
     vec = torch.randn(2, 5, 128)
     
