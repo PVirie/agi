@@ -168,10 +168,10 @@ if __name__ == "__main__":
     random_agent = random_agent.Random_Agent("01")
 
     if args.scale == "small":
-        history_steps = 1
+        history_steps = 8
         layers = 1
         hidden_size = 64
-        conv_layers = [16, 32, 32] # basic impala
+        conv_layers = [64, 64, 64] # basic impala
         rollout_length = 32
         minibatch_size = 16
         position_size = 16
@@ -179,17 +179,17 @@ if __name__ == "__main__":
         history_steps = 8
         layers = 1
         hidden_size = 128
-        conv_layers = [16, 32, 64, 64] # medium impala
+        conv_layers = [64, 64, 64, 64] # medium impala
         rollout_length = 32
-        minibatch_size = 4
+        minibatch_size = 16
         position_size = 16
     else:  # large
         history_steps = 16
         layers = 1
         hidden_size = 256
-        conv_layers = [32, 64, 128, 128, 256, 256] # large impala
+        conv_layers = [64, 64, 128, 128, 256, 256] # large impala
         rollout_length = 32
-        minibatch_size = 2
+        minibatch_size = 16
         position_size = 16
 
     parameters_path = f"{experiment_path}/parameters"
