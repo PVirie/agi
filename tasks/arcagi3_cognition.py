@@ -46,7 +46,7 @@ def get_state_reward(state: Game_State) -> int:
             reward = -0.1 # small penalty for action that causes looping
     else:
         reward = 0
-    return reward - 0.01  # small step penalty
+    return reward
     
 
 async def run(env, agent, rollout_length=16):
@@ -107,6 +107,7 @@ async def run(env, agent, rollout_length=16):
             logging.info(f"{steps}| Rewards: {[get_state_reward(s) for s in states]}")
             logging.info(f"{steps}| Selected actions: {actions}")
 
+        if steps % (rollout_length) == 0:
             # save 
             policy_core.save()
             value_core.save()
@@ -168,28 +169,28 @@ if __name__ == "__main__":
     random_agent = random_agent.Random_Agent("01")
 
     if args.scale == "small":
-        history_steps = 8
+        history_steps = 1
         layers = 1
         hidden_size = 64
         conv_layers = [64, 64, 64] # basic impala
         rollout_length = 32
-        minibatch_size = 16
-        position_size = 16
+        minibatch_size = 9
+        position_size = 1
     elif args.scale == "medium":
-        history_steps = 8
+        history_steps = 3
         layers = 1
         hidden_size = 128
         conv_layers = [64, 64, 64, 64] # medium impala
         rollout_length = 32
-        minibatch_size = 16
+        minibatch_size = 9
         position_size = 16
     else:  # large
-        history_steps = 16
+        history_steps = 7
         layers = 1
         hidden_size = 256
         conv_layers = [64, 64, 128, 128, 256, 256] # large impala
         rollout_length = 32
-        minibatch_size = 16
+        minibatch_size = 9
         position_size = 16
 
     parameters_path = f"{experiment_path}/parameters"

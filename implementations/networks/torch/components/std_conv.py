@@ -21,9 +21,9 @@ class ImpalaBlock(nn.Module):
 
     def _build_res_pair(self, channels):
         return nn.Sequential(
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         )
 
@@ -56,20 +56,20 @@ class ImpalaCNN(nn.Module):
             self.layers.append(ImpalaBlock(current_channels, depth))
             current_channels = depth
             
-        self.relu = nn.ReLU()
+        self.activation = nn.GELU()
         
         # Calculate Flatten Dim dynamically
         with torch.no_grad():
             dummy = torch.zeros(1, input_channels, height, width)
             for layer in self.layers:
                 dummy = layer(dummy)
-            dummy = self.relu(dummy)
+            dummy = self.activation(dummy)
             self.flatten_dim = dummy.reshape(1, -1).size(1)
             
         # Final fully connected layer to output_dims (standard in IMPALA paper)
         self.fc = nn.Sequential(
             nn.Linear(self.flatten_dim, output_dims),
-            nn.ReLU()
+            nn.GELU()
         )
 
     
@@ -82,7 +82,7 @@ class ImpalaCNN(nn.Module):
         for layer in self.layers:
             x = layer(x)
         
-        x = self.relu(x)
+        x = self.activation(x)
         x = torch.flatten(x, start_dim=1)
         x = self.fc(x)
         return x

@@ -6,7 +6,7 @@ from implementations.networks.torch.components.rope import RoPEDecoderOnly
 from implementations.networks.torch.components.base import init_weights
 
 
-# instead use DoubleConv in Impala style (without BatchNorm and residuals)
+# instead use DoubleConv in Impala style
 class DoubleConv(nn.Module):
     """
     A single block of the IMPALA architecture.
@@ -14,18 +14,18 @@ class DoubleConv(nn.Module):
     """
     def __init__(self, in_channels, out_channels, mid_channels=None):
         super(DoubleConv, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, padding_mode='reflect')
         self.res1 = self._build_res_pair(out_channels)
         self.res2 = self._build_res_pair(out_channels)
-        self.norm = nn.BatchNorm2d(out_channels)
+        self.norm = nn.GroupNorm(num_groups=8, num_channels=out_channels)
 
 
     def _build_res_pair(self, channels):
         return nn.Sequential(
-            nn.ReLU(),
-            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+            nn.GELU(),
+            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, padding_mode='reflect'),
+            nn.GELU(),
+            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, padding_mode='reflect')
         )
 
     def forward(self, x):
@@ -133,18 +133,21 @@ class TemporalUNet(nn.Module):
 
         self.out_features = hidden_dim
         self.head_feature = nn.Sequential(
-            nn.Linear(hidden_dim, self.out_features),
-            nn.LayerNorm(self.out_features),
-            nn.ReLU()
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, self.out_features)
         )
         self.head_heatmap = nn.Sequential(
             nn.Conv2d(f1, hidden_dim, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
+            nn.GELU(),
             nn.Conv2d(hidden_dim, 1, kernel_size=1)
         )
         self.head_content = nn.Sequential(
             nn.Conv2d(f1, hidden_dim, kernel_size=3, padding=1),
-            nn.ReLU(),
+            nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
+            nn.GELU(),
             nn.Conv2d(hidden_dim, n_channels, kernel_size=1)
         )
         

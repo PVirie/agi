@@ -31,7 +31,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.ent_coef = 0.01
         self.vf_coef = 0.5
         self.max_grad_norm = 0.5
-        self.target_kl = None
+        self.target_kl = 0.01
 
         self.update_epochs = 4
         self.minibatch_size = minibatch_size

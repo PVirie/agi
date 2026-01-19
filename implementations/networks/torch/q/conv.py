@@ -17,21 +17,21 @@ class ParametricImpalaQNetwork(nn.Module):
         
         self.state_projector = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU()
+            nn.GELU()
         )
 
         # B. Action Encoder
         self.action_encoder = nn.Sequential(
             nn.Linear(action_feature_dim, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU()
+            nn.GELU()
         )
         
         # C. Scorer (Interaction Head)
         self.scorer = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, 1) # Scalar Q-value
         )
         

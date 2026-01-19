@@ -35,7 +35,6 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 
 - [x] Implement core AGI algorithms
 - [x] Save and load model checkpoints
-- [x] Supervised learning module (Teacher forcing)
 - [x] Asynchronous external action handle
 - [x] External memory module
 - [x] Using available options to improve exploration
@@ -43,6 +42,7 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 - [x] Memory store reward
 - [x] Atari environment
 - [x] RL baseline (With simple models, too complex models tend to have high variance and very slow learning.)
+- [ ] Supervised learning auxiliary loss
 - [ ] Algebra core
 - [ ] Model 53: Full cognitive ability
     - [ ] Use RL to select two observation modes
@@ -133,3 +133,7 @@ final_loss.backward()
 - [Basic gym interface](https://gymnasium.farama.org/introduction/basic_usage/)
 - [New standard Vector Environments](https://ale.farama.org/vector-environment/)
 - [Basic Vector Environments](https://stable-baselines3.readthedocs.io/en/master/guide/vec_envs.html)
+
+## Normalization Techniques in Reinforcement Learning
+
+Most RL models predict not only action values but also their distributions. To encourage sampling, it's common to use normalization layers to prevent the model from collapsing to a sharp peak.
