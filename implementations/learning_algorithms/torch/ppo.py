@@ -22,16 +22,16 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.value_model = value_model
         self.device = device
 
-        self.lr = 3e-4
+        self.lr = 2.5e-4
         self.gamma = 0.99
         self.gae_lambda = 0.95
         self.clip_coef = 0.2
         self.norm_adv = True
         self.clip_vloss = True
-        self.ent_coef = 0.01
+        self.ent_coef = 0.05
         self.vf_coef = 0.5
         self.max_grad_norm = 0.5
-        self.target_kl = 0.01
+        self.target_kl = None
 
         self.update_epochs = 4
         self.minibatch_size = minibatch_size
