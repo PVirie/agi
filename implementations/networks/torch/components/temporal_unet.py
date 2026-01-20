@@ -14,26 +14,26 @@ class DoubleConv(nn.Module):
     """
     def __init__(self, in_channels, out_channels, mid_channels=None):
         super(DoubleConv, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, padding_mode='reflect')
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.res1 = self._build_res_pair(out_channels)
         self.res2 = self._build_res_pair(out_channels)
-        self.norm = nn.GroupNorm(num_groups=2, num_channels=out_channels)
+        # self.norm = nn.GroupNorm(num_groups=4, num_channels=out_channels)
 
 
     def _build_res_pair(self, channels):
         return nn.Sequential(
             nn.GELU(),
-            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, padding_mode='reflect'),
+            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
             nn.GELU(),
-            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, padding_mode='reflect')
+            nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         )
 
     def forward(self, x):
         x = self.conv(x)
         x = x + self.res1(x)
         x = x + self.res2(x)
-        x = self.norm(x)
-        return x        
+        # x = self.norm(x)
+        return x
 
 
 class Down(nn.Module):
@@ -67,7 +67,7 @@ class Up(nn.Module):
         # Handle arbitrary sizes by padding x1 to match x2
         diffY = x2.size()[2] - x1.size()[2]
         diffX = x2.size()[3] - x1.size()[3]
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2], mode='reflect')
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
         
         x = torch.cat([x2, x1], dim=1)
         return self.conv(x)
@@ -140,13 +140,13 @@ class TemporalUNet(nn.Module):
         )
         self.head_heatmap = nn.Sequential(
             nn.Conv2d(f1, hidden_dim, kernel_size=3, padding=1),
-            nn.GroupNorm(num_groups=4, num_channels=hidden_dim),
+            nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
             nn.GELU(),
             nn.Conv2d(hidden_dim, 1, kernel_size=1)
         )
         self.head_content = nn.Sequential(
             nn.Conv2d(f1, hidden_dim, kernel_size=3, padding=1),
-            nn.GroupNorm(num_groups=4, num_channels=hidden_dim),
+            nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
             nn.GELU(),
             nn.Conv2d(hidden_dim, n_channels, kernel_size=1)
         )

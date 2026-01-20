@@ -289,15 +289,30 @@ if __name__ == "__main__":
     print("Mask generation successful.")
 
 
-    # now test whether relative position embeddings do not change output values at different positions
+    # test whether relative position embeddings do not change output values at different positions
     history_steps = 2
-    data = torch.randn(1, 8 + history_steps * 2, 16).to(device)
-    shifted_data = torch.roll(data, shifts=history_steps, dims=1)
     # 0 < history_steps < inf only work for one layer, because higher layer expand the receptive field
     model_test = RoPEDecoderOnly(d_model=16, history_steps=history_steps, num_layers=1).to(device)
     # stop undeterminism by setting model to eval
     model_test.eval()
+    data = torch.randn(1, 8 + history_steps * 2, 16).to(device)
+    shifted_data = torch.roll(data, shifts=history_steps, dims=1)
     out1 = model_test(data)[:, history_steps:(data.shape[1]-history_steps), :]
     out2 = model_test(shifted_data)[:, (2*history_steps):, :]
     assert torch.allclose(out1, out2, atol=1e-4)
     print("Relative position embeddings test successful.")
+
+
+    # test whether model not violate causality
+    model_causality = RoPEDecoderOnly(d_model=16, history_steps=None, num_layers=1).to(device)
+    model_causality.eval()
+    seq_len = 10
+    data_causality = torch.randn(1, seq_len, 16).to(device)
+    out_causality = model_causality(data_causality)
+    for t in range(1, seq_len):
+        # output at position t should not depend on input at position > t
+        input_modified = data_causality.clone()
+        input_modified[0, t+1:, :] += 100.0  # large change
+        out_modified = model_causality(input_modified)
+        assert torch.allclose(out_causality[0, t, :], out_modified[0, t, :], atol=1e-4)
+    print("Causality test successful.")
