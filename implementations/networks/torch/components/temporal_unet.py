@@ -22,9 +22,9 @@ class DoubleConv(nn.Module):
 
     def _build_res_pair(self, channels):
         return nn.Sequential(
-            nn.GELU(),
+            nn.ReLU(),
             nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
-            nn.GELU(),
+            nn.ReLU(),
             nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         )
 

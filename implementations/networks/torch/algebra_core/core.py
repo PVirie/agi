@@ -18,9 +18,9 @@ class KernelBlock(nn.Module):
 
     def _build_res_pair(self, channels):
         return nn.Sequential(
-            nn.GELU(),
+            nn.ReLU(),
             nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0),
-            nn.GELU(),
+            nn.ReLU(),
             nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0)
         )
 
