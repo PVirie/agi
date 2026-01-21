@@ -130,7 +130,7 @@ class Model_53(Agent):
 
         # get last action's position
         last_action = self.actions.get_last()
-        _, _, position, _ = self.policy_model.unpack_action(last_action)
+        int_action, ext_action, position, _ = self.policy_model.unpack_action(last_action)
 
         # update memory
         _, _, _ = self.memory.operate(
@@ -145,9 +145,11 @@ class Model_53(Agent):
         # replace the reward and content
         self.obs.update_last(
             self.policy_model.pack_context(
-                reward,
-                position,
-                content
+                b_reward=reward,
+                b_int=int_action,
+                b_ext=ext_action,
+                b_position=position,
+                b_content=content
             )
         )
         self.rewards[-1] = reward
@@ -264,6 +266,8 @@ class Model_53(Agent):
         self.obs.append(
             self.policy_model.pack_context(
                 b_reward=reward,
+                b_int=int_action,
+                b_ext=ext_action,
                 b_position=position,
                 b_content=content
             )

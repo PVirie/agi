@@ -21,7 +21,7 @@ from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_T
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.arcagi3 import ARCAGI3_Core, Action_Projector, Content_Projector
+from implementations.networks.torch.policy.arcagi3 import ARCAGI3_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
@@ -209,11 +209,11 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Action_Projector(policy_core), value_model=value_core,
+        policy_model=Projector(policy_core, [0, 1, 2, 3]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     supervised_learner = Basic_Learner(
-        policy_model=Content_Projector(policy_core), 
+        policy_model=Projector(policy_core, [4]), 
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Memory(

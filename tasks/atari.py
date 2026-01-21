@@ -24,7 +24,7 @@ from ale_py.vector_env import AtariVectorEnv
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.atari import Atari_Core, Action_Projector, Content_Projector
+from implementations.networks.torch.policy.arcagi3 import ARCAGI3_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
@@ -83,7 +83,7 @@ async def run(env, agent, rollout_length=16):
         if any([r != 0 for r in rewards]):
             logging.info(f"{steps}| Rewards: {rewards}")
 
-        if steps % (rollout_length * 4) == 0 or should_stop:
+        if steps % (rollout_length * 2) == 0 or should_stop:
             logging.info(f"{steps}| Session score stat: {session_score_stat}")
             logging.info(f"{steps}| Selected actions: {actions}")
 
@@ -166,15 +166,15 @@ if __name__ == "__main__":
         layers = 1
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
-        rollout_length = 128
-        minibatch_size = 8
-        position_size = 2
+        rollout_length = 256
+        minibatch_size = 4
+        position_size = 4
     elif args.scale == "medium":
         history_steps = 8
         layers = 1
         hidden_size = 128
         conv_layers = [16, 32, 64, 128, 256] # medium impala
-        rollout_length = 128
+        rollout_length = 256
         minibatch_size = 4
         position_size = 16
     else:  # large
@@ -182,13 +182,13 @@ if __name__ == "__main__":
         layers = 1
         hidden_size = 256
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
-        rollout_length = 128
+        rollout_length = 256
         minibatch_size = 4
         position_size = 64
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
-    policy_core = Atari_Core(
+    policy_core = ARCAGI3_Core(
         action_size=6, position_size=position_size,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=layers,
@@ -202,11 +202,11 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Action_Projector(policy_core), value_model=value_core,
+        policy_model=Projector(policy_core, [0, 1, 2, 3]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     supervised_learner = Basic_Learner(
-        policy_model=Content_Projector(policy_core), 
+        policy_model=Projector(policy_core, [4]), 
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Memory(
