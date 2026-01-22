@@ -38,8 +38,9 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
             nn.Linear(hidden_size, position_size)
         )
 
+        vec_dim = 1 + self.flag_size + action_size + width + height + position_size
         self.temporal_unet = TemporalUNet(
-            n_channels=channel, vec_dim=1 + 1 + 3 + position_size, hidden_dim=hidden_size,
+            n_channels=channel, vec_dim=vec_dim, hidden_dim=hidden_size,
             bilinear=True, history_steps=history_steps, max_temporal_len=max_temporal_len)
 
         self.head_flag = nn.Sequential(
@@ -83,10 +84,15 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         last_position = context[:, :, (1 + 1 + 3): (1 + 1 + 3 + self.position_size)]  # (batch_size, context_size, position_size)
 
         # make one hot encoding for action, location
+        reward = action_part[:, :, 0:1]  # (batch_size, context_size, 1)
+        flag_onehot = torch.nn.functional.one_hot(action_part[:, :, 1].long(), num_classes=self.flag_size).float()
         action_onehot = torch.nn.functional.one_hot(action_part[:, :, 2].long(), num_classes=self.action_size).float()
+        x_onehot = torch.nn.functional.one_hot(action_part[:, :, 3].long(), num_classes=self.width).float()
+        y_onehot = torch.nn.functional.one_hot(action_part[:, :, 4].long(), num_classes=self.height).float()
+        
         next_position = self.position_step(torch.concat([last_position, action_onehot], dim=-1))
 
-        non_image_part = torch.concat([action_part, next_position], dim=-1)  # (batch_size, context_size, 1 + 1 + 3 + position_size)
+        non_image_part = torch.concat([reward, flag_onehot, action_onehot, x_onehot, y_onehot, next_position], dim=-1)  # (batch_size, context_size, 1 + 1 + 3 + position_size)
 
         features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, non_image_part)
         features = torch.reshape(features, (batch_size, context_size, self.temporal_unet.out_features))
