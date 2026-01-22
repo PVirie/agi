@@ -79,14 +79,14 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         # first slice the image content
         image_content = context[:, :, (1 + 1 + 3 + self.position_size): ]  # (batch_size, context_size, content_size)
         image_part = torch.reshape(image_content, (batch_size, context_size, self.channel, self.height, self.width))
-        action_part = context[:, :, :(1 + 1 + 3)]  # (batch_size, context_size, 1 + 1 + 3)
+        reward_action_part = context[:, :, :(1 + 1 + 3)]  # (batch_size, context_size, 1 + 1 + 3)
         last_position = context[:, :, (1 + 1 + 3): (1 + 1 + 3 + self.position_size)]  # (batch_size, context_size, position_size)
 
         # make one hot encoding for action, location
-        action_onehot = torch.nn.functional.one_hot(action_part[:, :, 2].long(), num_classes=self.action_size).float()
+        action_onehot = torch.nn.functional.one_hot(reward_action_part[:, :, 2].long(), num_classes=self.action_size).float()
         next_position = self.position_step(torch.concat([last_position, action_onehot], dim=-1))
 
-        non_image_part = torch.concat([action_part, next_position], dim=-1)  # (batch_size, context_size, 1 + 1 + 3 + position_size)
+        non_image_part = torch.concat([reward_action_part, next_position], dim=-1)  # (batch_size, context_size, 1 + 1 + 3 + position_size)
 
         features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, non_image_part)
         features = torch.reshape(features, (batch_size, context_size, self.temporal_unet.out_features))
@@ -94,7 +94,11 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         y_logits = torch.reshape(y_logits, (batch_size, context_size, self.height))
         content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
         
-        return features, x_logits, y_logits, next_position, content_logits
+        logits_flag = self.head_flag(features)    # (B, T, flag_size)
+        logits_action = self.head_action(features) # (B, T, action_size)
+        pprobs_content = self.head_content(content_logits) # (B, T, content_size)
+
+        return logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content
     
 
     def get_action(self, context, valid_actions=None):
@@ -111,12 +115,7 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        batch_size = context.size(0)
-        features, x_logits, y_logits, next_position, content_logits = self.__compute(context)
-
-        logits_flag = self.head_flag(features)    # (B, T, flag_size)
-        logits_action = self.head_action(features) # (B, T, action_size)
-        pprobs_content = self.head_content(content_logits) # (B, T, content_size)
+        logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content = self.__compute(context)
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
@@ -156,13 +155,7 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        batch_size = context.size(0)
-        context_size = context.size(1)
-        features, x_logits, y_logits, next_position, content_logits = self.__compute(context)
-
-        logits_flag = self.head_flag(features)    # (B, T, flag_size)
-        logits_action = self.head_action(features) # (B, T, action_size)
-        pprobs_content = self.head_content(content_logits) # (B, T, content_size)
+        logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content = self.__compute(context)
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
