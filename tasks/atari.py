@@ -166,8 +166,8 @@ if __name__ == "__main__":
         layers = 1
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
-        rollout_length = 256
-        minibatch_size = 4
+        rollout_length = 128
+        minibatch_size = 8
         position_size = 4
     elif args.scale == "medium":
         history_steps = 8
