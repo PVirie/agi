@@ -17,7 +17,7 @@ class DoubleConv(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.res1 = self._build_res_pair(out_channels)
         self.res2 = self._build_res_pair(out_channels)
-        # self.norm = nn.GroupNorm(num_groups=4, num_channels=out_channels)
+        self.norm = nn.GroupNorm(num_groups=4, num_channels=out_channels)
 
 
     def _build_res_pair(self, channels):
@@ -32,7 +32,7 @@ class DoubleConv(nn.Module):
         x = self.conv(x)
         x = x + self.res1(x)
         x = x + self.res2(x)
-        # x = self.norm(x)
+        x = self.norm(x)
         return x
 
 
@@ -106,8 +106,11 @@ class TemporalUNet(nn.Module):
         self.flat_features = self.bottleneck_channels * self.bottleneck_size * self.bottleneck_size
 
         # projectors
-        self.flat_feature_proj = nn.Linear(self.flat_features, hidden_dim)
-        self.temporal_proj = nn.Linear(vec_dim, hidden_dim)
+        self.forward_proj = nn.Sequential(
+            nn.Linear(self.flat_features + vec_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
         self.backward_proj = nn.Linear(hidden_dim, self.flat_features)
 
         self.temporal_attn = RoPEDecoderOnly(
@@ -135,19 +138,19 @@ class TemporalUNet(nn.Module):
         self.head_feature = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.GELU(),
+            nn.ReLU(),
             nn.Linear(hidden_dim, self.out_features)
         )
         self.head_heatmap = nn.Sequential(
             nn.Conv2d(f1, hidden_dim, kernel_size=3, padding=1),
             nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
-            nn.GELU(),
+            nn.ReLU(),
             nn.Conv2d(hidden_dim, 1, kernel_size=1)
         )
         self.head_content = nn.Sequential(
             nn.Conv2d(f1, hidden_dim, kernel_size=3, padding=1),
             nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
-            nn.GELU(),
+            nn.ReLU(),
             nn.Conv2d(hidden_dim, n_channels, kernel_size=1)
         )
         
@@ -193,12 +196,11 @@ class TemporalUNet(nn.Module):
         # 2. Flatten spatial dims
         flat_x5 = x5_pooled.reshape(B, T, -1) # [B, T, flat_features]
         
-        projected_x5 = self.flat_feature_proj(flat_x5)  # [B, T, hidden_dim]
-        projected_v = self.temporal_proj(v) # [B, T, hidden_dim]
-        combined = projected_x5 + projected_v  # [B, T, flat_features] -> broadcast add
+        combined = torch.cat([flat_x5, v], dim=-1)
+        projected = self.forward_proj(combined) # [B, T, hidden_dim]
 
         # 3. Pass through Transformer
-        attn_out = self.temporal_attn(combined)
+        attn_out = self.temporal_attn(projected) # [B, T, hidden_dim]
         
         # 4. Fuse and Reshape
         fused = self.backward_proj(attn_out.reshape(B * T, -1)) # [B*T, flat_features]
