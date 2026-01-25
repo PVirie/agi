@@ -47,10 +47,11 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.load()
 
 
-    def reset(self, time = 0.0):
-        frac = 1.0 - time
+    def update_learning_rate(self, time = 0.0):
+        frac = max(1.0 - time, 0.01)
         lrnow = frac * self.lr
-        self.optimizer.param_groups[0]["lr"] = lrnow
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = lrnow
 
 
     def learn(self, 
@@ -119,6 +120,11 @@ class PPO(RL_Learner, Safe_nn_Module):
             advantages = torch.stack(advantages, dim=1)
             returns = advantages + values
 
+            if self.norm_adv:
+                adv_mean = masked_mean(advantages, b_masks)
+                adv_std = masked_std(advantages, b_masks)
+                advantages = (advantages - adv_mean) / (adv_std + 1e-8)
+
         self.policy_model.train()
         self.value_model.train()
 
@@ -157,11 +163,6 @@ class PPO(RL_Learner, Safe_nn_Module):
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = masked_mean(-logratio, mb_masks)
                     approx_kl = masked_mean((ratio - 1) - logratio, mb_masks)
-
-                if self.norm_adv and torch.numel(mb_advantages) > 1:
-                    mb_adv_mean = masked_mean(mb_advantages, mb_masks)
-                    mb_adv_std = masked_std(mb_advantages, mb_masks)
-                    mb_advantages = (mb_advantages - mb_adv_mean) / (mb_adv_std + 1e-8)
 
                 # Policy loss
                 pg_loss1 = -mb_advantages * ratio

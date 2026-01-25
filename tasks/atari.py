@@ -83,6 +83,9 @@ async def run(env, agent, rollout_length=16):
         if any([r != 0 for r in rewards]):
             logging.info(f"{steps}| Rewards: {rewards}")
 
+        if steps % rollout_length == 0:
+            ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
+
         if steps % (rollout_length * 2) == 0 or should_stop:
             logging.info(f"{steps}| Session score stat: {session_score_stat}")
             logging.info(f"{steps}| Selected actions: {actions}")
@@ -164,7 +167,7 @@ if __name__ == "__main__":
     if args.scale == "small":
         history_steps = 1
         layers = 1
-        hidden_size = 32
+        hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
@@ -172,7 +175,7 @@ if __name__ == "__main__":
     elif args.scale == "medium":
         history_steps = 8
         layers = 1
-        hidden_size = 64
+        hidden_size = 128
         conv_layers = [16, 32, 64, 128, 256] # medium impala
         rollout_length = 128
         minibatch_size = 8
@@ -180,7 +183,7 @@ if __name__ == "__main__":
     else:  # large
         history_steps = 16
         layers = 1
-        hidden_size = 128
+        hidden_size = 256
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 128
         minibatch_size = 8

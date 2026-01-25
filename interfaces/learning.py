@@ -5,7 +5,7 @@ from typing import List, Any
 class RL_Learner(abc.ABC):
 
     @abc.abstractmethod
-    def reset(self, time = 0.0):
+    def update_learning_rate(self, time = 0.0):
         pass
 
     @abc.abstractmethod

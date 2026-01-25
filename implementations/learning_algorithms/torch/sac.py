@@ -39,10 +39,11 @@ class SAC(RL_Learner, Safe_nn_Module):
         self.load()
 
 
-    def reset(self, time = 0.0):
-        frac = 1.0 - time
+    def update_learning_rate(self, time = 0.0):
+        frac = max(1.0 - time, 0.01)
         lrnow = frac * self.lr
-        self.optimizer.param_groups[0]["lr"] = lrnow
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = lrnow
 
 
     def learn(self, 

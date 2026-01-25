@@ -71,7 +71,6 @@ class Model_53(Agent):
 
 
     def reset(self):
-        self.trainer.reset(time=0.0)
         self.obs.clear()
         self.actions.clear()
         self.valid_actions.clear()
@@ -199,9 +198,6 @@ class Model_53(Agent):
                 masks=masks
             )
             
-            # reset
-            self.trainer.reset(time=0.0)
-
             left_over_slide = self.obs.mark(skip_last=True)
             self.actions.mark(skip_last=True)
             self.valid_actions.mark(skip_last=True)

@@ -101,6 +101,9 @@ async def run(env, agent, rollout_length=16):
             break
 
         steps += 1
+        if steps % (rollout_length) == 0:
+            ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
+
         if steps % (rollout_length) == 0 or has_event:
             log_str = "; ".join([s.short_str() for s in states])
             logging.info(f"{steps}| States: [{log_str}]")
