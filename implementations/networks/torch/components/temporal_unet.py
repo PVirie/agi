@@ -17,7 +17,7 @@ class DoubleConv(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.res1 = self._build_res_pair(out_channels)
         self.res2 = self._build_res_pair(out_channels)
-        self.norm = nn.GroupNorm(num_groups=4, num_channels=out_channels)
+        self.norm = nn.GroupNorm(num_groups=2, num_channels=out_channels)
 
 
     def _build_res_pair(self, channels):
@@ -136,22 +136,16 @@ class TemporalUNet(nn.Module):
 
         self.out_features = hidden_dim
         self.head_feature = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, self.out_features)
+            nn.Linear(hidden_dim, self.out_features),
         )
         self.head_heatmap = nn.Sequential(
-            nn.Conv2d(f1, hidden_dim, kernel_size=3, padding=1),
-            nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
             nn.ReLU(),
-            nn.Conv2d(hidden_dim, 1, kernel_size=1)
+            nn.Conv2d(f1, 1, kernel_size=1)
         )
         self.head_content = nn.Sequential(
-            nn.Conv2d(f1, hidden_dim, kernel_size=3, padding=1),
-            nn.GroupNorm(num_groups=8, num_channels=hidden_dim),
             nn.ReLU(),
-            nn.Conv2d(hidden_dim, n_channels, kernel_size=1)
+            nn.Conv2d(f1, n_channels, kernel_size=1)
         )
         
         self.reset_parameters()

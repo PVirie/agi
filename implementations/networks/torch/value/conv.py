@@ -38,6 +38,15 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
     def reset_parameters(self):
         self.conv_layers.reset_parameters()
 
+        def init_value_weights(m):
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=1.0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+                    
+        self.read_out_layers.apply(init_value_weights)
+
+
 
     def __compute(self, context):
         # context has shape (batch, context_size, 1 + position_size + content_size)

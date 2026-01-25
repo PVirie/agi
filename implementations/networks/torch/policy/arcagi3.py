@@ -8,7 +8,8 @@ import numpy as np
 import logging
 
 from interfaces.network import Policy_Network
-from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask
+from implementations.networks.torch.components.base import init_weights
+from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.temporal_unet import TemporalUNet
 from utilities.safe_torch_module import Safe_nn_Module
 
@@ -55,6 +56,7 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
         self.head_content = nn.Sequential(
+            nn.Conv2d(channel, channel, kernel_size=1),
             nn.Sigmoid()
         )
 
@@ -65,12 +67,22 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def reset_parameters(self):
         # Reset parameters of all layers
+        self.position_step.apply(init_weights)
         self.temporal_unet.reset_parameters()
 
-        self.head_flag.apply(init_weights)
-        self.head_action.apply(init_weights)
-        self.head_content.apply(init_weights)
-        self.position_step.apply(init_weights)
+        def init_actor_weights(m):
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                nn.init.orthogonal_(m.weight, gain=0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+        self.head_flag.apply(init_actor_weights)
+        self.head_action.apply(init_actor_weights)
+        self.head_content.apply(init_actor_weights)
 
 
     def __compute(self, context):
@@ -97,14 +109,12 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
         non_image_part = torch.concat([action_onehot, next_position], dim=-1)  # (batch_size, context_size, 1 + 1 + 3 + position_size)
 
         features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, non_image_part)
-        features = torch.reshape(features, (batch_size, context_size, self.temporal_unet.out_features))
-        x_logits = torch.reshape(x_logits, (batch_size, context_size, self.width))
-        y_logits = torch.reshape(y_logits, (batch_size, context_size, self.height))
-        content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
         
         logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
-        pprobs_content = self.head_content(content_logits) # (B, T, content_size)
+        pprobs_content = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
+
+        pprobs_content = torch.reshape(pprobs_content, (batch_size, context_size, self.content_size))
 
         return logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content
     

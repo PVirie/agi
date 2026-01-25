@@ -22,7 +22,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.value_model = value_model
         self.device = device
 
-        self.lr = 2.5e-4
+        self.lr = 3e-4
         self.gamma = 0.99
         self.gae_lambda = 0.95
         self.clip_coef = 0.2
