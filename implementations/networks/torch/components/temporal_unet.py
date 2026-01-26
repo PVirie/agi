@@ -72,17 +72,12 @@ class Up(nn.Module):
 
 
 class TemporalUNet(nn.Module):
-    def __init__(self, n_channels=1, vec_dim=128, hidden_dim=32, bilinear=True, history_steps=8, max_temporal_len=32):
+    def __init__(self, n_channels=1, width=64, height=64, vec_dim=128, hidden_dim=32, bilinear=True, history_steps=8, max_temporal_len=32):
         super(TemporalUNet, self).__init__()
         self.n_channels = n_channels
         self.vec_dim = vec_dim
         self.bilinear = bilinear
         
-        # --- Config for Arbitrary Input Support ---
-        # We force the bottleneck to be 4x4 so the Linear layers work 
-        # regardless of the actual input image aspect ratio or size.
-        self.bottleneck_size = 2
-
         f1 = n_channels * 4
         f2 = n_channels * 8
         f3 = n_channels * 16
@@ -97,11 +92,14 @@ class TemporalUNet(nn.Module):
         factor = 2 if bilinear else 1
         self.down4 = Down(f4, f5 // factor)
 
+        self.bottleneck_width_size = width // 16
+        self.bottleneck_height_size = height // 16
+
         # --- Temporal Bottleneck ---
         self.bottleneck_channels = f5 // factor
         
-        # Fixed size feature map for Transformer (C * 4 * 4)
-        self.flat_features = self.bottleneck_channels * self.bottleneck_size * self.bottleneck_size
+        # Feature map size for Transformer (C * bottleneck_width_size * bottleneck_height_size)
+        self.flat_features = self.bottleneck_channels * self.bottleneck_width_size * self.bottleneck_height_size
 
         # projectors
         self.forward_proj = nn.Sequential(
@@ -173,20 +171,8 @@ class TemporalUNet(nn.Module):
         x4 = self.down3(x3)
         x5 = self.down4(x4) # Shape: [B*T, features, H/16, W/16]
 
-        # --- Temporal Attention Input Construction ---
-        # 1. Adaptive Pool to fixed size (4x4) to handle arbitrary input H, W
-        # # REVISION: Replaced adaptive_avg_pool2d with F.interpolate for determinism.
-        # We use 'bilinear' to resize the feature map to the fixed 4x4 bottleneck size.
-        # This acts as a spatial compression step compatible with any input resolution.
-        x5_pooled = F.interpolate(
-            x5, 
-            size=(self.bottleneck_size, self.bottleneck_size), 
-            mode='bilinear', 
-            align_corners=True
-        )
-
         # 2. Flatten spatial dims
-        flat_x5 = x5_pooled.reshape(B, T, -1) # [B, T, flat_features]
+        flat_x5 = x5.reshape(B, T, -1) # [B, T, flat_features]
         
         combined = torch.cat([flat_x5, v], dim=-1)
         projected = self.forward_proj(combined) # [B, T, hidden_dim]
@@ -196,11 +182,7 @@ class TemporalUNet(nn.Module):
         
         # 4. Fuse and Reshape
         fused = self.backward_proj(attn_out.reshape(B * T, -1)) # [B*T, flat_features]
-        x4_small = fused.reshape(B * T, self.bottleneck_channels, self.bottleneck_size, self.bottleneck_size)
-        
-        # 5. Interpolate back to original bottleneck spatial size (H/16, W/16)
-        # This is crucial: x5 spatial size might be e.g., (2, 4) if input is 32x64
-        x4_ = F.interpolate(x4_small, size=x5.shape[-2:], mode='bilinear', align_corners=True)
+        x4_ = fused.reshape(B * T, self.bottleneck_channels, self.bottleneck_height_size, self.bottleneck_width_size)
         
         # --- U-Net Decoder ---
         xc3_ = self.up_c_1(x4_, x4)
@@ -238,7 +220,7 @@ class TemporalUNet(nn.Module):
 
 if __name__ == "__main__":
     # max_temporal_len defaults to 32, we pass 32 to be explicit or test with it.
-    model = TemporalUNet(n_channels=3, vec_dim=128, hidden_dim=16, bilinear=True, history_steps=2, max_temporal_len=32)
+    model = TemporalUNet(n_channels=3, width=32, height=64, vec_dim=128, hidden_dim=16, bilinear=True, history_steps=2, max_temporal_len=32)
     img = torch.randn(2, 5, 3, 64, 32)
     vec = torch.randn(2, 5, 128)
     

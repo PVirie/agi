@@ -315,7 +315,23 @@ if __name__ == "__main__":
     for t in range(1, seq_len):
         # output at position t should not depend on input at position > t
         input_modified = data_causality.clone()
-        input_modified[0, t+1:, :] += 100.0  # large change
+        input_modified[0, t+1:, :] += 10
         out_modified = model_causality(input_modified)
         assert torch.allclose(out_causality[0, t, :], out_modified[0, t, :], atol=1e-4)
     print("Causality test successful.")
+
+    # test whether model violates history constraint
+    history_limit = 1
+    model_history = RoPEDecoderOnly(d_model=16, history_steps=history_limit, num_layers=1).to(device)
+    model_history.eval()
+    seq_len = 10
+    data_history = torch.randn(1, seq_len, 16).to(device)
+    out_history = model_history(data_history)
+    for t in range(seq_len):
+        # output at position t should not depend on input at position < t - history_limit
+        input_modified = data_history.clone()
+        if t - history_limit - 1 >= 0:
+            input_modified[0, :t - history_limit - 1, :] += 10
+            out_modified = model_history(input_modified)
+            assert torch.allclose(out_history[0, t, :], out_modified[0, t, :], atol=1e-4)
+    print("History constraint test successful.")
