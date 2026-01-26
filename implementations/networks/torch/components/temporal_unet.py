@@ -17,7 +17,6 @@ class DoubleConv(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.res1 = self._build_res_pair(out_channels)
         self.res2 = self._build_res_pair(out_channels)
-        self.norm = nn.GroupNorm(num_groups=2, num_channels=out_channels)
 
 
     def _build_res_pair(self, channels):
@@ -32,7 +31,6 @@ class DoubleConv(nn.Module):
         x = self.conv(x)
         x = x + self.res1(x)
         x = x + self.res2(x)
-        x = self.norm(x)
         return x
 
 
@@ -83,7 +81,7 @@ class TemporalUNet(nn.Module):
         # --- Config for Arbitrary Input Support ---
         # We force the bottleneck to be 4x4 so the Linear layers work 
         # regardless of the actual input image aspect ratio or size.
-        self.bottleneck_size = 4
+        self.bottleneck_size = 2
 
         f1 = n_channels * 4
         f2 = n_channels * 8

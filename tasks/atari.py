@@ -165,7 +165,7 @@ if __name__ == "__main__":
     random_agent = random_agent.Random_Agent("01")
 
     if args.scale == "small":
-        history_steps = 1
+        history_steps = 0
         layers = 1
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
