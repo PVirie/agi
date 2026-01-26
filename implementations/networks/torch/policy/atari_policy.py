@@ -42,12 +42,12 @@ class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
         )
 
         self.head_flag = nn.Sequential(
-            nn.Linear(self.temporal_unet.out_features, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
         )
         self.head_action = nn.Sequential(
-            nn.Linear(self.temporal_unet.out_features, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
