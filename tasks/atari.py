@@ -24,7 +24,7 @@ from ale_py.vector_env import AtariVectorEnv
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.arcagi3 import ARCAGI3_Core, Projector
+from implementations.networks.torch.policy.atari_policy import Atari_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
@@ -191,7 +191,7 @@ if __name__ == "__main__":
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
-    policy_core = ARCAGI3_Core(
+    policy_core = Atari_Core(
         action_size=6, position_size=position_size,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=layers,
