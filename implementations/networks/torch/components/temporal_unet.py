@@ -21,9 +21,9 @@ class DoubleConv(nn.Module):
 
     def _build_res_pair(self, channels):
         return nn.Sequential(
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         )
 
@@ -78,11 +78,11 @@ class TemporalUNet(nn.Module):
         self.vec_dim = vec_dim
         self.bilinear = bilinear
         
-        f1 = n_channels * 4
-        f2 = n_channels * 8
-        f3 = n_channels * 16
-        f4 = n_channels * 32
-        f5 = n_channels * 64
+        f1 = n_channels * 2
+        f2 = n_channels * 4
+        f3 = n_channels * 8
+        f4 = n_channels * 16
+        f5 = n_channels * 32
 
         # --- Encoder ---
         self.inc = DoubleConv(n_channels, f1)
@@ -103,9 +103,7 @@ class TemporalUNet(nn.Module):
 
         # projectors
         self.forward_proj = nn.Sequential(
-            nn.Linear(self.flat_features + vec_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
+            nn.Linear(self.flat_features + vec_dim, hidden_dim)
         )
         self.backward_proj = nn.Linear(hidden_dim, self.flat_features)
 
@@ -113,7 +111,7 @@ class TemporalUNet(nn.Module):
             d_model=hidden_dim,
             num_heads=max(8, hidden_dim // 64),
             num_layers=1, # can only use 1 layer to not violate history constraint
-            d_ff=hidden_dim * 2, 
+            d_ff=max(1024, hidden_dim),
             dropout=0.1, 
             history_steps=history_steps
         )
@@ -132,15 +130,15 @@ class TemporalUNet(nn.Module):
 
         self.out_features = hidden_dim
         self.head_feature = nn.Sequential(
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Linear(hidden_dim, self.out_features),
         )
         self.head_heatmap = nn.Sequential(
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Conv2d(f1, 1, kernel_size=1)
         )
         self.head_content = nn.Sequential(
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Conv2d(f1, n_channels, kernel_size=1)
         )
         

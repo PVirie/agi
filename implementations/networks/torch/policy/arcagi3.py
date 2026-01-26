@@ -35,7 +35,7 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         self.position_step = nn.Sequential(
             nn.Linear(position_size + action_size, hidden_size),
-            nn.GELU(),
+            nn.LeakyReLU(),
             nn.Linear(hidden_size, position_size)
         )
 
@@ -46,12 +46,12 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         self.head_flag = nn.Sequential(
             nn.Linear(self.temporal_unet.out_features, hidden_size),
-            nn.GELU(),
+            nn.LeakyReLU(),
             nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
         )
         self.head_action = nn.Sequential(
             nn.Linear(self.temporal_unet.out_features, hidden_size),
-            nn.GELU(),
+            nn.LeakyReLU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
         self.head_content = nn.Sequential(
