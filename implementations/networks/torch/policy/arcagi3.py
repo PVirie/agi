@@ -14,7 +14,7 @@ from implementations.networks.torch.components.temporal_unet import TemporalUNet
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
+class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, history_steps=0, max_temporal_len=32, device=None, persistence_path=None):
         nn.Module.__init__(self)
@@ -35,7 +35,7 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         self.position_step = nn.Sequential(
             nn.Linear(position_size + action_size, hidden_size),
-            nn.LeakyReLU(),
+            nn.GELU(),
             nn.Linear(hidden_size, position_size)
         )
 
@@ -46,12 +46,12 @@ class ARCAGI3_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         self.head_flag = nn.Sequential(
             nn.Linear(self.temporal_unet.out_features, hidden_size),
-            nn.LeakyReLU(),
+            nn.GELU(),
             nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
         )
         self.head_action = nn.Sequential(
             nn.Linear(self.temporal_unet.out_features, hidden_size),
-            nn.LeakyReLU(),
+            nn.GELU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
         self.head_content = nn.Sequential(

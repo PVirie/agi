@@ -14,7 +14,7 @@ from implementations.networks.torch.components.std_conv import ImpalaCNN
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Atari_Core(Policy_Network, nn.Module, Safe_nn_Module):
+class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, history_steps=0, max_temporal_len=32, device=None, persistence_path=None):
         nn.Module.__init__(self)

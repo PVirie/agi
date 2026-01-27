@@ -21,9 +21,9 @@ class DoubleConv(nn.Module):
 
     def _build_res_pair(self, channels):
         return nn.Sequential(
-            nn.LeakyReLU(),
+            nn.ReLU(),
             nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
-            nn.LeakyReLU(),
+            nn.ReLU(),
             nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         )
 
@@ -39,7 +39,7 @@ class Down(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
         self.maxpool_conv = nn.Sequential(
-            nn.MaxPool2d(2),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
             DoubleConv(in_channels, out_channels)
         )
 
@@ -78,11 +78,11 @@ class TemporalUNet(nn.Module):
         self.vec_dim = vec_dim
         self.bilinear = bilinear
         
-        f1 = n_channels * 2
-        f2 = n_channels * 4
-        f3 = n_channels * 8
-        f4 = n_channels * 16
-        f5 = n_channels * 32
+        f1 = n_channels * 4
+        f2 = n_channels * 8
+        f3 = n_channels * 16
+        f4 = n_channels * 32
+        f5 = n_channels * 64
 
         # --- Encoder ---
         self.inc = DoubleConv(n_channels, f1)
@@ -105,7 +105,6 @@ class TemporalUNet(nn.Module):
         self.forward_proj = nn.Sequential(
             nn.Linear(self.flat_features + vec_dim, hidden_dim)
         )
-        self.backward_proj = nn.Linear(hidden_dim, self.flat_features)
 
         self.temporal_attn = RoPEDecoderOnly(
             d_model=hidden_dim,
@@ -114,6 +113,10 @@ class TemporalUNet(nn.Module):
             d_ff=max(1024, hidden_dim),
             dropout=0.1, 
             history_steps=history_steps
+        )
+
+        self.backward_proj = nn.Sequential(
+            nn.Linear(hidden_dim, self.flat_features)
         )
 
         # --- Decoder ---
@@ -130,15 +133,15 @@ class TemporalUNet(nn.Module):
 
         self.out_features = hidden_dim
         self.head_feature = nn.Sequential(
-            nn.LeakyReLU(),
+            nn.GELU(),
             nn.Linear(hidden_dim, self.out_features),
         )
         self.head_heatmap = nn.Sequential(
-            nn.LeakyReLU(),
+            nn.GELU(),
             nn.Conv2d(f1, 1, kernel_size=1)
         )
         self.head_content = nn.Sequential(
-            nn.LeakyReLU(),
+            nn.GELU(),
             nn.Conv2d(f1, n_channels, kernel_size=1)
         )
         
@@ -180,6 +183,7 @@ class TemporalUNet(nn.Module):
         
         # 4. Fuse and Reshape
         fused = self.backward_proj(attn_out.reshape(B * T, -1)) # [B*T, flat_features]
+
         x4_ = fused.reshape(B * T, self.bottleneck_channels, self.bottleneck_height_size, self.bottleneck_width_size)
         
         # --- U-Net Decoder ---
