@@ -8,9 +8,9 @@ import numpy as np
 import logging
 
 from interfaces.network import Policy_Network
-from implementations.networks.torch.components.base import init_weights
-from implementations.networks.torch.components.base import Categorical_With_Mask
-from implementations.networks.torch.components.std_conv import ImpalaCNN
+from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask
+from implementations.networks.torch.components.temporal_unet import TemporalUNet
+from implementations.networks.torch.algebra_core.core import Algebra_Core
 from utilities.safe_torch_module import Safe_nn_Module
 
 
@@ -18,7 +18,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, history_steps=0, max_temporal_len=32, device=None, persistence_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="atari_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="algebra_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.flag_size = 5  # num classes for flag
@@ -32,24 +32,39 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.height = height
         self.channel = channel
         self.hidden_size = hidden_size
+        self.position_features = 8
 
-        self.stem = ImpalaCNN(
-            output_dims=hidden_size,
-            input_channels=channel,
-            width=width,
-            height=height,
-            depths=[16, 32, 64]
+        vec_dim = 1 + self.flag_size + action_size + width + height
+        self.temporal_unet = TemporalUNet(
+            input_channels=channel, vec_dim=vec_dim, hidden_dim=hidden_size * self.position_features,
+            depths=layers, history_steps=history_steps, max_temporal_len=max_temporal_len)
+        
+        self.algebra_core = Algebra_Core(
+            position_output_dim=position_size // self.position_features,
+            feature_dim=hidden_size,
+            num_algebras=64,
+            context_size=32
+        )
+
+        self.position_step = nn.Sequential(
+            nn.Linear(position_size + position_size + action_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, position_size)
         )
 
         self.head_flag = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(self.temporal_unet.out_features, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
         )
         self.head_action = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(self.temporal_unet.out_features, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
+        )
+        self.head_content = nn.Sequential(
+            nn.Conv2d(channel, channel, kernel_size=1),
+            nn.Sigmoid()
         )
 
         self.reset_parameters()
@@ -59,7 +74,8 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def reset_parameters(self):
         # Reset parameters of all layers
-        self.stem.reset_parameters()
+        self.position_step.apply(init_weights)
+        self.temporal_unet.reset_parameters()
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -73,6 +89,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         self.head_flag.apply(init_actor_weights)
         self.head_action.apply(init_actor_weights)
+        self.head_content.apply(init_actor_weights)
 
 
     def __compute(self, context):
@@ -93,17 +110,24 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         x_onehot = torch.nn.functional.one_hot(reward_action_part[:, :, 3].long(), num_classes=self.width).float()
         y_onehot = torch.nn.functional.one_hot(reward_action_part[:, :, 4].long(), num_classes=self.height).float()
         
-        image_part = torch.reshape(image_part, (batch_size * context_size, self.channel, self.height, self.width))
-        features = self.stem(image_part)
-        features = torch.reshape(features, (batch_size, context_size, -1))  # (B, T, hidden_size)
-        
-        logits_flag = self.head_flag(features)    # (B, T, flag_size)
-        logits_action = self.head_action(features) # (B, T, action_size)
+        non_image_part = torch.concat([reward, flag_onehot, action_onehot, x_onehot, y_onehot], dim=-1)  # (batch_size, context_size, 1 + 1 + 3 + position_size)
+        features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, non_image_part)
 
-        x_logits = torch.zeros((batch_size, context_size, self.width), device=self.device)
-        y_logits = torch.zeros((batch_size, context_size, self.height), device=self.device)
-        next_position = last_position.clone()
-        pprobs_content = torch.sigmoid(torch.zeros((batch_size, context_size, self.content_size), device=self.device))
+        # now convert features to position features
+        # first merge batch with position_features
+        position_features = torch.reshape(torch.permute(features, (0, 2, 1, 3)), (batch_size * self.position_features, context_size, self.hidden_size))
+        position_output = self.algebra_core(position_features)  # (batch_size * position_features, context_size, position_size / position_features)
+        position_output = torch.reshape(position_output, (batch_size, self.position_features, context_size, self.position_size // self.position_features))
+        position_output = torch.permute(position_output, (0, 2, 1, 3))  # (batch_size, context_size, position_features, position_size / position_features)
+        position_output = torch.reshape(position_output, (batch_size, context_size, self.position_size))  # (batch_size, context_size, position_size)
+
+        next_position = self.position_step(torch.concat([last_position, position_output, action_onehot], dim=-1))
+
+        logits_flag = self.head_flag(next_position)    # (B, T, flag_size)
+        logits_action = self.head_action(next_position) # (B, T, action_size)
+        pprobs_content = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
+
+        pprobs_content = torch.reshape(pprobs_content, (batch_size, context_size, self.content_size))
 
         return logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content
     
