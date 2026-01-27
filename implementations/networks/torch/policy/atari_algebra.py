@@ -34,31 +34,32 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.hidden_size = hidden_size
         self.position_features = 8
 
-        vec_dim = 1 + self.flag_size + action_size + width + height
+        vec_dim = action_size + width + height
         self.temporal_unet = TemporalUNet(
-            input_channels=channel, vec_dim=vec_dim, hidden_dim=hidden_size * self.position_features,
-            depths=layers, history_steps=history_steps, max_temporal_len=max_temporal_len)
+            input_channels=channel, width=width, height=height,
+            vec_dim=vec_dim, hidden_dim=hidden_size * self.position_features,
+            depths=layers, history_steps=0, max_temporal_len=max_temporal_len)
         
         self.algebra_core = Algebra_Core(
             position_output_dim=position_size // self.position_features,
             feature_dim=hidden_size,
-            num_algebras=64,
-            context_size=32
+            num_algebras=32,
+            context_size=history_steps
         )
 
         self.position_step = nn.Sequential(
-            nn.Linear(position_size + position_size + action_size, hidden_size),
+            nn.Linear(position_size + position_size + vec_dim, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, position_size)
         )
 
         self.head_flag = nn.Sequential(
-            nn.Linear(self.temporal_unet.out_features, hidden_size),
+            nn.Linear(position_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
         )
         self.head_action = nn.Sequential(
-            nn.Linear(self.temporal_unet.out_features, hidden_size),
+            nn.Linear(position_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
@@ -74,8 +75,9 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def reset_parameters(self):
         # Reset parameters of all layers
-        self.position_step.apply(init_weights)
         self.temporal_unet.reset_parameters()
+        self.algebra_core.apply(init_weights)
+        self.position_step.apply(init_weights)
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -110,18 +112,20 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         x_onehot = torch.nn.functional.one_hot(reward_action_part[:, :, 3].long(), num_classes=self.width).float()
         y_onehot = torch.nn.functional.one_hot(reward_action_part[:, :, 4].long(), num_classes=self.height).float()
         
-        non_image_part = torch.concat([reward, flag_onehot, action_onehot, x_onehot, y_onehot], dim=-1)  # (batch_size, context_size, 1 + 1 + 3 + position_size)
-        features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, non_image_part)
+        action_part = torch.concat([action_onehot, x_onehot, y_onehot], dim=-1)  # (batch_size, context_size, 1 + 1 + 3 + position_size)
+        features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, action_part) 
+        # features has shape (batch_size, context_size, hidden_size * position_features)
 
         # now convert features to position features
         # first merge batch with position_features
+        features = torch.reshape(features, (batch_size, context_size, self.position_features, self.hidden_size))
         position_features = torch.reshape(torch.permute(features, (0, 2, 1, 3)), (batch_size * self.position_features, context_size, self.hidden_size))
         position_output = self.algebra_core(position_features)  # (batch_size * position_features, context_size, position_size / position_features)
         position_output = torch.reshape(position_output, (batch_size, self.position_features, context_size, self.position_size // self.position_features))
         position_output = torch.permute(position_output, (0, 2, 1, 3))  # (batch_size, context_size, position_features, position_size / position_features)
         position_output = torch.reshape(position_output, (batch_size, context_size, self.position_size))  # (batch_size, context_size, position_size)
 
-        next_position = self.position_step(torch.concat([last_position, position_output, action_onehot], dim=-1))
+        next_position = self.position_step(torch.concat([last_position, position_output, action_part], dim=-1))
 
         logits_flag = self.head_flag(next_position)    # (B, T, flag_size)
         logits_action = self.head_action(next_position) # (B, T, action_size)

@@ -62,6 +62,13 @@ class Algebra_Core(nn.Module):
         B = x.shape[0]
         T = x.shape[1]
 
+        True_T = T
+        # first if T < C, pad left with zeros
+        if T < self.C:
+            pad_size = self.C - T
+            x = F.pad(x, (0, 0, pad_size, 0), mode='constant', value=0.0)  # (B, C, F)
+            T = self.C
+
         # perform cosine similarity computation along the feature dimension
         x = x.unsqueeze(1)  # (B, 1, T, F)
         x_transpose = x.permute(0, 1, 3, 2)  # (B, 1, F, T)
@@ -85,6 +92,11 @@ class Algebra_Core(nn.Module):
         # left pad to (B, T, P)
         pad_size = self.C - 1
         out = F.pad(out, (0, 0, pad_size, 0), mode='constant', value=0.0)  # (B, T, P)
+
+        # if original T < C, truncate to original T
+        if True_T < self.C:
+            out = out[:, -True_T:, :]  # (B, True_T, P)
+
         return out
 
 
