@@ -43,8 +43,8 @@ class ImpalaCNN(nn.Module):
     def __init__(self, output_dims, input_channels, width, height, depths=[16, 32, 32]):
         super(ImpalaCNN, self).__init__()
         
-        self.input_channels = input_channels
         self.output_dims = output_dims
+        self.input_channels = input_channels
         self.width = width
         self.height = height
 

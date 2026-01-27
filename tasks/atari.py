@@ -24,7 +24,7 @@ from ale_py.vector_env import AtariVectorEnv
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.atari_policy import Policy_Core, Projector
+from implementations.networks.torch.policy.arcagi3 import Policy_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
@@ -166,7 +166,6 @@ if __name__ == "__main__":
 
     if args.scale == "small":
         history_steps = 1
-        layers = 1
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
@@ -174,7 +173,6 @@ if __name__ == "__main__":
         position_size = 2
     elif args.scale == "medium":
         history_steps = 8
-        layers = 1
         hidden_size = 128
         conv_layers = [16, 32, 64, 128, 256] # medium impala
         rollout_length = 128
@@ -182,7 +180,6 @@ if __name__ == "__main__":
         position_size = 16
     else:  # large
         history_steps = 16
-        layers = 1
         hidden_size = 256
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 128
@@ -194,7 +191,7 @@ if __name__ == "__main__":
     policy_core = Policy_Core(
         action_size=6, position_size=position_size,
         width=32, height=64, channel=4,
-        hidden_size=hidden_size, layers=layers,
+        hidden_size=hidden_size, layers=conv_layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
