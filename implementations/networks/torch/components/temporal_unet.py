@@ -60,14 +60,14 @@ class TemporalUNet(nn.Module):
             nn.Linear(self.last_flatten_dim + vec_dim, hidden_dim)
         )
 
-        self.temporal_attn = RoPEDecoderOnly(
-            d_model=hidden_dim,
-            num_heads=max(8, hidden_dim // 64),
-            num_layers=1, # can only use 1 layer to not violate history constraint
-            d_ff=max(1024, hidden_dim),
-            dropout=0.1, 
-            history_steps=history_steps
-        )
+        # self.temporal_attn = RoPEDecoderOnly(
+        #     d_model=hidden_dim,
+        #     num_heads=max(8, hidden_dim // 64),
+        #     num_layers=1, # can only use 1 layer to not violate history constraint
+        #     d_ff=max(1024, hidden_dim),
+        #     dropout=0.1, 
+        #     history_steps=history_steps
+        # )
 
         self.backward_proj = nn.Sequential(
             nn.Linear(hidden_dim, self.last_flatten_dim)
@@ -129,10 +129,10 @@ class TemporalUNet(nn.Module):
         flat_last = x_last.reshape(B, T, -1) # [B, T, last_flatten_dim]
         
         combined = torch.cat([flat_last, v], dim=-1)
-        projected = self.forward_proj(combined) # [B, T, hidden_dim]
+        attn_out = self.forward_proj(combined) # [B, T, hidden_dim]
 
-        # 3. Pass through Transformer
-        attn_out = self.temporal_attn(projected) # [B, T, hidden_dim]
+        # # 3. Pass through Transformer
+        # attn_out = self.temporal_attn(projected) # [B, T, hidden_dim]
         
         sampled_features = self.head_feature(attn_out) # [B*T, out_features]
 
