@@ -34,7 +34,7 @@ def apply_rope(x, cos, sin):
     return (x * cos.to(x.dtype)) + (rotated * sin.to(x.dtype))
 
 class RoPEMultiHeadAttention(nn.Module):
-    def __init__(self, d_model, num_heads, dropout=0.1, is_cross_attention=False):
+    def __init__(self, d_model, num_heads, is_cross_attention=False):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
@@ -49,8 +49,6 @@ class RoPEMultiHeadAttention(nn.Module):
         # RoPE only for Self-Attention
         if not self.is_cross_attention:
             self.rope = RotaryPositionalEmbeddings(self.head_dim)
-        
-        self.dropout = dropout
 
     def forward(self, x, context=None, mask=None):
         batch_size, seq_len, _ = x.shape
@@ -70,7 +68,7 @@ class RoPEMultiHeadAttention(nn.Module):
         v = v.transpose(1, 2)
 
         out = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=mask, dropout_p=self.dropout if self.training else 0.0, is_causal=False
+            q, k, v, attn_mask=mask
         )
         return self.out_proj(out.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model))
 
@@ -81,8 +79,7 @@ class FeedForward(nn.Module):
             nn.Linear(d_model, d_ff),
             nn.GELU(), 
             nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model), 
-            nn.Dropout(dropout)
+            nn.Linear(d_ff, d_model)
         )
     def forward(self, x):
         return self.net(x)
@@ -136,14 +133,13 @@ class MaskGenerationMixin:
 class EncoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout):
         super().__init__()
-        self.attn = RoPEMultiHeadAttention(d_model, num_heads, dropout)
+        self.attn = RoPEMultiHeadAttention(d_model, num_heads)
         self.ffn = FeedForward(d_model, d_ff, dropout)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
-        x = x + self.dropout(self.attn(self.norm1(x), mask=mask))
+        x = x + self.attn(self.norm1(x), mask=mask)
         x = x + self.ffn(self.norm2(x))
         return x
 
@@ -151,17 +147,16 @@ class EncoderLayer(nn.Module):
 class DecoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout):
         super().__init__()
-        self.self_attn = RoPEMultiHeadAttention(d_model, num_heads, dropout, is_cross_attention=False)
-        self.cross_attn = RoPEMultiHeadAttention(d_model, num_heads, dropout, is_cross_attention=True)
+        self.self_attn = RoPEMultiHeadAttention(d_model, num_heads, is_cross_attention=False)
+        self.cross_attn = RoPEMultiHeadAttention(d_model, num_heads, is_cross_attention=True)
         self.ffn = FeedForward(d_model, d_ff, dropout)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.norm3 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, context, tgt_mask=None, src_mask=None):
-        x = x + self.dropout(self.self_attn(self.norm1(x), mask=tgt_mask))
-        x = x + self.dropout(self.cross_attn(self.norm2(x), context=context, mask=src_mask))
+        x = x + self.self_attn(self.norm1(x), mask=tgt_mask)
+        x = x + self.cross_attn(self.norm2(x), context=context, mask=src_mask)
         x = x + self.ffn(self.norm3(x))
         return x
 
@@ -199,14 +194,13 @@ class RoPEEncoderDecoder(nn.Module, MaskGenerationMixin):
 class GPTDecoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout):
         super().__init__()
-        self.attn = RoPEMultiHeadAttention(d_model, num_heads, dropout)
+        self.attn = RoPEMultiHeadAttention(d_model, num_heads)
         self.ffn = FeedForward(d_model, d_ff, dropout)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
-        x = x + self.dropout(self.attn(self.norm1(x), mask=mask))
+        x = x + self.attn(self.norm1(x), mask=mask)
         x = x + self.ffn(self.norm2(x))
         return x
 
