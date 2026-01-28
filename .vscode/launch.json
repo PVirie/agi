@@ -56,7 +56,7 @@
             }
         },
         {
-            "name": "reset",
+            "name": "Reset",
             "type": "debugpy",
             "request": "attach",
             "preLaunchTask": "Current file: reset",

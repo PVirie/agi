@@ -42,7 +42,6 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         
         self.algebra_core = Algebra_Core(
             position_output_dim=position_size // self.position_features,
-            feature_dim=hidden_size,
             num_algebras=32,
             context_size=history_steps
         )
