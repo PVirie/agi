@@ -74,13 +74,28 @@ class Algebra_Core(nn.Module):
         x_transpose = x.permute(0, 1, 3, 2)  # (B, 1, F, T)
         x = torch.matmul(x, x_transpose) / self.F  # (B, 1, T, T)
 
-        # apply kernels
-        m = self.kernels(x)  # (B, A, T-C+1, T-C+1)
-        p = self.position_kernels(x) # (B, P*A, T-C+1, T-C+1)
+        # this is to memory consuming, instead extract the diagonal stripe before
+            # # apply kernels
+            # m = self.kernels(x)  # (B, A, T-C+1, T-C+1)
+            # p = self.position_kernels(x) # (B, P*A, T-C+1, T-C+1)
 
-        # extract center diagonal
-        m = torch.diagonal(m, dim1=2, dim2=3).permute(0, 2, 1).contiguous()  # (B, T-C+1, A)
-        p = torch.diagonal(p, dim1=2, dim2=3).permute(0, 2, 1).contiguous()  # (B, T-C+1, P*A)
+            # # extract center diagonal
+            # m = torch.diagonal(m, dim1=2, dim2=3).permute(0, 2, 1).contiguous()  # (B, T-C+1, A)
+            # p = torch.diagonal(p, dim1=2, dim2=3).permute(0, 2, 1).contiguous()  # (B, T-C+1, P*A)
+
+        # diagonal extraction with unfolding
+        dx = [] # number of diagonals = T - C + 1
+        for i in range(T - self.C + 1):
+            diag = x[:, :, i:(i + self.C), i:(i + self.C)]  # (B, 1, C, C)
+            dx.append(diag)
+        x_unfolded = torch.stack(dx, dim=1)  # (B, T-C+1, 1, C, C)
+        x_unfolded = x_unfolded.view(B * (T - self.C + 1), 1, self.C, self.C)  # (B*(T-C+1), 1, C, C)
+        
+        m = self.kernels(x_unfolded)  # (B*(T-C+1), A, 1, 1)
+        p = self.position_kernels(x_unfolded)  # (B*(T-C+1), P*A, 1, 1)
+
+        m = m.view(B, T - self.C + 1, self.A)  # (B, T-C+1, A)
+        p = p.view(B, T - self.C + 1, self.P, self.A)  # (B, T-C+1, P, A)
 
         # compute softmax over algebra dimension
         m = F.softmax(m, dim=-1)  # (B, T-C+1, A)

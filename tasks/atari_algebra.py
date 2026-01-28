@@ -24,7 +24,7 @@ from ale_py.vector_env import AtariVectorEnv
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.atari_algebra import Policy_Core, Projector
+from implementations.networks.torch.policy.algebra import Policy_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.learning_algorithms.torch.supervised import Basic_Learner
