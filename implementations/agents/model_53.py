@@ -165,29 +165,24 @@ class Model_53(Agent):
             
             if self.do_supervision:
                 # learn Supervise content
-
                 # masks has shape (batch_size, context_length)
-                masks = self.actions.make_mask(batch_led=True)[:, :-1]
-                masks = apply_cascading_masks(
-                    masks,
+                svl_masks = apply_cascading_masks(
+                    self.actions.make_mask(batch_led=True)[:, :-1],
                     self.last_idles[1:],
                     self.last_truncates[1:],
                     self.last_dones[1:]
                 )
-
-                # self.supervised_trainer.train(
-                #     obs=self.obs[:-1].make_batch(batch_led=True),
-                #     actions=self.actions.make_batch(batch_led=True),
-                #     valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
-                #     masks=masks
-                # )
+            else:
+                svl_masks = None
 
             # learn RL
 
             # masks has shape (batch_size, context_length)
-            masks = self.actions.make_mask(batch_led=True)[:, :-1]
             # need to shift last_truncates by 1 to the left, because t signals whether t-1 is truncated
-            masks = apply_cascading_masks(masks, self.last_truncates[1:])
+            masks = apply_cascading_masks(
+                self.actions.make_mask(batch_led=True)[:, :-1], 
+                self.last_truncates[1:]
+            )
 
             self.trainer.learn(
                 obs=self.obs.make_batch(batch_led=True), 
@@ -195,7 +190,8 @@ class Model_53(Agent):
                 rewards=self.rewards[1:],
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
-                masks=masks
+                masks=masks,
+                svl_masks=svl_masks
             )
             
             left_over_slide = self.obs.mark(skip_last=True)

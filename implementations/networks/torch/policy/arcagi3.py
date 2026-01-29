@@ -55,9 +55,10 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
         self.head_content = nn.Sequential(
-            nn.Conv2d(channel, channel, kernel_size=1),
-            nn.Sigmoid()
+            nn.Conv2d(channel, channel, kernel_size=1)
         )
+
+        self.content_logstd = nn.Parameter(torch.zeros(1, 1, self.content_size))
 
         self.reset_parameters()
         self.load()
@@ -82,6 +83,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.head_flag.apply(init_actor_weights)
         self.head_action.apply(init_actor_weights)
         self.head_content.apply(init_actor_weights)
+        nn.init.constant_(self.content_logstd, 0.0)
 
 
     def __compute(self, context):
@@ -108,11 +110,11 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         
         logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
-        pprobs_content = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
+        content_logits = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
 
-        pprobs_content = torch.reshape(pprobs_content, (batch_size, context_size, self.content_size))
+        content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
 
-        return logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content
+        return logits_flag, logits_action, x_logits, y_logits, next_position, content_logits
     
 
     def get_action(self, context, valid_actions=None):
@@ -129,13 +131,13 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content = self.__compute(context)
+        logits_flag, logits_action, x_logits, y_logits, next_position, content_logits = self.__compute(context)
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
         props_x = Categorical(logits=x_logits)
         probs_y = Categorical(logits=y_logits)
-        props_content = Bernoulli(probs=pprobs_content)
+        props_content = Normal(content_logits, torch.exp(self.content_logstd.expand_as(content_logits)))
 
         action_flag = props_flag.sample()
         action_action = props_action.sample()
@@ -156,6 +158,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
     
 
     def get_log_probability(self, context, selected_action, valid_actions=None):
+        # context has shape (batch, context_size, self.packed_context_size)
 
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
@@ -169,13 +172,13 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content = self.__compute(context)
+        logits_flag, logits_action, x_logits, y_logits, next_position, content_logits = self.__compute(context)
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
         props_x = Categorical(logits=x_logits)
         probs_y = Categorical(logits=y_logits)
-        props_content = Bernoulli(probs=pprobs_content)
+        props_content = Normal(content_logits, torch.exp(self.content_logstd.expand_as(content_logits)))
 
         action_flag = selected_action[:, :, 0]
         action_action = selected_action[:, :, 1]
@@ -200,6 +203,61 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         ], dim=-1), torch.stack([
             entropy_flag, entropy_action, entropy_x, entropy_y, entropy_content
         ], dim=-1)
+
+
+    def get_log_probability_with_svl_loss(self, context, selected_action, valid_actions=None):
+        # now context has shape (batch, context_size + 1, self.packed_context_size)
+
+        if isinstance(context, np.ndarray):
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
+
+        context_full = context
+        context = context_full[:, :-1, :]  # remove last context for computing logprob
+        target_content = context_full[:, 1:, (1 + 1 + 3 + self.position_size): ]  # only content part for action loss
+
+        available_flags = None
+        available_actions = None
+        if valid_actions is not None:
+            if isinstance(valid_actions, np.ndarray):
+                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
+            # valid_actions has shape (batch, context_size, flag_size + action_size)
+            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
+            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+
+        logits_flag, logits_action, x_logits, y_logits, next_position, content_logits = self.__compute(context)
+
+        props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
+        props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
+        props_x = Categorical(logits=x_logits)
+        probs_y = Categorical(logits=y_logits)
+        props_content = Normal(content_logits, torch.exp(self.content_logstd.expand_as(content_logits)))
+
+        action_flag = selected_action[:, :, 0]
+        action_action = selected_action[:, :, 1]
+        action_x = selected_action[:, :, 2]
+        action_y = selected_action[:, :, 3]
+        action_content = selected_action[:, :, (1 + 3 + self.position_size):]
+
+        log_prob_flag = props_flag.log_prob(action_flag)
+        log_prob_action = props_action.log_prob(action_action)
+        log_prob_x = props_x.log_prob(action_x)
+        log_prob_y = probs_y.log_prob(action_y)
+        log_prob_content = props_content.log_prob(action_content).mean(-1)
+        
+        entropy_flag = props_flag.entropy()
+        entropy_action = props_action.entropy()
+        entropy_x = props_x.entropy()
+        entropy_y = probs_y.entropy()
+        entropy_content = props_content.entropy().mean(-1)
+
+        # svl_unsum_loss
+        svl_unsum_loss = torch.mean((props_content.mean - target_content) ** 2, dim=-1)
+
+        return torch.stack([
+            log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content
+        ], dim=-1), torch.stack([
+            entropy_flag, entropy_action, entropy_x, entropy_y, entropy_content
+        ], dim=-1), svl_unsum_loss
 
 
     def unpack_action(self, packed_action):
@@ -255,7 +313,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         return packed_context
 
 
-# return only action log prob
+# return only selected statistics
 class Projector:
     def __init__(self, master_core, selected_indices=[0, 1, 2, 3]):
         self.master_core = master_core
@@ -269,6 +327,12 @@ class Projector:
         log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
         entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
         return log_probs, entropy
+    
+    def get_log_probability_with_svl_loss(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy, svl_unsum_loss = self.master_core.get_log_probability_with_svl_loss(context, selected_action, valid_actions)
+        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
+        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
+        return log_probs, entropy, svl_unsum_loss
     
     def train(self):
         self.master_core.train()

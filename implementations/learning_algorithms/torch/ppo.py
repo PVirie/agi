@@ -17,7 +17,10 @@ from .base import masked_mean, masked_std
 
 class PPO(RL_Learner, Safe_nn_Module):
 
-    def __init__(self, policy_model: Policy_Network, value_model: Value_Network, device, persistence_path=None, minibatch_size=8):
+    def __init__(self, policy_model: Policy_Network, value_model: Value_Network, device, persistence_path=None, minibatch_size=8, svl_coef=None):
+        """
+        svl_coef: Coefficient for supervised value loss. If None, no supervised value loss is used.
+        """
         self.policy_model = policy_model
         self.value_model = value_model
         self.device = device
@@ -32,6 +35,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.vf_coef = 0.5
         self.max_grad_norm = 0.5
         self.target_kl = None
+
+        self.svl_coef = svl_coef
 
         self.update_epochs = 4
         self.minibatch_size = minibatch_size
@@ -57,7 +62,7 @@ class PPO(RL_Learner, Safe_nn_Module):
     def learn(self, 
               obs: Any, last_actions: Any, rewards: List[Any], 
               next_dones: List[List[bool]],
-              valid_actions: Any = None, masks: Any = None):
+              valid_actions: Any = None, masks: Any = None, svl_masks: Any = None):
         """
         obs: np array of shape (batch_size, context_length + 1, ...)
         last_actions: np array of shape (batch_size, context_length + 1, ...)
@@ -65,6 +70,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         next_dones: list (context_length) of bools of length batch_size
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
+        svl_masks: np array of shape (batch_size, context_length)
 
         Note that obs and last_actions include the context length + 1 items.
         This corresponds to the observations after taking the last actions.
@@ -76,6 +82,9 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
         b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
+        
+        if self.svl_coef is not None:
+            b_svl_masks = torch.ones_like(b_rewards).to(self.device) if svl_masks is None else convert_np_array_to_float_tensor(svl_masks, self.device)
 
         batch_size = b_rewards.shape[0]
         sequence_size = b_rewards.shape[1]
@@ -145,16 +154,30 @@ class PPO(RL_Learner, Safe_nn_Module):
                 if torch.sum(mb_masks) < 1e-8:
                     continue
 
-                mb_obs = b_obs[mb_inds, :-1, ...]
-                mb_actions = b_actions[mb_inds, 1:, ...]
-                mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
+                if self.svl_coef is not None:
+                    mb_obs = b_obs[mb_inds, :, ...]
+                    mb_actions = b_actions[mb_inds, 1:, ...]
+                    mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
+                    
+                    mb_newlogprob, mb_entropy, svl_unsum_loss = self.policy_model.get_log_probability_with_svl_loss(
+                        context=mb_obs,
+                        selected_action=mb_actions,
+                        valid_actions=mb_valid_actions
+                    )
+                    svl_loss = masked_mean(svl_unsum_loss, b_svl_masks[mb_inds, ...])
 
-                mb_newlogprob, mb_entropy = self.policy_model.get_log_probability(
-                    context=mb_obs,
-                    selected_action=mb_actions,
-                    valid_actions=mb_valid_actions,
-                )
-                mb_newvalue = self.value_model.get_value(mb_obs)
+                    mb_newvalue = self.value_model.get_value(mb_obs[:, :-1, ...])
+                else:
+                    mb_obs = b_obs[mb_inds, :-1, ...]
+                    mb_actions = b_actions[mb_inds, 1:, ...]
+                    mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
+                    
+                    mb_newlogprob, mb_entropy = self.policy_model.get_log_probability(
+                        context=mb_obs,
+                        selected_action=mb_actions,
+                        valid_actions=mb_valid_actions,
+                    )
+                    mb_newvalue = self.value_model.get_value(mb_obs)
                 
                 logratio = mb_newlogprob - mb_log_prob
                 ratio = logratio.exp()
@@ -184,7 +207,11 @@ class PPO(RL_Learner, Safe_nn_Module):
                     v_loss = 0.5 * masked_mean((mb_newvalue - mb_returns) ** 2, mb_masks)
 
                 entropy_loss = masked_mean(mb_entropy, mb_masks)
-                loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
+
+                if self.svl_coef is not None:
+                    loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef + svl_loss * self.svl_coef
+                else:
+                    loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
 
                 self.optimizer.zero_grad()
                 loss.backward()

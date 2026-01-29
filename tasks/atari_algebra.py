@@ -165,21 +165,21 @@ if __name__ == "__main__":
     random_agent = random_agent.Random_Agent("01")
 
     if args.scale == "small":
-        history_steps = 11
+        history_steps = 32
         hidden_size = 32
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
         position_size = 64
     elif args.scale == "medium":
-        history_steps = 11
+        history_steps = 32
         hidden_size = 64
         conv_layers = [16, 32, 64, 128, 256] # medium impala
         rollout_length = 128
         minibatch_size = 8
         position_size = 64
     else:  # large
-        history_steps = 11
+        history_steps = 32
         hidden_size = 128
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 128

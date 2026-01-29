@@ -12,7 +12,7 @@ class RL_Learner(abc.ABC):
     def learn(self, 
               obs: Any, last_actions: Any, rewards: List[Any], 
               next_dones: List[List[bool]],
-              valid_actions: Any = None, masks: Any = None):
+              valid_actions: Any = None, masks: Any = None, svl_masks: Any = None):
         pass
 
 
