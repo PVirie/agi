@@ -43,14 +43,14 @@ For example, to run the ARC AGI task with supervised learning for 360 seconds:
 - [x] Atari environment
 - [x] RL baseline (With simple models, too complex models tend to have high variance and very slow learning.)
 - [x] Supervised learning auxiliary loss
+- [x] Model 53: Full cognitive ability
+    - [x] Use RL to select two observation modes
+        - [x] Override content at the predict position
+        - [x] Jump to observed position
 - [ ] Algebra core
     - [ ] Exchange information between heads
     - [ ] Integrate content module (full Cognitive map or Tolman-Eichenbaum Machine)
     - [ ] Transfer value network from successful tasks to new tasks
-- [ ] Model 53: Full cognitive ability
-    - [ ] Use RL to select two observation modes
-        - [ ] Jump to observed position
-        - [ ] Override content at the predict position
 
 ## RL Environment Observation Handling: Standard vs. Vectorized
 

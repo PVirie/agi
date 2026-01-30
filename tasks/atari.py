@@ -27,7 +27,6 @@ from implementations.agents import random_agent, model_53
 from implementations.networks.torch.policy.arcagi3 import Policy_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
-from implementations.learning_algorithms.torch.supervised import Basic_Learner
 from implementations.networks.states import State_Sequence as Collector
 from implementations.networks.energy_memory import Energy_Memory as Memory
 
@@ -94,7 +93,6 @@ async def run(env, agent, rollout_length=16):
             policy_core.save()
             value_core.save()
             ppo_learner.save()
-            supervised_learner.save()
 
         if steps % (rollout_length * 10) == 0:
             # compute estimated time left
@@ -206,17 +204,13 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
         svl_coef=0.1 if args.with_supervision else None
     )
-    supervised_learner = Basic_Learner(
-        policy_model=Projector(policy_core, [4]), 
-        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
-    )
     memory = Memory(
         sizes=(1, position_size, policy_core.content_size),
         max_slot_size=256
     )
     model_53_agent = model_53.Model_53(
         policy_model=policy_core, value_model=value_core,
-        trainer=ppo_learner, supervised_trainer=supervised_learner,
+        trainer=ppo_learner,
         context_collector=Collector(max_history=history_steps),
         action_collector=Collector(max_history=history_steps),
         valid_action_collector=Collector(max_history=history_steps),

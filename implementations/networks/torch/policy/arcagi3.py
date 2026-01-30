@@ -21,7 +21,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         Safe_nn_Module.__init__(self, name="arcagi3_core", device=device, persistence_path=persistence_path)
         self.device = device
 
-        self.flag_size = 5  # num classes for flag
+        self.flag_size = 6  # num classes for flag
         self.action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
