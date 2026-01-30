@@ -8,6 +8,7 @@ class Memory_Operation_Type(Enum):
     FETCH = 1
     RESET = 2
     IDLE = 3  # no operation
+    FETCH_AND_CACHE = 4
 
 
 class Memory(abc.ABC):

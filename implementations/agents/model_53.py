@@ -122,7 +122,7 @@ class Model_53(Agent):
                 if flag == 0:
                     memory_action[i] = Memory_Operation_Type.CACHE
                 elif flag == 1:
-                    memory_action[i] = Memory_Operation_Type.FETCH
+                    memory_action[i] = Memory_Operation_Type.FETCH_AND_CACHE
                     memory_fetch_index[i] = 2
             if d or t:
                 self.thought_steps[i] = 0

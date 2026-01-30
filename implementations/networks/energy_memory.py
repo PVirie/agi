@@ -81,4 +81,20 @@ class Energy_Memory(Memory):
                     # append new
                     self.data[i][t][-1, :] = best_outputs[t][i, :]
 
+            elif flag == Memory_Operation_Type.FETCH_AND_CACHE:
+                # fetch and cache
+                t_index = index[i]
+                current_records = self.data[i] # [(slot_size, tuple_size[t])]
+                prob = self.__infer(current_records[t_index], best_outputs[t_index][i])  # (slot_size)
+                for t in range(len(self.sizes)):
+                    # fetch, only the parts that are not t_index
+                    if t != t_index:
+                        best_outputs[t][i, :] = self.__fetch(current_records[t], prob)
+                # now cache with the updated best_outputs
+                for t in range(len(self.sizes)):
+                    # shift left
+                    self.data[i][t][:-1, :] = self.data[i][t][1:, :]
+                    # append new
+                    self.data[i][t][-1, :] = best_outputs[t][i, :]
+
         return best_outputs

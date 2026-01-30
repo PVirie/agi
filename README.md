@@ -2,6 +2,11 @@
 
 An attempt to solve AGI.
 
+| Generation | Model Name            | Description                                                    |
+| ---------- | --------------------- | -------------------------------------------------------------- |
+| LIII       | Cognitive algebra     | A learnable computationally universal model.                   |
+| LIX        | Explicit algebra core | An improved version of Model 53 with an explicit algebra core. |
+
 ## Setup
 
 1. Setup environment in `secrets.env` file, place it in the root directory with the following content:
@@ -25,7 +30,7 @@ There are two approaches to run the AGI agent:
 ./run_manual.sh {torch-rocm} tasks/{arcagi3}.py {flags}
 ```
 
-For example, to run the ARC AGI task with supervised learning for 360 seconds:
+For example, to run the ARC AGI task with supervised auxiliary loss for 360 seconds:
 
 ```bash
 ./run_manual.sh torch-rocm tasks/arcagi3.py -svl -hr 0.1
