@@ -24,7 +24,8 @@ from ale_py.vector_env import AtariVectorEnv
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.algebra import Policy_Core, Projector
+from implementations.networks.torch.policy.algebra import Policy_Core
+from implementations.networks.torch.policy.arcagi3 import Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.networks.states import State_Sequence as Collector
@@ -93,7 +94,6 @@ async def run(env, agent, rollout_length=16):
             policy_core.save()
             value_core.save()
             ppo_learner.save()
-            supervised_learner.save()
 
         if steps % (rollout_length * 10) == 0:
             # compute estimated time left
@@ -169,7 +169,7 @@ if __name__ == "__main__":
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 64
+        position_size = 32
     elif args.scale == "medium":
         history_steps = 32
         hidden_size = 64

@@ -1,20 +1,17 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.distributions.normal import Normal
-from torch.distributions.categorical import Categorical
-from torch.distributions import Bernoulli
 import numpy as np
 import logging
 
-from interfaces.network import Policy_Network
-from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask
+from implementations.networks.torch.components.base import init_weights
+from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.temporal_unet import TemporalUNet
 from implementations.networks.torch.algebra_core.core import Algebra_Core
+from implementations.networks.torch.policy.arcagi3 import Policy_Core as ARCAGI3_Policy_Core
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
+class Policy_Core(ARCAGI3_Policy_Core):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, history_steps=0, max_temporal_len=32, device=None, persistence_path=None):
         nn.Module.__init__(self)
@@ -47,25 +44,38 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         )
 
         self.position_step = nn.Sequential(
-            nn.Linear(position_size + position_size + vec_dim, hidden_size),
+            nn.Linear(position_size + vec_dim, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, position_size)
         )
 
+        self.position_project = nn.Sequential(
+            nn.Linear(position_size + position_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+
+        self.feature_project = nn.Sequential(
+            nn.Linear(hidden_size * self.position_features, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+
         self.head_flag = nn.Sequential(
-            nn.Linear(position_size, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
         )
         self.head_action = nn.Sequential(
-            nn.Linear(position_size, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
         self.head_content = nn.Sequential(
-            nn.Conv2d(channel, channel, kernel_size=1),
-            nn.Sigmoid()
+            nn.Conv2d(channel, channel, kernel_size=1)
         )
+
+        self.content_logstd = nn.Parameter(torch.zeros(1, 1, self.content_size))
 
         self.reset_parameters()
         self.load()
@@ -91,9 +101,10 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.head_flag.apply(init_actor_weights)
         self.head_action.apply(init_actor_weights)
         self.head_content.apply(init_actor_weights)
+        nn.init.constant_(self.content_logstd, 0.0)
 
 
-    def __compute(self, context):
+    def compute(self, context):
         # context has shape (batch, context_size, self.packed_context_size)
         batch_size = context.size(0)
         context_size = context.size(1)
@@ -117,181 +128,31 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         # now convert features to position features
         # first merge batch with position_features
-        features = torch.reshape(features, (batch_size, context_size, self.position_features, self.hidden_size))
-        position_features = torch.reshape(torch.permute(features, (0, 2, 1, 3)), (batch_size * self.position_features, context_size, self.hidden_size))
+        split_features = torch.reshape(features, (batch_size, context_size, self.position_features, self.hidden_size))
+        position_features = torch.reshape(torch.permute(split_features, (0, 2, 1, 3)), (batch_size * self.position_features, context_size, self.hidden_size))
         position_output = self.algebra_core(position_features)  # (batch_size * position_features, context_size, position_size / position_features)
         position_output = torch.reshape(position_output, (batch_size, self.position_features, context_size, self.position_size // self.position_features))
         position_output = torch.permute(position_output, (0, 2, 1, 3))  # (batch_size, context_size, position_features, position_size / position_features)
         position_output = torch.reshape(position_output, (batch_size, context_size, self.position_size))  # (batch_size, context_size, position_size)
 
-        next_position = self.position_step(torch.concat([last_position, position_output, action_part], dim=-1))
+        # get next position from step
+        next_position = self.position_step(torch.concat([last_position, action_part], dim=-1))
 
-        logits_flag = self.head_flag(next_position)    # (B, T, flag_size)
-        logits_action = self.head_action(next_position) # (B, T, action_size)
-        pprobs_content = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
+        projected_position = self.position_project(torch.concat([position_output, next_position], dim=-1)) # (batch_size, context_size, hidden_size)
+        projected_features = self.feature_project(features) # (batch_size, context_size, hidden_size)
 
-        pprobs_content = torch.reshape(pprobs_content, (batch_size, context_size, self.content_size))
-
-        return logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content
-    
-
-    def get_action(self, context, valid_actions=None):
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        available_flags = None
-        available_actions = None
-        if valid_actions is not None:
-            if isinstance(valid_actions, np.ndarray):
-                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, flag_size + action_size)
-            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
-            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
-
-        logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content = self.__compute(context)
-
-        props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
-        props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
-        props_x = Categorical(logits=x_logits)
-        probs_y = Categorical(logits=y_logits)
-        props_content = Bernoulli(probs=pprobs_content)
-
-        action_flag = props_flag.sample()
-        action_action = props_action.sample()
-        action_x = props_x.sample()
-        action_y = probs_y.sample()
-        action_content = props_content.sample()
-
-        action = torch.cat([
-            action_flag.unsqueeze(-1),
-            action_action.unsqueeze(-1),
-            action_x.unsqueeze(-1),
-            action_y.unsqueeze(-1),
-            next_position.detach(),
-            action_content
-        ], dim=-1)
-
-        return action.cpu().numpy().astype(float)
-    
-
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        available_flags = None
-        available_actions = None
-        if valid_actions is not None:
-            if isinstance(valid_actions, np.ndarray):
-                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, flag_size + action_size)
-            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
-            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
-
-        logits_flag, logits_action, x_logits, y_logits, next_position, pprobs_content = self.__compute(context)
-
-        props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
-        props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
-        props_x = Categorical(logits=x_logits)
-        probs_y = Categorical(logits=y_logits)
-        props_content = Bernoulli(probs=pprobs_content)
-
-        action_flag = selected_action[:, :, 0]
-        action_action = selected_action[:, :, 1]
-        action_x = selected_action[:, :, 2]
-        action_y = selected_action[:, :, 3]
-        action_content = selected_action[:, :, (1 + 3 + self.position_size):]
-
-        log_prob_flag = props_flag.log_prob(action_flag)
-        log_prob_action = props_action.log_prob(action_action)
-        log_prob_x = props_x.log_prob(action_x)
-        log_prob_y = probs_y.log_prob(action_y)
-        log_prob_content = props_content.log_prob(action_content).mean(-1)
-        
-        entropy_flag = props_flag.entropy()
-        entropy_action = props_action.entropy()
-        entropy_x = props_x.entropy()
-        entropy_y = probs_y.entropy()
-        entropy_content = props_content.entropy().mean(-1)
-
-        return torch.stack([
-            log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content
-        ], dim=-1), torch.stack([
-            entropy_flag, entropy_action, entropy_x, entropy_y, entropy_content
-        ], dim=-1)
-
-
-    def unpack_action(self, packed_action):
-        # packed_action has shape (batch, self.packed_action_size)
-        # return int_action, ext_action, position, content
-
-        int_part = packed_action[:, 0].astype(int)
-        ext_part = packed_action[:, 1:4].astype(int)
-        position = packed_action[:, 4:4 + self.position_size].astype(float)
-        content = packed_action[:, 4 + self.position_size:].astype(float)
-
-        return int_part, ext_part, position, content
-    
-
-    def pack_context(self, b_reward=None, b_int=None, b_ext=None, b_position=None, b_content=None):
-        # b_xxx has shape (batch, ...)
-        # return packed_action_seq of shape (batch, self.packed_action_size) of type int
-        # replace none with zeros
-
-        batch_size = None
-        if b_reward is not None:
-            batch_size = b_reward.shape[0]
-        elif b_int is not None:
-            batch_size = b_int.shape[0]
-        elif b_ext is not None:
-            batch_size = b_ext.shape[0]
-        elif b_position is not None:
-            batch_size = b_position.shape[0]
-        elif b_content is not None:
-            batch_size = b_content.shape[0]
+        # compute dropout
+        if self.training:
+            keep_prob = 0.2
+            mask = torch.empty([batch_size, context_size, 1], device=self.device).bernoulli_(keep_prob)
+            merged_features = projected_position + projected_features * mask / keep_prob
         else:
-            raise ValueError("At least one of b_reward, b_content must be provided")
-        
-        if b_reward is None:
-            b_reward = np.zeros((batch_size,), dtype=float)
-        if b_int is None:
-            b_int = np.zeros((batch_size,), dtype=int)
-        if b_ext is None:
-            b_ext = np.zeros((batch_size, 3), dtype=int)
-        if b_position is None:
-            b_position = np.zeros((batch_size, self.position_size), dtype=float)
-        if b_content is None:
-            b_content = np.zeros((batch_size, self.content_size), dtype=float)
+            merged_features = projected_position + projected_features
 
-        packed_context = np.concatenate([
-            np.reshape(b_reward, (batch_size, 1)),
-            np.reshape(b_int, (batch_size, 1)),
-            b_ext,
-            b_position,
-            b_content
-        ], axis=-1).astype(float)
+        logits_flag = self.head_flag(merged_features)    # (B, T, flag_size)
+        logits_action = self.head_action(merged_features) # (B, T, action_size)
+        content_logits = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
 
-        return packed_context
+        content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
 
-
-# return only action log prob
-class Projector:
-    def __init__(self, master_core, selected_indices=[0, 1, 2, 3]):
-        self.master_core = master_core
-        self.selected_indices = selected_indices
-
-    def parameters(self):
-        return self.master_core.parameters()
-    
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy = self.master_core.get_log_probability(context, selected_action, valid_actions)
-        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
-        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
-        return log_probs, entropy
-    
-    def train(self):
-        self.master_core.train()
-
-    def eval(self):
-        self.master_core.eval()
+        return logits_flag, logits_action, x_logits, y_logits, next_position, content_logits

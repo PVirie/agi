@@ -53,7 +53,7 @@ async def run(env, agent, rollout_length=16):
     all_games_info = await env.list_games()
     all_public_game_ids = [game["game_id"] for game in all_games_info if game.get("game_type") == "public"]
     # now duplicate game to have at least 3 games for each id
-    selected_game_ids = all_public_game_ids * 3
+    selected_game_ids = all_public_game_ids * 8
     await env.start(selected_game_ids=selected_game_ids)
 
     actions = [(Action_Type.RESET, ) for _ in range(len(selected_game_ids))]
@@ -173,22 +173,22 @@ if __name__ == "__main__":
         history_steps = 3
         hidden_size = 64
         conv_layers = [64, 64, 64] # basic impala
-        rollout_length = 32
-        minibatch_size = 9
-        position_size = 8
+        rollout_length = 64
+        minibatch_size = 4
+        position_size = 4
     elif args.scale == "medium":
         history_steps = 7
         hidden_size = 128
         conv_layers = [64, 64, 64, 64] # medium impala
-        rollout_length = 32
-        minibatch_size = 9
-        position_size = 16
+        rollout_length = 64
+        minibatch_size = 4
+        position_size = 8
     else:  # large
-        history_steps = 17
+        history_steps = 15
         hidden_size = 256
         conv_layers = [64, 64, 128, 128, 256, 256] # large impala
-        rollout_length = 32
-        minibatch_size = 9
+        rollout_length = 64
+        minibatch_size = 4
         position_size = 16
 
     parameters_path = f"{experiment_path}/parameters"

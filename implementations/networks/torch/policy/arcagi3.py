@@ -86,7 +86,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         nn.init.constant_(self.content_logstd, 0.0)
 
 
-    def __compute(self, context):
+    def compute(self, context):
         # context has shape (batch, context_size, self.packed_context_size)
         batch_size = context.size(0)
         context_size = context.size(1)
@@ -131,7 +131,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        logits_flag, logits_action, x_logits, y_logits, next_position, content_logits = self.__compute(context)
+        logits_flag, logits_action, x_logits, y_logits, next_position, content_logits = self.compute(context)
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
@@ -172,7 +172,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        logits_flag, logits_action, x_logits, y_logits, next_position, content_logits = self.__compute(context)
+        logits_flag, logits_action, x_logits, y_logits, next_position, content_logits = self.compute(context)
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
@@ -224,7 +224,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        logits_flag, logits_action, x_logits, y_logits, next_position, content_logits = self.__compute(context)
+        logits_flag, logits_action, x_logits, y_logits, next_position, content_logits = self.compute(context)
 
         props_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         props_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
