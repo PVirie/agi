@@ -9,15 +9,16 @@ APP_ROOT = os.getenv("APP_ROOT", "/app")
 
 from utilities.package_install import install
 
+install("opencv-python-headless") 
 install("ale-py")
-install("gymnasium[atari]")
+install("gymnasium[atari, other]")
 
-from ale_py.vector_env import AtariVectorEnv
+import ale_py
+from utilities.atari.environments import Multi_Atari_Environment
 
 # Create a vector environment with 4 parallel instances of Breakout
-envs = AtariVectorEnv(
-    game="pong",  # The ROM id not name, i.e., camel case compared to `gymnasium.make` name versions
-    num_envs=8,
+envs = Multi_Atari_Environment(
+    game_ids=["ALE/Pong-v5", "ALE/AirRaid-v5", "ALE/SpaceInvaders-v5", "ALE/Assault-v5"],
     img_height=64,           # Height to resize frames to
     img_width=32,            # Width to resize frames to
     maxpool=True,               # 1. Solves "Invisibility" (Flickering)
@@ -36,7 +37,7 @@ start_time = time.perf_counter()
 total_steps = 0
 for _ in range(10000):
     # Take random actions in all environments
-    actions = envs.action_space.sample()
+    actions = envs.sample_actions()
     observations, rewards, terminations, truncations, infos = envs.step(actions)
     total_steps += len(actions)
     elapsed_time = time.perf_counter() - start_time
@@ -51,7 +52,7 @@ os.makedirs(artifacts_path, exist_ok=True)
 for i, frame in enumerate(observations):
     for j in range(frame.shape[0]):
         img = Image.fromarray(frame[j, ...], mode='L')  # 'L' mode for grayscale
-        img.save(f"{artifacts_path}/pong_env_{i}_{j}.png")
+        img.save(f"{artifacts_path}/env_{i}_{j}.png")
 
 # Close the environment when done
 envs.close()
