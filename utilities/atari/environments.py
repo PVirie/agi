@@ -9,6 +9,7 @@ from gymnasium.wrappers import (
     NormalizeReward
 )
 
+# Standard Atari Action Set (Order matters!)
 ATARI_ACTIONS = [
     "NOOP", "FIRE", "UP", "RIGHT", 
     "LEFT", "DOWN", "UPRIGHT", "UPLEFT", 
@@ -27,9 +28,11 @@ class Multi_Atari_Environment:
         frameskip=4,
         grayscale=True,
         episodic_life=True,
-        reward_clipping=True, # In this context, this flag enables Normalization
+        reward_clipping=True,
         render_mode=None):
 
+        # 1. Generate Available Actions List
+        # Structure: List[List[int]] -> [[0, 2, 3], [0, 1, 4, 5], ...]
         self.available_actions = []
         
         for gid in game_ids:
@@ -46,17 +49,10 @@ class Multi_Atari_Environment:
             
             self.available_actions.append(game_indices)
 
+        # 2. Build Vector Env
         def make_env(game_id):
             def _init():
                 env = gym.make(game_id, full_action_space=True, render_mode=render_mode)
-
-                # 1. Tracker: Records the "True" game score before any clipping/normalization.
-                # NOTE: Because episodic_life=True is used below, this will record the 
-                # score per "Life", not per full "Game" (e.g., 3 lives). 
-                # To log full game scores, you usually need a separate Eval env with episodic_life=False.
-                env = RecordEpisodeStatistics(env)
-
-                # 2. Preprocessing
                 env = AtariPreprocessing(
                     env,
                     frame_skip=1,
@@ -65,22 +61,16 @@ class Multi_Atari_Environment:
                     terminal_on_life_loss=episodic_life,
                     noop_max=30
                 )
+                
+                env = RecordEpisodeStatistics(env)
 
-                # 3. Resize
                 if img_height != 84 or img_width != 84:
                     env = ResizeObservation(env, (img_height, img_width))
 
-                # 4. PPO Reward Processing
                 if reward_clipping:
-                    # A. Normalize: Tracks running mean/std of rewards
                     env = NormalizeReward(env, gamma=0.99)
-                    
-                    # B. Clip Normalized Reward (CRITICAL FIX)
-                    # NormalizeReward can still output huge values (e.g. 50 sigma).
-                    # PPO requires clipping the *normalized* reward, usually to [-10, 10].
                     env = TransformReward(env, lambda r: np.clip(r, -10, 10))
 
-                # 5. Frame Stacking
                 if stack_num > 1:
                     env = FrameStackObservation(env, stack_num)
                 
@@ -88,31 +78,41 @@ class Multi_Atari_Environment:
             return _init
 
         env_fns = [make_env(gid) for gid in game_ids]
-        
         self.envs = gym.vector.AsyncVectorEnv(env_fns)
 
-
-    def sample_actions(self):
-        """
-        Returns a batch of random actions, one for each environment.
-        Output shape: (num_envs, )
-        """
-        actions = []
-        for valid_indices in self.available_actions:
-            action = np.random.choice(valid_indices)
-            actions.append(action)
-        return np.array(actions)
 
     def reset(self, seed=None):
         return self.envs.reset(seed=seed)
 
+
     def step(self, actions, mask=None):
         return self.envs.step(actions)
-    
+
+
+    def get_available_actions(self):
+        """
+        Returns a list of lists containing valid action indices for each env.
+        Example: [[0, 2, 3], [0, 1, 4, 5]]
+        """
+        return self.available_actions
+
+
+    def sample_valid_actions(self):
+        """
+        Helper: Randomly samples ONLY valid actions for each game.
+        """
+        actions = []
+        for valid_indices in self.available_actions:
+            # Pick one random index from the list of valid ones
+            actions.append(np.random.choice(valid_indices))
+        return np.array(actions)
+
+
     def get_real_final_observation(self, next_obs, infos, env_index):
         if "_final_observation" in infos and infos["_final_observation"][env_index]:
             return infos["final_observation"][env_index]
         return next_obs[env_index]
+
 
     def close(self):
         self.envs.close()

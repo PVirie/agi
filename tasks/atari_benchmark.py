@@ -37,7 +37,7 @@ start_time = time.perf_counter()
 total_steps = 0
 for _ in range(10000):
     # Take random actions in all environments
-    actions = envs.sample_actions()
+    actions = envs.sample_valid_actions()
     observations, rewards, terminations, truncations, infos = envs.step(actions)
     total_steps += len(actions)
     elapsed_time = time.perf_counter() - start_time

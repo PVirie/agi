@@ -17,9 +17,12 @@ APP_ROOT = os.getenv("APP_ROOT", "/app")
 
 from utilities.package_install import install
 
+install("opencv-python-headless") 
 install("ale-py")
+install("gymnasium[atari, other]")
 
-from ale_py.vector_env import AtariVectorEnv
+import ale_py
+from utilities.atari.environments import Multi_Atari_Environment
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -44,8 +47,7 @@ async def run(env, agent, rollout_length=16):
     last_reset = [False for _ in observations]
 
     total_scores = [0 for _ in observations]
-    session_score_stat = 0
-    session_score_update_alpha = 0.95
+    session_score_update_alpha = 0.985
     start_time = time.perf_counter()
     steps = 0
     while True:
@@ -59,9 +61,7 @@ async def run(env, agent, rollout_length=16):
             last_resets=last_reset,
             latest_frames=[obs.astype(np.float32) / 255.0 for obs in observations],
             rewards=[r.item() for r in rewards],
-            next_available_actions=[
-                list(range(6)) for _ in observations
-            ],
+            next_available_actions=env.get_available_actions(),
             force_train=steps % rollout_length == 0 or should_stop,
         )
         actions = [int(a[0].item()) if a is not None else None for a in actions]
@@ -76,18 +76,19 @@ async def run(env, agent, rollout_length=16):
         for i in range(len(observations)):
             total_scores[i] += rewards[i].item()
             if terminations[i] or truncations[i]:
-                session_score_stat = session_score_update_alpha * total_scores[i] + (1 - session_score_update_alpha) * session_score_stat
-                total_scores[i] = 0
+                total_score = infos["episode"]["r"][i]
+                total_scores[i] = (
+                    session_score_update_alpha * total_scores[i]
+                    + (1 - session_score_update_alpha) * total_score
+                )
 
         steps += 1
-        if any([r != 0 for r in rewards]):
-            logging.info(f"{steps}| Rewards: {rewards}")
 
         if steps % rollout_length == 0:
             ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
 
         if steps % (rollout_length * 2) == 0 or should_stop:
-            logging.info(f"{steps}| Session score stat: {session_score_stat}")
+            logging.info(f"{steps}| Scores: {['{:.2f}'.format(s) for s in total_scores]}")
             logging.info(f"{steps}| Selected actions: {actions}")
 
             # save 
@@ -148,11 +149,13 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
-    env = AtariVectorEnv(
-        game="pong",  # The ROM id not name, i.e., camel case compared to `gymnasium.make` name versions
-        num_envs=16,                # Number of parallel environments
-        img_height=64,              # Height to resize frames to
-        img_width=32,               # Width to resize frames to
+    env = Multi_Atari_Environment(
+        game_ids=[
+            "ALE/Pong-v5", "ALE/SpaceInvaders-v5", "ALE/Breakout-v5", "ALE/Carnival-v5",
+            "ALE/BankHeist-v5", "ALE/Amidar-v5", "ALE/VideoPinball-v5", "ALE/VideoCheckers-v5"
+        ],
+        img_height=64,           # Height to resize frames to
+        img_width=32,            # Width to resize frames to
         maxpool=True,               # 1. Solves "Invisibility" (Flickering)
         stack_num=4,                # 2. Solves "Motion" (Velocity)
         frameskip=4,                # 3. Standard time resolution
@@ -165,14 +168,14 @@ if __name__ == "__main__":
 
     if args.scale == "small":
         history_steps = 32
-        hidden_size = 32
-        conv_layers = [16, 32, 32] # basic impala
+        hidden_size = 128
+        conv_layers = [16, 32, 64, 64] # basic impala
         rollout_length = 128
-        minibatch_size = 8
-        position_size = 32
+        minibatch_size = 4
+        position_size = 64
     elif args.scale == "medium":
         history_steps = 32
-        hidden_size = 64
+        hidden_size = 128
         conv_layers = [16, 32, 64, 128, 256] # medium impala
         rollout_length = 128
         minibatch_size = 8
@@ -188,7 +191,7 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        action_size=6, position_size=position_size,
+        action_size=18, position_size=position_size,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=conv_layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
