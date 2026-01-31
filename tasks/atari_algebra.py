@@ -74,7 +74,6 @@ async def run(env, agent, rollout_length=16):
         last_reset = [False for _ in observations]
 
         for i in range(len(observations)):
-            total_scores[i] += rewards[i].item()
             if terminations[i] or truncations[i]:
                 total_score = infos["episode"]["r"][i]
                 total_scores[i] = (
