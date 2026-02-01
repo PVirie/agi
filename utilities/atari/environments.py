@@ -1,12 +1,12 @@
 import gymnasium as gym
 import numpy as np
 from gymnasium.wrappers import (
+    RecordEpisodeStatistics,
     AtariPreprocessing,
-    TransformReward,
     FrameStackObservation,
     ResizeObservation,
-    RecordEpisodeStatistics,
-    NormalizeReward
+    NormalizeReward,
+    ClipReward
 )
 
 # Standard Atari Action Set (Order matters!)
@@ -68,11 +68,11 @@ class Multi_Atari_Environment:
                     env = ResizeObservation(env, (img_height, img_width))
 
                 if reward_clipping:
-                    env = NormalizeReward(env, gamma=0.99)
-                    env = TransformReward(env, lambda r: np.clip(r, -10, 10))
+                    # env = NormalizeReward(env, gamma=0.99)
+                    env = ClipReward(env, min_reward=-1, max_reward=1)
 
                 if stack_num > 1:
-                    env = FrameStackObservation(env, stack_num)
+                    env = FrameStackObservation(env, stack_size=stack_num, padding_type='zero')
                 
                 return env
             return _init

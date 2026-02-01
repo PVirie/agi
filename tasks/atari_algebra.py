@@ -47,7 +47,7 @@ async def run(env, agent, rollout_length=16):
     last_reset = [False for _ in observations]
 
     total_scores = [0 for _ in observations]
-    session_score_update_alpha = 0.985
+    session_score_update_alpha = 0.975
     start_time = time.perf_counter()
     steps = 0
     while True:
@@ -148,11 +148,13 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
+    # game_ids=[
+    #     "ALE/Pong-v5", "ALE/SpaceInvaders-v5", "ALE/Breakout-v5", "ALE/Carnival-v5",
+    #     "ALE/BankHeist-v5", "ALE/Amidar-v5", "ALE/VideoPinball-v5", "ALE/VideoCheckers-v5"
+    # ]
+    game_ids=["ALE/Pong-v5"] * 32
     env = Multi_Atari_Environment(
-        game_ids=[
-            "ALE/Pong-v5", "ALE/SpaceInvaders-v5", "ALE/Breakout-v5", "ALE/Carnival-v5",
-            "ALE/BankHeist-v5", "ALE/Amidar-v5", "ALE/VideoPinball-v5", "ALE/VideoCheckers-v5"
-        ],
+        game_ids=game_ids,   
         img_height=64,           # Height to resize frames to
         img_width=32,            # Width to resize frames to
         maxpool=True,               # 1. Solves "Invisibility" (Flickering)
