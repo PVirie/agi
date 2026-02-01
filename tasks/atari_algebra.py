@@ -47,7 +47,7 @@ async def run(env, agent, rollout_length=16):
     last_reset = [False for _ in observations]
 
     total_returns = [0 for _ in observations]
-    session_return_update_alpha = 0.975
+    session_return_update_alpha = 0.9
     start_time = time.perf_counter()
     steps = 0
     while True:
@@ -82,8 +82,8 @@ async def run(env, agent, rollout_length=16):
                 )
 
         steps += 1
-        # if any([r != 0 for r in rewards]):
-        #     logging.info(f"{steps}| Rewards: {rewards}")
+        if any([r != 0 for r in rewards]):
+            logging.info(f"{steps}| Rewards: {rewards}")
 
         if steps % rollout_length == 0:
             ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
@@ -154,7 +154,7 @@ if __name__ == "__main__":
     #     "ALE/Pong-v5", "ALE/SpaceInvaders-v5", "ALE/Breakout-v5", "ALE/Carnival-v5",
     #     "ALE/BankHeist-v5", "ALE/Amidar-v5", "ALE/VideoPinball-v5", "ALE/VideoCheckers-v5"
     # ]
-    game_ids=["ALE/Pong-v5"] * 32
+    game_ids=["ALE/Pong-v5"] * 16
     env = Multi_Atari_Environment(
         game_ids=game_ids,   
         img_height=64,           # Height to resize frames to
@@ -171,11 +171,11 @@ if __name__ == "__main__":
 
     if args.scale == "small":
         history_steps = 32
-        hidden_size = 128
-        conv_layers = [16, 32, 64, 64] # basic impala
+        hidden_size = 32
+        conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
-        minibatch_size = 4
-        position_size = 64
+        minibatch_size = 8
+        position_size = 32
     elif args.scale == "medium":
         history_steps = 32
         hidden_size = 128
