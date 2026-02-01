@@ -42,9 +42,9 @@ async def run(env, agent, rollout_length=16):
     last_truncated = [False for _ in observations]
     last_reset = [False for _ in observations]
 
-    total_scores = [0 for _ in observations]
-    session_score_stat = 0
-    session_score_update_alpha = 0.95
+    total_returns = [0 for _ in observations]
+    session_return_stat = 0
+    session_return_update_alpha = 0.95
     start_time = time.perf_counter()
     steps = 0
     while True:
@@ -73,10 +73,10 @@ async def run(env, agent, rollout_length=16):
         last_reset = [False for _ in observations]
 
         for i in range(len(observations)):
-            total_scores[i] += rewards[i].item()
+            total_returns[i] += rewards[i].item()
             if terminations[i] or truncations[i]:
-                session_score_stat = session_score_update_alpha * total_scores[i] + (1 - session_score_update_alpha) * session_score_stat
-                total_scores[i] = 0
+                session_return_stat = session_return_update_alpha * total_returns[i] + (1 - session_return_update_alpha) * session_return_stat
+                total_returns[i] = 0
 
         steps += 1
         if any([r != 0 for r in rewards]):
@@ -86,7 +86,7 @@ async def run(env, agent, rollout_length=16):
             ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
 
         if steps % (rollout_length * 2) == 0 or should_stop:
-            logging.info(f"{steps}| Session score stat: {session_score_stat}")
+            logging.info(f"{steps}| Session return stat: {session_return_stat}")
             logging.info(f"{steps}| Selected actions: {actions}")
 
             # save 
