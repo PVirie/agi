@@ -129,11 +129,8 @@ class Policy_Core(ARCAGI3_Policy_Core):
         # now convert features to position features
         # first merge batch with position_features
         split_features = torch.reshape(features, (batch_size, context_size, self.position_features, self.hidden_size))
-        position_features = torch.reshape(torch.permute(split_features, (0, 2, 1, 3)), (batch_size * self.position_features, context_size, self.hidden_size))
-        position_output = self.algebra_core(position_features)  # (batch_size * position_features, context_size, position_size / position_features)
-        position_output = torch.reshape(position_output, (batch_size, self.position_features, context_size, self.position_size // self.position_features))
-        position_output = torch.permute(position_output, (0, 2, 1, 3))  # (batch_size, context_size, position_features, position_size / position_features)
-        position_output = torch.reshape(position_output, (batch_size, context_size, self.position_size))  # (batch_size, context_size, position_size)
+        position_output = self.algebra_core(split_features)  # (batch_size, context_size, position_features, position_size / position_features)
+        position_output = torch.reshape(position_output, (batch_size, context_size, self.position_size))
 
         # get next position from step
         next_position = self.position_step(torch.concat([last_position, action_part], dim=-1))
@@ -143,7 +140,7 @@ class Policy_Core(ARCAGI3_Policy_Core):
 
         # compute dropout
         if self.training:
-            keep_prob = 0.2
+            keep_prob = 0.75
             mask = torch.empty([batch_size, context_size, 1], device=self.device).bernoulli_(keep_prob)
             merged_features = projected_position + projected_features * mask / keep_prob
         else:

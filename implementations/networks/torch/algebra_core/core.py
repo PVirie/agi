@@ -21,38 +21,48 @@ class Algebra_Core(nn.Module):
 
     def forward(self, x):
         """
-        :param x: (B, T, F)
-        :return: (B, T, P)
+        :param x: (B, T, n, F)
+        :return: (B, T, n, P)
         """
         B = x.shape[0]
         T = x.shape[1]
+        N = x.shape[2]
 
-        # First pad the x along dim 1
-        x = F.pad(x, (0, 0, self.C - 1, 0), mode='constant', value=0)  # (B, T + C - 1, F)
+        BN = B * N
+        BNT = B * N * T
+
+        # rearrange x to (B * N, T, F)
+        x = torch.reshape(torch.permute(x, (0, 2, 1, 3)), (B * N, T, -1))
+
+        # pad the x along dim 1
+        x = F.pad(x, (0, 0, self.C - 1, 0), mode='constant', value=0)  # (B * N, T + C - 1, F)
 
         # perform cosine similarity computation along the feature dimension
 
-        # Instead first fold x into smaller (B*T, F, C) tensor
-        x_folded = x.unfold(dimension=1, size=self.C, step=1)  # (B, T, F, C)
-        x_folded = x_folded.contiguous().view(B * T, -1, self.C)  # (B*T, F, C)
+        # Instead first fold x into smaller (B * N * T, F, C) tensor
+        x_folded = x.unfold(dimension=1, size=self.C, step=1)  # (B * N, T, F, C)
+        x_folded = x_folded.contiguous().view(BNT, -1, self.C)  # (B * N * T, F, C)
         
         # compute cosine similarity
-        x_folded_unsq = x_folded.unsqueeze(-1)  # (B*T, F, C, 1)
-        sim_matrix = F.cosine_similarity(x_folded_unsq, x_folded_unsq.transpose(-2, -1), dim=1)  # (B*T, C, C)
-        sim_matrix = sim_matrix.unsqueeze(1)  # (B*T, 1, C, C)
+        x_folded_unsq = x_folded.unsqueeze(-1)  # (B * N * T, F, C, 1)
+        sim_matrix = F.cosine_similarity(x_folded_unsq, x_folded_unsq.transpose(-2, -1), dim=1)  # (B * N * T, C, C)
+        sim_matrix = sim_matrix.unsqueeze(1)  # (B * N * T, 1, C, C)
 
         # apply kernels
-        m = self.kernels(sim_matrix)  # (B*T, A)
-        p = self.position_kernels(sim_matrix)  # (B*T, P*A)
-        m = m.view(B, T, self.A)  # (B, T, A)
-        p = p.view(B, T, self.P, self.A)  # (B, T, P, A)
+        m = self.kernels(sim_matrix)  # (B * N * T, A)
+        p = self.position_kernels(sim_matrix)  # (B * N * T, P*A)
+        m = m.view(BN, T, self.A)  # (B * N, T, A)
+        p = p.view(BN, T, self.P, self.A)  # (B * N, T, P, A)
 
         # compute softmax over algebra dimension
-        m = F.softmax(m, dim=-1)  # (B, T, A)
+        m = F.softmax(m, dim=-1)  # (B * N, T, A)
 
         # compute weighted sum over algebra dimension to get position output
-        p = p.view(B, T, self.P, self.A)  # (B, T, P, A)
-        out = torch.einsum('btpa, bta -> btp', p, m)  # (B, T, P)
+        p = p.view(BN, T, self.P, self.A)  # (B * N, T, P, A)
+        out = torch.einsum('btpa, bta -> btp', p, m)  # (B * N, T, P)
+
+        # rearrange to (B, N, T, P)
+        out = torch.permute(torch.reshape(out, (B, N, T, -1)), (0, 2, 1, 3))
 
         return out
 
@@ -68,7 +78,7 @@ if __name__ == "__main__":
     model.eval()
 
     # test whether the model does not change output values at different positions
-    data = torch.randn(1, context_size + history_steps * 2, 16).to(device)
+    data = torch.randn(1, context_size + history_steps * 2, 2, 16).to(device)
     shifted_data = torch.roll(data, shifts=history_steps, dims=1)
     out1 = model(data)[:, history_steps:(data.shape[1]-history_steps), :]
     out2 = model(shifted_data)[:, (2*history_steps):, :]
@@ -77,7 +87,7 @@ if __name__ == "__main__":
 
 
     # test whether model not violate causality
-    data_causality = torch.randn(1, context_size + history_steps, 16).to(device)
+    data_causality = torch.randn(1, context_size + history_steps, 2, 16).to(device)
     out_causality = model(data_causality)  # (1, context_size + history_steps, p)
     for t in range(context_size + history_steps):
         # output at position t should not depend on input at position > t

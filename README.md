@@ -54,8 +54,8 @@ For example, to run the ARC AGI task with supervised auxiliary loss for 360 seco
         - [x] Override content at the predict position
         - [x] Jump to observed position
 - [ ] Algebra core
-    - [ ] Exchange information between heads
-    - [x] Integrate content module (full Cognitive map or Tolman-Eichenbaum Machine)
+    - [x] Feature similarity position inference
+    - [ ] Extract position mechanics (full Cognitive map or Tolman-Eichenbaum Machine)
 - [ ] Experiments
     - [ ] Algebra core alone performance
     - [ ] Algebra core transfer training performance
