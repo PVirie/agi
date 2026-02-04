@@ -44,9 +44,9 @@ class Policy_Core(ARCAGI3_Policy_Core):
         )
 
         self.position_step = nn.Sequential(
-            nn.Linear(position_size + vec_dim, hidden_size),
+            nn.Linear(position_size // self.position_features, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, position_size)
+            nn.Linear(hidden_size, position_size // self.position_features)
         )
 
         self.position_project = nn.Sequential(
@@ -87,6 +87,8 @@ class Policy_Core(ARCAGI3_Policy_Core):
         self.temporal_unet.reset_parameters()
         self.algebra_core.apply(init_weights)
         self.position_step.apply(init_weights)
+        self.position_project.apply(init_weights)
+        self.feature_project.apply(init_weights)
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -133,14 +135,16 @@ class Policy_Core(ARCAGI3_Policy_Core):
         position_output = torch.reshape(position_output, (batch_size, context_size, self.position_size))
 
         # get next position from step
-        next_position = self.position_step(torch.concat([last_position, action_part], dim=-1))
+        split_positions = torch.reshape(last_position, (batch_size, context_size, self.position_features, self.position_size // self.position_features))
+        next_position = self.position_step(split_positions)
+        next_position = torch.reshape(next_position, (batch_size, context_size, self.position_size))
 
         projected_position = self.position_project(torch.concat([position_output, next_position], dim=-1)) # (batch_size, context_size, hidden_size)
         projected_features = self.feature_project(features) # (batch_size, context_size, hidden_size)
 
         # compute dropout
         if self.training:
-            keep_prob = 0.75
+            keep_prob = 0.8
             mask = torch.empty([batch_size, context_size, 1], device=self.device).bernoulli_(keep_prob)
             merged_features = projected_position + projected_features * mask / keep_prob
         else:
