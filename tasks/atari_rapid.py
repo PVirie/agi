@@ -27,7 +27,7 @@ from utilities.atari.environments import Multi_Atari_Environment
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.algebra import Policy_Core
+from implementations.networks.torch.policy.rapid_recognize import Policy_Core
 from implementations.networks.torch.policy.arcagi3 import Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
@@ -142,7 +142,7 @@ if __name__ == "__main__":
     np.random.seed(20260111)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/algebra"
+    experiment_path = f"{APP_ROOT}/experiments/rapid"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -175,7 +175,7 @@ if __name__ == "__main__":
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 32
+        position_size = 64
     elif args.scale == "medium":
         history_steps = 32
         hidden_size = 128

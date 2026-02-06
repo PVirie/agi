@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.distributions.normal import Normal
 from torch.distributions.categorical import Categorical
 from torch.distributions import Bernoulli

@@ -2,10 +2,11 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name            | Description                                                    |
-| ---------- | --------------------- | -------------------------------------------------------------- |
-| LIII       | Cognitive algebra     | A learnable computationally universal model.                   |
-| LIX        | Explicit algebra core | An improved version of Model 53 with an explicit algebra core. |
+| Generation | Model Name        | Description                                                      |
+| ---------- | ----------------- | ---------------------------------------------------------------- |
+| LIII       | Cognitive algebra | A learnable computationally universal model.                     |
+| LXI        | Fast and slow     | Using fast learnable module to capture fast position assignment. |
+| LXII       | Rapid papagation  | Extend fast position assignment to next step                     |
 
 ## Setup
 
