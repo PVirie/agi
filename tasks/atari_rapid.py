@@ -27,10 +27,9 @@ from utilities.atari.environments import Multi_Atari_Environment
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.rapid_recognize import Policy_Core
-from implementations.networks.torch.policy.arcagi3 import Projector
+from implementations.networks.torch.policy.rapid_recognize import Policy_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
-from implementations.learning_algorithms.torch.ppo import PPO
+from implementations.learning_algorithms.torch.ppo_w_rapid import PPO_With_Rapid_Parameters as PPO
 from implementations.networks.states import State_Sequence as Collector
 from implementations.networks.energy_memory import Energy_Memory as Memory
 

@@ -9,7 +9,7 @@ import logging
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.temporal_unet import TemporalUNet
-from implementations.networks.torch.policy.arcagi3 import Policy_Core as ARCAGI3_Policy_Core
+from implementations.networks.torch.policy.arcagi3 import Policy_Core as ARCAGI3_Policy_Core, Projector as ARCAGI3_Projector
 from utilities.safe_torch_module import Safe_nn_Module
 
 
@@ -78,6 +78,24 @@ class Policy_Core(ARCAGI3_Policy_Core):
         self.eval()
 
 
+    def slow_parameters(self):
+        # override to return all parameters except the recognize_module parameters
+        params = []
+        for name, param in self.named_parameters():
+            if "recognize_module" not in name:
+                params.append(param)
+        return params
+
+
+    def fast_parameters(self):
+        # override to return only the recognize_module parameters
+        params = []
+        for name, param in self.named_parameters():
+            if "recognize_module" in name:
+                params.append(param)
+        return params
+
+
     def reset_parameters(self):
         # Reset parameters of all layers
         self.temporal_unet.reset_parameters()
@@ -123,7 +141,8 @@ class Policy_Core(ARCAGI3_Policy_Core):
 
         features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, action_onehot)
 
-        recognized_position_logits = self.recognize_module(features)  # (B, T, position_slot)
+        # detach gradient for feature from recognize module
+        recognized_position_logits = self.recognize_module(features.detach())  # (B, T, position_slot)
         propagated_position_logits = self.propagator(last_position_onehot)  # (B, T, position_slot)
         position_logits = recognized_position_logits + propagated_position_logits  # (B, T, position_slot)
 
@@ -291,3 +310,14 @@ class Policy_Core(ARCAGI3_Policy_Core):
         ], dim=-1), torch.stack([
             entropy_flag, entropy_action, entropy_x, entropy_y, entropy_position, entropy_content
         ], dim=-1), svl_unsum_loss
+
+
+
+# return only selected statistics
+class Projector(ARCAGI3_Projector):
+
+    def slow_parameters(self):
+        return self.master_core.slow_parameters()
+    
+    def fast_parameters(self):
+        return self.master_core.fast_parameters()

@@ -41,8 +41,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.update_epochs = 4
         self.minibatch_size = minibatch_size
 
-        all_parameters = list(self.policy_model.parameters()) + list(self.value_model.parameters())
-        self.optimizer = optim.Adam(all_parameters, lr=self.lr, eps=1e-5)
+        self.all_parameters = list(self.policy_model.parameters()) + list(self.value_model.parameters())
+        self.optimizer = optim.Adam(self.all_parameters, lr=self.lr, eps=1e-5)
 
         Safe_nn_Module.__init__(self, 
             device=device, persistence_path=persistence_path, 
@@ -215,8 +215,7 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                all_parameters = list(self.policy_model.parameters()) + list(self.value_model.parameters())
-                nn.utils.clip_grad_norm_(all_parameters, self.max_grad_norm)
+                nn.utils.clip_grad_norm_(self.all_parameters, self.max_grad_norm)
                 self.optimizer.step()
 
             if self.target_kl is not None and approx_kl > self.target_kl:
