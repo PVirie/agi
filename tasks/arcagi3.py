@@ -15,7 +15,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 APP_ROOT = os.getenv("APP_ROOT", "/app")
 
+from utilities.package_install import install
 from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_Type, ARCAGI3_Remote_Environment
+
+install("arc-agi")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -121,7 +124,7 @@ async def run(env, agent, rollout_length=16):
             logging.info(f"Expected time left: {max_running_time - elapsed_time:.2f} seconds.")
 
 
-    report = await env.close()
+    await env.close()
 
 
 if __name__ == "__main__":

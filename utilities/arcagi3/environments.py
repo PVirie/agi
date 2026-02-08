@@ -2,8 +2,11 @@ import os
 import requests
 from enum import Enum
 from typing import List
-import logging
 from .utils import extract_frame, check_frame_difference
+from arc_agi import Arcade, OperationMode
+from arcengine import GameAction
+import random
+import logging
 
 
 API_KEY = os.getenv("ARC_API_KEY", "")
@@ -67,6 +70,16 @@ return_action_to_action_type = {
     6: Action_Type.A6,
 }
 
+action_type_to_return_action = {
+    Action_Type.A1: GameAction.ACTION1,
+    Action_Type.A2: GameAction.ACTION2,
+    Action_Type.A3: GameAction.ACTION3,
+    Action_Type.A4: GameAction.ACTION4,
+    Action_Type.A5: GameAction.ACTION5,
+    Action_Type.A6: GameAction.ACTION6,
+    Action_Type.A7: GameAction.ACTION7,
+}
+
 class Game_State_Type(str, Enum):
     NOT_STARTED = "NOT_STARTED"
     GAME_OVER = "GAME_OVER"
@@ -121,6 +134,8 @@ class Frame_History:
         return -1
 
 
+known_public_game_titles = set(["LS20", "FT09", "VC33"])
+
 class ARCAGI3_Remote_Environment:
 
     def __init__(self):
@@ -155,7 +170,6 @@ class ARCAGI3_Remote_Environment:
         ]
         """
         results = response.json()
-        known_public_game_titles = set(["LS20", "FT09", "VC33"])
         # add game type property to each game metadata
         for game_meta in results:
             if game_meta["title"] in known_public_game_titles:
@@ -320,4 +334,88 @@ class ARCAGI3_Remote_Environment:
 
         
         return something_changed, self.return_states
+    
+
+class ARCAGI3_Local_Environment(ARCAGI3_Remote_Environment):
+    
+    def __init__(self, seed=0):
+        self.arc = Arcade(operation_mode=OperationMode.OFFLINE)
+        self.seed = seed
+        
+        self.envs = None
+        self.is_started = False
+
+        self.return_states = None
+        self.frame_histories = None
+
+
+    async def list_games(self):
+        all_game_metadata = []
+        for env in self.arc.get_environments():
+            # print(f"{env.game_id}: {env.title}")
+            all_game_metadata.append({
+                "game_id": env.game_id,
+                "title": env.title,
+                "game_type": "public" if env.title in known_public_game_titles else "private"
+            })
+        return all_game_metadata
+
+
+    async def start(self, selected_game_ids: List[str]):
+        if self.is_started:
+            return None
+        
+        s = random.Random(self.seed)
+        self.envs = []
+        for game_id in selected_game_ids:
+            self.envs.append(self.arc.make(game_id, seed=s, render_mode="terminal"))
+            s = s.randint(0, 1000000)
+        
+        self.is_started = True
+        self.return_states = [
+            Game_State(frame=None, state=Game_State_Type.NOT_STARTED.value, score=0, delta_score=0, win_score=0, next_available_actions=[]) for _ in selected_game_ids
+        ]
+        self.frame_histories = [
+            Frame_History(max_length=4) for _ in selected_game_ids
+        ]
+
+
+    async def close(self):
+        if not self.is_started:
+            return None
+        
+        self.envs = None
+        self.is_started = False
+        self.return_states = None
+
+
+    async def reset_item(self, i, action_type):
+        obs = self.envs[i].reset()
+        game_state = Game_State(
+            frame=extract_frame(obs.frame),
+            state=Game_State_Type.RESET if action_type == Action_Type.RESET else Game_State_Type.TRUNCATED,
+            score=0,
+            delta_score=0,
+            win_score=obs.win_levels,
+            next_available_actions=[return_action_to_action_type[a] for a in obs.available_actions]
+        )
+
+        self.frame_histories[i].clear()
+
+        return game_state
+
+
+    async def act_item(self, i, action_type: Action_Type, x: int = None, y: int = None):
+        obs = self.envs[i].step(action_type_to_return_action[action_type], data={"x": x, "y": y})
+        game_state = Game_State(
+            frame=extract_frame(obs.frame),
+            state=obs.state,
+            score=obs.levels_completed,
+            delta_score=0,
+            win_score=obs.win_levels,
+            next_available_actions=[return_action_to_action_type[a] for a in obs.available_actions]
+        )
+        game_state.delta_score = game_state.score - (self.return_states[i].score if self.return_states[i] is not None else 0)
+
+        return game_state
     
