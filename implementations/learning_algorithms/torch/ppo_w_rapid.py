@@ -42,7 +42,7 @@ class PPO_With_Rapid_Parameters(PPO):
         self.all_parameters = list(self.policy_model.slow_parameters()) + list(self.value_model.parameters())
         self.optimizer = optim.Adam([
             {'params': self.all_parameters, 'lr': self.lr}, # Background learning
-            {'params': self.policy_model.fast_parameters(), 'lr': 1.0}   # Rapid adaptation
+            {'params': self.policy_model.fast_parameters(), 'lr': 0.1}   # Rapid adaptation
         ])
 
         Safe_nn_Module.__init__(self, 

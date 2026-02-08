@@ -34,17 +34,18 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         vec_dim = position_size + action_size
         self.temporal_unet = TemporalUNet(
+            output_dims=hidden_size,
             input_channels=channel, width=width, height=height,
             vec_dim=vec_dim, hidden_dim=hidden_size,
             depths=layers, history_steps=history_steps, max_temporal_len=max_temporal_len)
 
         self.head_flag = nn.Sequential(
-            nn.Linear(self.temporal_unet.out_features, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
         )
         self.head_action = nn.Sequential(
-            nn.Linear(self.temporal_unet.out_features, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, action_size)   # action_size classes
         )

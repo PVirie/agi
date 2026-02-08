@@ -29,9 +29,10 @@ class UpConvBlock(nn.Module):
     
 
 class TemporalUNet(nn.Module):
-    def __init__(self, input_channels=1, width=64, height=64, vec_dim=128, hidden_dim=32, depths=[16, 32, 32], history_steps=1, max_temporal_len=32):
+    def __init__(self, output_dims, input_channels=1, width=64, height=64, vec_dim=128, hidden_dim=32, depths=[16, 32, 32], history_steps=1, max_temporal_len=32):
         super(TemporalUNet, self).__init__()
 
+        self.output_dims = output_dims
         self.n_channels = input_channels
         self.width = width
         self.height = height
@@ -79,10 +80,9 @@ class TemporalUNet(nn.Module):
             self.up_c.append(UpConvBlock(in_ch, out_ch))
             self.up_h.append(UpConvBlock(in_ch, out_ch))
 
-        self.out_features = hidden_dim
         self.head_feature = nn.Sequential(
             nn.GELU(),
-            nn.Linear(hidden_dim, self.out_features),
+            nn.Linear(hidden_dim, self.output_dims),
         )
         self.head_heatmap = nn.Sequential(
             nn.GELU(),
@@ -105,7 +105,7 @@ class TemporalUNet(nn.Module):
         x: [Batch, Time, Channels, Height, Width]
         v: [Batch, Time, VecDim]
         Returns:
-            sampled_features: [Batch, Time, out_features]
+            sampled_features: [Batch, Time, output_dims]
             x_logits: [Batch, Time, Width]
             y_logits: [Batch, Time, Height]
             content_logits: [Batch, Time, Channels, Height, Width]
@@ -131,7 +131,7 @@ class TemporalUNet(nn.Module):
         # # 3. Pass through Transformer
         attn_out = self.temporal_attn(projected) # [B, T, hidden_dim]
         
-        sampled_features = self.head_feature(attn_out) # [B*T, out_features]
+        sampled_features = self.head_feature(attn_out) # [B*T, output_dims]
 
         # 4. Fuse and Reshape
         flat_backward = self.backward_proj(attn_out.reshape(B * T, -1)) # [B*T, last_flatten_dim]
@@ -159,7 +159,7 @@ class TemporalUNet(nn.Module):
         content_logits = self.head_content(xc_features) # [B*T, C, H, W]
         
         # --- Reshape and Return ---
-        sampled_features = sampled_features.reshape(B, T, self.out_features)
+        sampled_features = sampled_features.reshape(B, T, self.output_dims)
         x_logits = x_logits.reshape(B, T, W)
         y_logits = y_logits.reshape(B, T, H)
         content_logits = content_logits.reshape(B, T, C, H, W)
@@ -169,13 +169,13 @@ class TemporalUNet(nn.Module):
 
 if __name__ == "__main__":
     # max_temporal_len defaults to 32, we pass 32 to be explicit or test with it.
-    model = TemporalUNet(input_channels=3, width=32, height=64, vec_dim=128, hidden_dim=16, depths=[16, 32, 32], history_steps=2, max_temporal_len=32)
+    model = TemporalUNet(output_dims=16, input_channels=3, width=32, height=64, vec_dim=128, hidden_dim=16, depths=[16, 32, 32], history_steps=2, max_temporal_len=32)
     img = torch.randn(2, 5, 3, 64, 32)
     vec = torch.randn(2, 5, 128)
     
     features, x_logits, y_logits, content_logits = model(img, vec)
     
-    assert features.shape == (2, 5, model.out_features)
+    assert features.shape == (2, 5, model.output_dims)
     assert x_logits.shape == (2, 5, 32)
     assert y_logits.shape == (2, 5, 64)
     assert content_logits.shape == (2, 5, 3, 64, 32)

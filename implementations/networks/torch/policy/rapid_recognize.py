@@ -35,12 +35,15 @@ class Policy_Core(ARCAGI3_Policy_Core):
 
         vec_dim = self.action_size
         self.temporal_unet = TemporalUNet(
+            output_dims=hidden_size,
             input_channels=channel, width=width, height=height,
             vec_dim=vec_dim, hidden_dim=hidden_size,
             depths=layers, history_steps=history_steps, max_temporal_len=max_temporal_len)
         
         self.recognize_module = nn.Sequential(
-            nn.Linear(self.temporal_unet.out_features, position_slot),
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, position_slot)
         )
 
         self.propagator = nn.Sequential(
@@ -49,12 +52,6 @@ class Policy_Core(ARCAGI3_Policy_Core):
 
         self.position_module = nn.Sequential(
             nn.Linear(position_slot, hidden_size)
-        )
-
-        self.translator = nn.Sequential(
-            nn.Linear(hidden_size + hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, hidden_size)
         )
 
         self.head_flag = nn.Sequential(
@@ -101,7 +98,6 @@ class Policy_Core(ARCAGI3_Policy_Core):
         self.temporal_unet.reset_parameters()
         self.propagator.apply(init_weights)
         self.position_module.apply(init_weights)
-        self.translator.apply(init_weights)
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -149,13 +145,18 @@ class Policy_Core(ARCAGI3_Policy_Core):
         probs_positions = Categorical(logits=position_logits)
         positions = probs_positions.sample()  # (B, T)
         position_onehot = torch.nn.functional.one_hot(positions.long(), num_classes=self.position_slot).float() # (B, T, position_slot)
-
         position_features = self.position_module(position_onehot)  # (B, T, hidden_size)
 
-        action_features = self.translator(torch.cat([features, position_features], dim=-1))
+        # compute dropout
+        if self.training:
+            keep_prob = 0.9
+            mask = torch.empty([batch_size, context_size, 1], device=self.device).bernoulli_(keep_prob)
+            merged_features = position_features + features * mask / keep_prob
+        else:
+            merged_features = position_features + features
         
-        logits_flag = self.head_flag(action_features)    # (B, T, flag_size)
-        logits_action = self.head_action(action_features) # (B, T, action_size)
+        logits_flag = self.head_flag(merged_features)    # (B, T, flag_size)
+        logits_action = self.head_action(merged_features) # (B, T, action_size)
         content_logits = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
 
         content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
