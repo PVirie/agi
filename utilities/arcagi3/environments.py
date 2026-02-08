@@ -121,7 +121,7 @@ class Frame_History:
         return -1
 
 
-class ARCAGI3_Environment:
+class ARCAGI3_Remote_Environment:
 
     def __init__(self):
         self.request_session = requests.Session()

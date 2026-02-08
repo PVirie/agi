@@ -15,8 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 APP_ROOT = os.getenv("APP_ROOT", "/app")
 
-import utilities
-from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_Type, ARCAGI3_Environment
+from utilities.arcagi3.environments import Game_State, Action_Type, Game_State_Type, ARCAGI3_Remote_Environment
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -165,7 +164,7 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
-    env = ARCAGI3_Environment()
+    env = ARCAGI3_Remote_Environment()
 
     random_agent = random_agent.Random_Agent("01")
 
