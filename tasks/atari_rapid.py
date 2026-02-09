@@ -169,48 +169,48 @@ if __name__ == "__main__":
     random_agent = random_agent.Random_Agent("01")
 
     if args.scale == "small":
-        history_steps = 32
-        hidden_size = 32
+        history_steps = 0
+        hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
-        position_slot = 64
+        position_size = 16
     elif args.scale == "medium":
-        history_steps = 32
+        history_steps = 0
         hidden_size = 128
         conv_layers = [16, 32, 64, 128, 256] # medium impala
         rollout_length = 128
         minibatch_size = 8
-        position_slot = 64
+        position_size = 64
     else:  # large
-        history_steps = 32
+        history_steps = 0
         hidden_size = 128
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 128
         minibatch_size = 8
-        position_slot = 64
+        position_size = 64
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        action_size=18, position_slot=position_slot,
+        action_size=18, position_size=position_size,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=conv_layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        position_size=1,
+        position_size=position_size,
         width=32, height=64, channel=4,
         layers=conv_layers,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1, 4]), value_model=value_core,
+        policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Memory(
-        sizes=(1, 1, policy_core.content_size),
+        sizes=(1, position_size, policy_core.content_size),
         max_slot_size=256
     )
     model_53_agent = model_53.Model_53(
