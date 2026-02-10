@@ -181,14 +181,14 @@ if __name__ == "__main__":
         conv_layers = [16, 32, 64, 128, 256] # medium impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 64
+        position_size = 16
     else:  # large
         history_steps = 0
         hidden_size = 128
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 64
+        position_size = 16
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -206,7 +206,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
+        policy_model=Projector(policy_core, [0, 1, 4]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Memory(

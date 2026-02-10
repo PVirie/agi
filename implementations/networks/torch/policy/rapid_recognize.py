@@ -55,17 +55,6 @@ class Policy_Core(ARCAGI3_Policy_Core):
             nn.Linear(position_size, hidden_size)
         )
 
-        self.head_position_flag = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
-        )
-        self.head_position_action = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, action_size)   # action_size classes
-        )
-
         self.head_flag = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
@@ -108,8 +97,6 @@ class Policy_Core(ARCAGI3_Policy_Core):
     def reset_parameters(self):
         # Reset parameters of all layers
         self.temporal_unet.reset_parameters()
-        self.recognize_module.apply(init_weights)
-        self.propagator.apply(init_weights)
         self.position_module.apply(init_weights)
 
         def init_actor_weights(m):
@@ -122,8 +109,8 @@ class Policy_Core(ARCAGI3_Policy_Core):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-        self.head_position_flag.apply(init_actor_weights)
-        self.head_position_action.apply(init_actor_weights)
+        self.recognize_module.apply(init_actor_weights)
+        self.propagator.apply(init_actor_weights)
         self.head_flag.apply(init_actor_weights)
         self.head_action.apply(init_actor_weights)
         self.head_content.apply(init_actor_weights)
@@ -153,19 +140,20 @@ class Policy_Core(ARCAGI3_Policy_Core):
         # detach gradient for feature from recognize module
         recognized_position_logits = self.recognize_module(features.detach())  # (B, T, position_size)
         propagated_position_logits = self.propagator(last_position)  # (B, T, position_size)
-        positions = recognized_position_logits + propagated_position_logits  # (B, T, position_size)
+        position_logits = recognized_position_logits + propagated_position_logits  # (B, T, position_size)
+        probs_positions = Bernoulli(probs=torch.sigmoid(position_logits))
+        positions = probs_positions.sample()  # (B, T, position_size)
         position_features = self.position_module(positions)  # (B, T, hidden_size)
 
-        logits_position_flag = self.head_position_flag(position_features)    # (B, T, flag_size)
-        logits_position_action = self.head_position_action(position_features) # (B, T, action_size)
+        merged_features = features + position_features  # (B, T, hidden_size)
 
-        logits_flag = self.head_flag(features)    # (B, T, flag_size)
-        logits_action = self.head_action(features) # (B, T, action_size)
+        logits_flag = self.head_flag(merged_features)    # (B, T, flag_size)
+        logits_action = self.head_action(merged_features) # (B, T, action_size)
         content_logits = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
 
         content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
 
-        return logits_flag + logits_position_flag, logits_action + logits_position_action, x_logits, y_logits, positions, content_logits
+        return logits_flag, logits_action, x_logits, y_logits, positions, probs_positions, content_logits
     
 
     def get_action(self, context, valid_actions=None):
@@ -182,7 +170,7 @@ class Policy_Core(ARCAGI3_Policy_Core):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        logits_flag, logits_action, x_logits, y_logits, positions, content_logits = self.compute(context)
+        logits_flag, logits_action, x_logits, y_logits, positions, probs_positions, content_logits = self.compute(context)
 
         probs_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         probs_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
@@ -201,7 +189,7 @@ class Policy_Core(ARCAGI3_Policy_Core):
             action_action.unsqueeze(-1),
             action_x.unsqueeze(-1),
             action_y.unsqueeze(-1),
-            positions.detach(),
+            positions,
             action_content
         ], dim=-1)
 
@@ -223,7 +211,7 @@ class Policy_Core(ARCAGI3_Policy_Core):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        logits_flag, logits_action, x_logits, y_logits, positions, content_logits = self.compute(context)
+        logits_flag, logits_action, x_logits, y_logits, positions, probs_positions, content_logits = self.compute(context)
 
         probs_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         probs_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
@@ -235,24 +223,27 @@ class Policy_Core(ARCAGI3_Policy_Core):
         action_action = selected_action[:, :, 1]
         action_x = selected_action[:, :, 2]
         action_y = selected_action[:, :, 3]
+        action_position = selected_action[:, :, (1 + 3):(1 + 3 + self.position_size)]
         action_content = selected_action[:, :, (1 + 3 + self.position_size):]
 
         log_prob_flag = probs_flag.log_prob(action_flag)
         log_prob_action = probs_action.log_prob(action_action)
         log_prob_x = probs_x.log_prob(action_x)
         log_prob_y = probs_y.log_prob(action_y)
+        log_prob_position = probs_positions.log_prob(action_position).mean(-1)
         log_prob_content = probs_content.log_prob(action_content).mean(-1)
         
         entropy_flag = probs_flag.entropy()
         entropy_action = probs_action.entropy()
         entropy_x = probs_x.entropy()
         entropy_y = probs_y.entropy()
+        entropy_position = probs_positions.entropy().mean(-1)
         entropy_content = probs_content.entropy().mean(-1)
 
         return torch.stack([
-            log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content
+            log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_position, log_prob_content
         ], dim=-1), torch.stack([
-            entropy_flag, entropy_action, entropy_x, entropy_y, entropy_content
+            entropy_flag, entropy_action, entropy_x, entropy_y, entropy_position, entropy_content
         ], dim=-1)
 
 
@@ -275,7 +266,7 @@ class Policy_Core(ARCAGI3_Policy_Core):
             available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
             available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
 
-        logits_flag, logits_action, x_logits, y_logits, positions, content_logits = self.compute(context)
+        logits_flag, logits_action, x_logits, y_logits, positions, probs_positions, content_logits = self.compute(context)
 
         probs_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         probs_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
@@ -287,29 +278,31 @@ class Policy_Core(ARCAGI3_Policy_Core):
         action_action = selected_action[:, :, 1]
         action_x = selected_action[:, :, 2]
         action_y = selected_action[:, :, 3]
+        action_position = selected_action[:, :, (1 + 3):(1 + 3 + self.position_size)]
         action_content = selected_action[:, :, (1 + 3 + self.position_size):]
 
         log_prob_flag = probs_flag.log_prob(action_flag)
         log_prob_action = probs_action.log_prob(action_action)
         log_prob_x = probs_x.log_prob(action_x)
         log_prob_y = probs_y.log_prob(action_y)
+        log_prob_position = probs_positions.log_prob(action_position).mean(-1)
         log_prob_content = probs_content.log_prob(action_content).mean(-1)
         
         entropy_flag = probs_flag.entropy()
         entropy_action = probs_action.entropy()
         entropy_x = probs_x.entropy()
         entropy_y = probs_y.entropy()
+        entropy_position = probs_positions.entropy().mean(-1)
         entropy_content = probs_content.entropy().mean(-1)
 
         # svl_unsum_loss
         svl_unsum_loss = torch.mean((probs_content.mean - target_content) ** 2, dim=-1)
 
         return torch.stack([
-            log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_content
+            log_prob_flag, log_prob_action, log_prob_x, log_prob_y, log_prob_position, log_prob_content
         ], dim=-1), torch.stack([
-            entropy_flag, entropy_action, entropy_x, entropy_y, entropy_content
+            entropy_flag, entropy_action, entropy_x, entropy_y, entropy_position, entropy_content
         ], dim=-1), svl_unsum_loss
-
 
 
 # return only selected statistics
