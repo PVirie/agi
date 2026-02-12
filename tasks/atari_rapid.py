@@ -29,7 +29,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from implementations.agents import random_agent, model_53
 from implementations.networks.torch.policy.rapid_recognize import Policy_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
-from implementations.learning_algorithms.torch.ppo_w_rapid import PPO_With_Rapid_Parameters as PPO
+from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.networks.states import State_Sequence as Collector
 from implementations.networks.energy_memory import Energy_Memory as Memory
 
@@ -174,21 +174,21 @@ if __name__ == "__main__":
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 16
+        position_size = 64
     elif args.scale == "medium":
         history_steps = 0
         hidden_size = 128
         conv_layers = [16, 32, 64, 128, 256] # medium impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 16
+        position_size = 64
     else:  # large
         history_steps = 0
         hidden_size = 128
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 16
+        position_size = 64
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -206,8 +206,9 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1, 4]), value_model=value_core,
-        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
+        policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
+        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
+        svl_coef=0.5 if args.with_supervision else None
     )
     memory = Memory(
         sizes=(1, position_size, policy_core.content_size),
@@ -221,7 +222,7 @@ if __name__ == "__main__":
         valid_action_collector=Collector(max_history=history_steps),
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
-        do_supervision=args.with_supervision,
+        do_supervision=False,
         use_memory=args.use_memory,
     )
 
