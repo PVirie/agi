@@ -194,7 +194,7 @@ class Model_53(Agent):
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                 masks=masks,
-                svl_masks=svl_masks
+                aux_masks=svl_masks
             )
             
             left_over_slide = self.obs.mark(skip_last=True)

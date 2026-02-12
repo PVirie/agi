@@ -118,7 +118,7 @@ if __name__ == "__main__":
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
     parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
     parser.add_argument("--use-memory",             "-um",  action="store_true",                help="Enable the use of memory in the agent.")
-    parser.add_argument("--with-supervision",       "-svl", action="store_true",                help="Enable supervised learning along with PPO.")
+    parser.add_argument("--with-auxiliary",       "-aux", action="store_true",                help="Enable auxiliary loss along with PPO.")
     args = parser.parse_args()
 
     # print summary of arguments that are not default
@@ -208,7 +208,7 @@ if __name__ == "__main__":
     ppo_learner = PPO(
         policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        svl_coef=0.5 if args.with_supervision else None
+        aux_coef=0.5 if args.with_auxiliary else None
     )
     memory = Memory(
         sizes=(1, position_size, policy_core.content_size),

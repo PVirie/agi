@@ -213,7 +213,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         ], dim=-1)
 
 
-    def get_log_probability_with_svl_loss(self, context, selected_action, valid_actions=None):
+    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
         # now context has shape (batch, context_size + 1, self.packed_context_size)
 
         if isinstance(context, np.ndarray):
@@ -340,8 +340,8 @@ class Projector:
         entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
         return log_probs, entropy
     
-    def get_log_probability_with_svl_loss(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy, svl_unsum_loss = self.master_core.get_log_probability_with_svl_loss(context, selected_action, valid_actions)
+    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy, svl_unsum_loss = self.master_core.get_log_probability_with_aux_loss(context, selected_action, valid_actions)
         log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
         entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
         return log_probs, entropy, svl_unsum_loss

@@ -15,9 +15,9 @@ from implementations.learning_algorithms.torch.ppo import PPO
 
 class PPO_With_Rapid_Parameters(PPO):
 
-    def __init__(self, policy_model: Policy_Network, value_model: Value_Network, device, persistence_path=None, minibatch_size=8, svl_coef=None):
+    def __init__(self, policy_model: Policy_Network, value_model: Value_Network, device, persistence_path=None, minibatch_size=8, aux_coef=None):
         """
-        svl_coef: Coefficient for supervised value loss. If None, no supervised value loss is used.
+        aux_coef: Coefficient for auxiliary value loss. If None, no auxiliary value loss is used.
         """
         self.policy_model = policy_model
         self.value_model = value_model
@@ -34,7 +34,7 @@ class PPO_With_Rapid_Parameters(PPO):
         self.max_grad_norm = 0.5
         self.target_kl = None
 
-        self.svl_coef = svl_coef
+        self.aux_coef = aux_coef
 
         self.update_epochs = 4
         self.minibatch_size = minibatch_size

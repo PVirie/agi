@@ -256,7 +256,7 @@ class Policy_Core(ARCAGI3_Policy_Core):
         ], dim=-1)
 
 
-    def get_log_probability_with_svl_loss(self, context, selected_action, valid_actions=None):
+    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
         # now context has shape (batch, context_size + 1, self.packed_context_size)
 
         if isinstance(context, np.ndarray):

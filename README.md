@@ -31,10 +31,10 @@ There are two approaches to run the AGI agent:
 ./run_manual.sh {torch-rocm} tasks/{arcagi3}.py {flags}
 ```
 
-For example, to run the ARC AGI task with supervised auxiliary loss for 360 seconds:
+For example, to run the ARC AGI task with auxiliary loss for 360 seconds:
 
 ```bash
-./run_manual.sh torch-rocm tasks/arcagi3.py -svl -hr 0.1
+./run_manual.sh torch-rocm tasks/arcagi3.py -aux -hr 0.1
 ```
 
 ## To do
@@ -49,7 +49,7 @@ For example, to run the ARC AGI task with supervised auxiliary loss for 360 seco
 - [x] Atari environment
     - [x] Multiple games
 - [x] RL baseline (With simple models, too complex models tend to have high variance and very slow learning.)
-- [x] Supervised learning auxiliary loss
+- [x] Auxiliary loss
 - [x] Model 53: Full cognitive ability
     - [x] Use RL to select two observation modes
         - [x] Override content at the predict position

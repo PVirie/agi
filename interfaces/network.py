@@ -11,7 +11,7 @@ class Policy_Network(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_log_probability_with_svl_loss(self, context, selected_action, valid_actions=None):
+    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
         pass
 
     @abc.abstractmethod
