@@ -20,14 +20,16 @@ from utilities.package_install import install
 install("opencv-python-headless") 
 install("ale-py")
 install("gymnasium[atari, other]")
+install("colorama")
 
 import ale_py
 from utilities.atari.environments import Multi_Atari_Environment
+from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.rapid_recognize import Policy_Core, Projector
+from implementations.networks.torch.policy.arcagi3 import Policy_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.networks.states import State_Sequence as Collector
@@ -35,6 +37,13 @@ from implementations.networks.energy_memory import Energy_Memory as Memory
 
 torch.autograd.set_detect_anomaly(True)
 
+def format_float(f):
+    if f > 0:
+        return Fore.GREEN + "{: .1f}".format(f) + Style.RESET_ALL
+    elif f < 0:
+        return Fore.RED + "{: .1f}".format(f) + Style.RESET_ALL
+    else:
+        return "{: .1f}".format(f)
 
 async def run(env, agent, rollout_length=16):
 
@@ -59,13 +68,13 @@ async def run(env, agent, rollout_length=16):
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=[obs.astype(np.float32) / 255.0 for obs in observations],
-            rewards=[r.item() for r in rewards],
+            rewards=[r for r in rewards],
             next_available_actions=env.get_available_actions(),
             force_train=steps % rollout_length == 0 or should_stop,
         )
         actions = [int(a[0].item()) if a is not None else None for a in actions]
 
-        observations, rewards, terminations, truncations, infos = env.step(np.array(actions, dtype=np.int32))
+        observations, rewards, terminations, truncations, infos = env.step(actions)
 
         last_idle = [False for _ in observations]
         last_done = [terminations[i] or truncations[i] for i in range(len(observations))]
@@ -74,7 +83,7 @@ async def run(env, agent, rollout_length=16):
 
         for i in range(len(observations)):
             if terminations[i] or truncations[i]:
-                total_score = infos["episode"]["r"][i]
+                total_score = infos[i]["episode"]["r"]
                 total_returns[i] = (
                     session_return_update_alpha * total_returns[i]
                     + (1 - session_return_update_alpha) * total_score
@@ -82,13 +91,13 @@ async def run(env, agent, rollout_length=16):
 
         steps += 1
         if any([r != 0 for r in rewards]):
-            logging.info(f"{steps}| Rewards: {rewards}")
+            logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in rewards])}")
 
         if steps % rollout_length == 0:
             ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
 
         if steps % (rollout_length * 2) == 0 or should_stop:
-            logging.info(f"{steps}| Returns: {['{:.2f}'.format(s) for s in total_returns]}")
+            logging.info(f"{steps}| Returns: {', '.join([format_float(s) for s in total_returns])}")
             logging.info(f"{steps}| Selected actions: {actions}")
 
             # save 
@@ -169,26 +178,26 @@ if __name__ == "__main__":
     random_agent = random_agent.Random_Agent("01")
 
     if args.scale == "small":
-        history_steps = 0
+        history_steps = 1
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 64
+        position_size = 32
     elif args.scale == "medium":
-        history_steps = 0
+        history_steps = 3
         hidden_size = 128
-        conv_layers = [16, 32, 64, 128, 256] # medium impala
+        conv_layers = [32, 64, 64, 64] # medium impala
         rollout_length = 128
-        minibatch_size = 8
-        position_size = 64
+        minibatch_size = 4
+        position_size = 32
     else:  # large
-        history_steps = 0
+        history_steps = 7
         hidden_size = 128
-        conv_layers = [32, 64, 128, 128, 256, 256] # large impala
+        conv_layers = [64, 64, 128, 128, 256, 256] # large impala
         rollout_length = 128
-        minibatch_size = 8
-        position_size = 64
+        minibatch_size = 4
+        position_size = 32
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -208,7 +217,7 @@ if __name__ == "__main__":
     ppo_learner = PPO(
         policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=0.5 if args.with_auxiliary else None
+        aux_coef=0.1 if args.with_auxiliary else None
     )
     memory = Memory(
         sizes=(1, position_size, policy_core.content_size),
@@ -222,7 +231,7 @@ if __name__ == "__main__":
         valid_action_collector=Collector(max_history=history_steps),
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
-        do_supervision=False,
+        do_supervision=args.with_auxiliary,
         use_memory=args.use_memory,
     )
 

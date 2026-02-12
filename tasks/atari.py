@@ -18,8 +18,10 @@ APP_ROOT = os.getenv("APP_ROOT", "/app")
 from utilities.package_install import install
 
 install("ale-py")
+install("colorama")
 
 from ale_py.vector_env import AtariVectorEnv
+from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -32,7 +34,14 @@ from implementations.networks.energy_memory import Energy_Memory as Memory
 
 torch.autograd.set_detect_anomaly(True)
 
-
+def format_float(f):
+    if f > 0:
+        return Fore.GREEN + "{: .1f}".format(f) + Style.RESET_ALL
+    elif f < 0:
+        return Fore.RED + "{: .1f}".format(f) + Style.RESET_ALL
+    else:
+        return "{: .1f}".format(f)
+    
 async def run(env, agent, rollout_length=16):
 
     observations, info = env.reset()
@@ -80,7 +89,7 @@ async def run(env, agent, rollout_length=16):
 
         steps += 1
         if any([r != 0 for r in rewards]):
-            logging.info(f"{steps}| Rewards: {rewards}")
+            logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in rewards])}")
 
         if steps % rollout_length == 0:
             ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)

@@ -34,59 +34,74 @@ class Multi_Atari_Environment:
         # 1. Generate Available Actions List
         # Structure: List[List[int]] -> [[0, 2, 3], [0, 1, 4, 5], ...]
         self.available_actions = []
-        
+        self.envs = []
         for gid in game_ids:
             # Initialize temp env with minimal action space to see what's valid
             temp_env = gym.make(gid, full_action_space=False)
             valid_action_names = temp_env.unwrapped.get_action_meanings()
-            temp_env.close()
-
             # Convert names (e.g., "UP") to indices (e.g., 2)
             game_indices = []
             for name in valid_action_names:
                 if name in ATARI_ACTIONS:
                     game_indices.append(ATARI_ACTIONS.index(name))
-            
             self.available_actions.append(game_indices)
+            temp_env.close()
 
-        # 2. Build Vector Env
-        def make_env(game_id):
-            def _init():
-                env = gym.make(game_id, full_action_space=True, render_mode=render_mode)
-                env = AtariPreprocessing(
-                    env,
-                    frame_skip=1,
-                    grayscale_obs=grayscale,
-                    scale_obs=False, # returns uint8 (0-255). Ensure your Agent divides by 255.0!
-                    terminal_on_life_loss=episodic_life,
-                    noop_max=30
-                )
-                
-                env = RecordEpisodeStatistics(env)
+            env = gym.make(gid, full_action_space=True, render_mode=render_mode)
+            env = AtariPreprocessing(
+                env,
+                frame_skip=1,
+                grayscale_obs=grayscale,
+                scale_obs=False, # returns uint8 (0-255). Ensure your Agent divides by 255.0!
+                terminal_on_life_loss=episodic_life,
+                noop_max=30
+            )
 
-                if img_height != 84 or img_width != 84:
-                    env = ResizeObservation(env, (img_height, img_width))
+            # now apply other wrappers
+            env = RecordEpisodeStatistics(env)
 
-                if reward_clipping:
-                    # env = NormalizeReward(env, gamma=0.99)
-                    env = ClipReward(env, min_reward=-1, max_reward=1)
+            if img_height != 84 or img_width != 84:
+                env = ResizeObservation(env, (img_height, img_width))
 
-                if stack_num > 1:
-                    env = FrameStackObservation(env, stack_size=stack_num, padding_type='zero')
-                
-                return env
-            return _init
+            if reward_clipping:
+                # env = NormalizeReward(env, gamma=0.99)
+                env = ClipReward(env, min_reward=-1, max_reward=1)
 
-        env_fns = [make_env(gid) for gid in game_ids]
-        self.envs = gym.vector.AsyncVectorEnv(env_fns)
+            if stack_num > 1:
+                env = FrameStackObservation(env, stack_size=stack_num, padding_type='zero')
+
+            self.envs.append(env)
+
+        total = len(self.envs)
+        self.return_obs = [None] * total
+        self.return_rewards = [0] * total
+        self.return_terminations = [False] * total
+        self.return_truncations = [False] * total
+        self.return_infos = [None] * total
 
 
     def reset(self, seed=None):
-        return self.envs.reset(seed=seed)
+            # return self.envs.reset(seed=seed)
+        for i, env in enumerate(self.envs):
+            obs, info = env.reset(seed=seed)
+            self.return_obs[i] = obs
+            self.return_infos[i] = info
+        return self.return_obs, self.return_infos
 
 
-    def step(self, actions, mask=None):
-        return self.envs.step(actions)
+    def step(self, actions):
+        for i, env in enumerate(self.envs):
+            if actions[i] is None:
+                continue
+            obs, reward, termination, truncation, info = env.step(actions[i])
+            self.return_rewards[i] = reward.item()
+            self.return_terminations[i] = termination
+            self.return_truncations[i] = truncation
+            self.return_infos[i] = info
+            if termination or truncation:
+                obs, _ = env.reset() # You must manually reset!
+            self.return_obs[i] = obs
+        return self.return_obs, self.return_rewards, self.return_terminations, self.return_truncations, self.return_infos
 
 
     def get_available_actions(self):
@@ -108,11 +123,12 @@ class Multi_Atari_Environment:
         return np.array(actions)
 
 
-    def get_real_final_observation(self, next_obs, infos, env_index):
-        if "_final_observation" in infos and infos["_final_observation"][env_index]:
-            return infos["final_observation"][env_index]
-        return next_obs[env_index]
-
-
     def close(self):
-        self.envs.close()
+        for env in self.envs:
+            env.close()
+
+        self.return_obs = []
+        self.return_rewards = []
+        self.return_terminations = []
+        self.return_truncations = []
+        self.return_infos = []

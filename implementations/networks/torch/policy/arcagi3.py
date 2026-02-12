@@ -50,7 +50,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
             nn.Linear(hidden_size, action_size)   # action_size classes
         )
         self.position_step = nn.Sequential(
-            nn.Linear(vec_dim, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, position_size)
         )
@@ -111,7 +111,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         
         logits_flag = self.head_flag(features)    # (B, T, flag_size)
         logits_action = self.head_action(features) # (B, T, action_size)
-        position_logits = self.position_step(vec)
+        position_logits = self.position_step(features)
         content_logits = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
 
         content_logits = torch.reshape(content_logits, (batch_size, context_size, self.content_size))
