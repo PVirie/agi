@@ -29,7 +29,7 @@ from colorama import Fore, Back, Style
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.arcagi3 import Policy_Core, Projector
+from implementations.networks.torch.policy.base import Policy_Core, Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.networks.states import State_Sequence as Collector

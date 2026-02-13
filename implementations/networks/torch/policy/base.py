@@ -17,7 +17,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, history_steps=0, max_temporal_len=32, device=None, persistence_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="arcagi3_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="base_policy_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.flag_size = 6  # num classes for flag

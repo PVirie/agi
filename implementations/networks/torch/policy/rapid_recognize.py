@@ -9,11 +9,11 @@ import logging
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.temporal_unet import TemporalUNet
-from implementations.networks.torch.policy.arcagi3 import Policy_Core as ARCAGI3_Policy_Core, Projector as ARCAGI3_Projector
+from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core, Projector as Base_Projector
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Policy_Core(ARCAGI3_Policy_Core):
+class Policy_Core(Base_Policy_Core):
 
     def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, history_steps=0, max_temporal_len=32, device=None, persistence_path=None):
         nn.Module.__init__(self)
@@ -312,7 +312,7 @@ class Policy_Core(ARCAGI3_Policy_Core):
 
 
 # return only selected statistics
-class Projector(ARCAGI3_Projector):
+class Projector(Base_Projector):
 
     def slow_parameters(self):
         return self.master_core.slow_parameters()
