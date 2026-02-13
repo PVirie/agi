@@ -226,7 +226,7 @@ if __name__ == "__main__":
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=args.with_auxiliary,
-        use_memory=args.use_memory,
+        strategy=model_53.Strategy_Type.COGNITIVE if args.use_memory else model_53.Strategy_Type.REACTIVE
     )
 
     asyncio.run(run(env, model_53_agent, rollout_length))

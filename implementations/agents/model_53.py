@@ -1,4 +1,5 @@
 import numpy as np
+from enum import Enum
 from interfaces.learning import RL_Learner
 from interfaces.agent import Agent
 from interfaces.network import Policy_Network, Value_Network
@@ -42,6 +43,12 @@ def apply_cascading_masks(masks, *stop_conditions):
     return masks * keep_factor
 
 
+class Strategy_Type(Enum):
+    REACTIVE = 0
+    COGNITIVE = 1
+    POINTER = 2
+
+
 class Model_53(Agent):
     
     def __init__(self, 
@@ -51,7 +58,7 @@ class Model_53(Agent):
                  memory: Memory,
                  max_num_thought_steps: int = 2,
                  do_supervision: bool = False,
-                 use_memory: bool = True
+                 strategy: Strategy_Type = Strategy_Type.REACTIVE
                  ):
         self.policy_model = policy_model
         self.value_model = value_model
@@ -63,7 +70,13 @@ class Model_53(Agent):
 
         self.max_num_thought_steps = max_num_thought_steps
         self.do_supervision = do_supervision
-        self.use_memory = use_memory
+
+        if strategy == Strategy_Type.REACTIVE:
+            self.valid_int_actions = [0]
+        elif strategy == Strategy_Type.COGNITIVE:
+            self.valid_int_actions = [0, 1, 2, 3, 4, 5]
+        elif strategy == Strategy_Type.POINTER:
+            self.valid_int_actions = [0, 3]
 
         self.reset()
 
@@ -157,7 +170,7 @@ class Model_53(Agent):
         self.rewards[-1] = reward
         self.valid_actions.update_last(
             make_valid_mask([
-                [0] if self.thought_steps[i] == self.max_num_thought_steps - 1 or not self.use_memory else list(range(self.policy_model.flag_size)) 
+                [0] if self.thought_steps[i] == 0 else self.valid_int_actions 
                 for i in range(batch_size)
             ], self.policy_model.flag_size),
             make_valid_mask(next_available_actions, self.policy_model.action_size)
@@ -224,15 +237,15 @@ class Model_53(Agent):
             flag = int_action[i].item()
             self.thought_steps[i] += 1
             if flag == 0 or flag == 1 or self.thought_steps[i] >= self.max_num_thought_steps:
-                # observe external flag == 0 is normal content override with observation
-                # observe external flag == 1 using the observation to fetch related position from memory
+                # flag == 0 is normal content override with observation
+                # flag == 1 using the observation to fetch related position from memory
                 return_action[i] = ext_action[i]
                 self.thought_steps[i] = 0
-            elif self.use_memory:
-                # observe external flag == 2 use memory content directly without memory operation
-                # observe external flag == 3 position based retrieve
-                # observe external flag == 4 content based retrieve
-                # observe external flag == 5 record node
+            else:
+                # flag == 2 use memory content directly without memory operation
+                # flag == 3 position based retrieve
+                # flag == 4 content based retrieve
+                # flag == 5 record node
                 if flag == 3:
                     # position based retrieve
                     memory_action[i] |= Memory_Operation_Type.FETCH

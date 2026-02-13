@@ -150,7 +150,7 @@ if __name__ == "__main__":
     np.random.seed(20260111)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/rapid"
+    experiment_path = f"{APP_ROOT}/experiments/atari_53"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -162,7 +162,8 @@ if __name__ == "__main__":
     #     "ALE/Pong-v5", "ALE/SpaceInvaders-v5", "ALE/Breakout-v5", "ALE/Carnival-v5",
     #     "ALE/BankHeist-v5", "ALE/Amidar-v5", "ALE/VideoPinball-v5", "ALE/VideoCheckers-v5"
     # ]
-    game_ids=["ALE/Pong-v5"] * 16
+    # game_ids=["ALE/Pong-v5"] * 16
+    game_ids=["ALE/Pong-v5", "ALE/SpaceInvaders-v5", "ALE/Breakout-v5", "ALE/Carnival-v5"] * 4
     env = Multi_Atari_Environment(
         game_ids=game_ids,   
         img_height=64,           # Height to resize frames to
@@ -179,8 +180,8 @@ if __name__ == "__main__":
 
     if args.scale == "small":
         history_steps = 1
-        hidden_size = 64
-        conv_layers = [16, 32, 32] # basic impala
+        hidden_size = 128
+        conv_layers = [16, 32, 64, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
         position_size = 32
@@ -232,7 +233,7 @@ if __name__ == "__main__":
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=args.with_auxiliary,
-        use_memory=args.use_memory,
+        strategy=model_53.Strategy_Type.COGNITIVE if args.use_memory else model_53.Strategy_Type.REACTIVE
     )
 
     asyncio.run(run(env, model_53_agent, rollout_length))
