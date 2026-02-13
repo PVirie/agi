@@ -114,16 +114,17 @@ class Model_53(Agent):
 
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         memory_fetch_index = [-1 for _ in range(batch_size)]
+        memory_replace_all_index = [False for _ in range(batch_size)]
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
             flag = int_action[i].item()
             if r:
-                memory_action[i] = Memory_Operation_Type.RESET
+                memory_action[i] |= Memory_Operation_Type.RESET
             if not idle:
-                if flag == 0:
-                    memory_action[i] = Memory_Operation_Type.CACHE
-                elif flag == 1:
-                    memory_action[i] = Memory_Operation_Type.FETCH_AND_CACHE
+                memory_action[i] |= Memory_Operation_Type.CACHE
+                if flag == 1:
+                    memory_action[i] |= Memory_Operation_Type.FETCH
                     memory_fetch_index[i] = 2
+                    memory_replace_all_index[i] = False # content from obs will never be replaced
             if d or t:
                 self.thought_steps[i] = 0
             self.last_truncates[-1][i] = t
@@ -141,7 +142,8 @@ class Model_53(Agent):
                 content
             ), 
             operation=memory_action,
-            index=memory_fetch_index
+            index=memory_fetch_index,
+            replace_all_index=memory_replace_all_index
         )
 
         # replace the reward and content
@@ -228,24 +230,22 @@ class Model_53(Agent):
                 # observe external flag == 1 using the observation to fetch related position from memory
                 return_action[i] = ext_action[i]
                 self.thought_steps[i] = 0
-                memory_action[i] = Memory_Operation_Type.IDLE
-            else:
-                if self.use_memory:
-                    if flag == 2:
-                        memory_action[i] = Memory_Operation_Type.IDLE
-                    elif flag == 3:
-                        # position based retrieve
-                        memory_action[i] = Memory_Operation_Type.FETCH
-                        memory_fetch_index[i] = 1
-                    elif flag == 4:
-                        # content based retrieve
-                        memory_action[i] = Memory_Operation_Type.FETCH
-                        memory_fetch_index[i] = 2
-                    elif flag == 5:
-                        # record node
-                        memory_action[i] = Memory_Operation_Type.CACHE
-                else:
-                    memory_action[i] = Memory_Operation_Type.IDLE
+            elif self.use_memory:
+                # observe external flag == 2 use memory content directly without memory operation
+                # observe external flag == 3 position based retrieve
+                # observe external flag == 4 content based retrieve
+                # observe external flag == 5 record node
+                if flag == 3:
+                    # position based retrieve
+                    memory_action[i] |= Memory_Operation_Type.FETCH
+                    memory_fetch_index[i] = 1
+                elif flag == 4:
+                    # content based retrieve
+                    memory_action[i] |= Memory_Operation_Type.FETCH
+                    memory_fetch_index[i] = 2
+                elif flag == 5:
+                    # record node
+                    memory_action[i] |= Memory_Operation_Type.CACHE
 
         reward, position, content = self.memory.operate(
             tuple_record=(

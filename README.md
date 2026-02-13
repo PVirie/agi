@@ -50,14 +50,9 @@ For example, to run the ARC AGI task with auxiliary loss for 360 seconds:
     - [x] Multiple games
 - [x] RL baseline (With simple models, too complex models tend to have high variance and very slow learning.)
 - [x] Auxiliary loss
+    - [x] Supervised content
+    - [ ] Refine fetched content
 - [x] Model 53: Full cognitive ability
     - [x] Use RL to select two observation modes
         - [x] Override content at the predict position
         - [x] Jump to observed position
-- [ ] Algebra core
-    - [x] Feature similarity position inference
-    - [ ] Extract position mechanics (full Cognitive map or Tolman-Eichenbaum Machine)
-- [ ] Experiments
-    - [ ] Algebra core alone performance
-    - [ ] Algebra core transfer training performance
-    - [ ] Game mechanic similarity analysis

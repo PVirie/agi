@@ -43,7 +43,7 @@ class Energy_Memory(Memory):
         return content
 
 
-    def operate(self, tuple_record, operation: List[Memory_Operation_Type], index: List[int]=None):
+    def operate(self, tuple_record, operation: List[Memory_Operation_Type], index: List[int]=None, replace_all_index: List[bool]=None):
         """
         tuple_record is a tuple of np array of shape (batch_size, tuple_size[t])
         operation is a list of Memory_Operation_Type with length batch_size
@@ -51,46 +51,31 @@ class Energy_Memory(Memory):
         """
         batch_size = tuple_record[0].shape[0]
         best_outputs = [t for t in tuple_record]
+        replace_all_index = replace_all_index if replace_all_index is not None else [True for _ in range(batch_size)]
         for i in range(batch_size):
             if i >= len(self.data):
                 # initialize new slot
                 self.data.append([np.zeros((self.max_slot_size, self.sizes[t])) for t in range(len(self.sizes))])
 
             flag = operation[i]
-            if flag == Memory_Operation_Type.IDLE:
-                # no operation
-                continue
-
-            elif flag == Memory_Operation_Type.RESET:
+            
+            if Memory_Operation_Type.RESET in flag:
                 # reset
                 self.data[i] = [np.zeros((self.max_slot_size, self.sizes[t])) for t in range(len(self.sizes))]
 
-            elif flag == Memory_Operation_Type.FETCH:
+            if Memory_Operation_Type.FETCH in flag:
                 # fetch
                 t_index = index[i]
                 current_records = self.data[i] # [(slot_size, tuple_size[t])]
                 prob = self.__infer(current_records[t_index], best_outputs[t_index][i])  # (slot_size)
                 for t in range(len(self.sizes)):
+                    if not replace_all_index[i] and t == t_index:
+                        # fetch, only the parts that are not t_index
+                        continue
                     best_outputs[t][i, :] = self.__fetch(current_records[t], prob)
 
-            elif flag == Memory_Operation_Type.CACHE:
+            if Memory_Operation_Type.CACHE in flag:
                 # cache (append last)
-                for t in range(len(self.sizes)):
-                    # shift left
-                    self.data[i][t][:-1, :] = self.data[i][t][1:, :]
-                    # append new
-                    self.data[i][t][-1, :] = best_outputs[t][i, :]
-
-            elif flag == Memory_Operation_Type.FETCH_AND_CACHE:
-                # fetch and cache
-                t_index = index[i]
-                current_records = self.data[i] # [(slot_size, tuple_size[t])]
-                prob = self.__infer(current_records[t_index], best_outputs[t_index][i])  # (slot_size)
-                for t in range(len(self.sizes)):
-                    # fetch, only the parts that are not t_index
-                    if t != t_index:
-                        best_outputs[t][i, :] = self.__fetch(current_records[t], prob)
-                # now cache with the updated best_outputs
                 for t in range(len(self.sizes)):
                     # shift left
                     self.data[i][t][:-1, :] = self.data[i][t][1:, :]

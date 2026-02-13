@@ -92,6 +92,9 @@ class Multi_Atari_Environment:
     def step(self, actions):
         for i, env in enumerate(self.envs):
             if actions[i] is None:
+                self.return_rewards[i] = 0
+                self.return_terminations[i] = False
+                self.return_truncations[i] = False
                 continue
             obs, reward, termination, truncation, info = env.step(actions[i])
             self.return_rewards[i] = reward.item()
