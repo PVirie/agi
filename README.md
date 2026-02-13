@@ -51,7 +51,6 @@ For example, to run the ARC AGI task with auxiliary loss for 360 seconds:
 - [x] RL baseline (With simple models, too complex models tend to have high variance and very slow learning.)
 - [x] Auxiliary loss
     - [x] Supervised content
-    - [ ] Refine fetched content
 - [x] Model 53: Full cognitive ability
     - [x] Use RL to select two observation modes
         - [x] Override content at the predict position

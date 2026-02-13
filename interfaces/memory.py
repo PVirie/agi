@@ -5,9 +5,9 @@ from typing import List
 
 class Memory_Operation_Type(Flag):
     IDLE = 0  # no operation
-    CACHE = auto()
-    FETCH = auto()
     RESET = auto()
+    FETCH = auto()
+    CACHE = auto()
 
 
 class Memory(abc.ABC):
