@@ -73,9 +73,9 @@ class Model_53(Agent):
         self.actions.clear()
         self.valid_actions.clear()
         self.rewards = []
+        self.last_idles = []
         self.last_dones = []
         self.last_truncates = []
-        self.last_idles = []
 
         self.thought_steps = None
 
@@ -104,9 +104,9 @@ class Model_53(Agent):
                 np.ones((batch_size, self.policy_model.flag_size), dtype=np.bool),
                 np.ones((batch_size, self.policy_model.action_size), dtype=np.bool)
             )
-            self.last_truncates.append([True for _ in range(batch_size)])
             self.last_idles.append([False for _ in range(batch_size)])
             self.last_dones.append([False for _ in range(batch_size)])
+            self.last_truncates.append([True for _ in range(batch_size)])
         
         # get last action's position
         last_action = self.actions.get_last()
@@ -114,7 +114,6 @@ class Model_53(Agent):
 
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         memory_fetch_index = [-1 for _ in range(batch_size)]
-        memory_replace_all_index = [False for _ in range(batch_size)]
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
             flag = int_action[i].item()
             if r:
@@ -124,12 +123,11 @@ class Model_53(Agent):
                 if flag == 1:
                     memory_action[i] |= Memory_Operation_Type.FETCH
                     memory_fetch_index[i] = 2
-                    memory_replace_all_index[i] = False # content from obs will never be replaced
             if d or t:
                 self.thought_steps[i] = 0
-            self.last_truncates[-1][i] = t
             self.last_idles[-1][i] = idle
             self.last_dones[-1][i] = d
+            self.last_truncates[-1][i] = t
 
         content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
         reward = np.array([r for r in rewards])
@@ -143,7 +141,7 @@ class Model_53(Agent):
             ), 
             operation=memory_action,
             index=memory_fetch_index,
-            replace_all_index=memory_replace_all_index
+            replace_all_index=[False for _ in range(batch_size)] # content from obs will never be replaced
         )
 
         # replace the reward and content
@@ -174,8 +172,8 @@ class Model_53(Agent):
                 svl_masks = apply_cascading_masks(
                     self.actions.make_mask(batch_led=True)[:, :-1],
                     self.last_idles[1:],
-                    self.last_truncates[1:],
-                    self.last_dones[1:]
+                    self.last_dones[1:],
+                    self.last_truncates[1:]
                 )
             else:
                 svl_masks = None
@@ -203,9 +201,9 @@ class Model_53(Agent):
             self.actions.mark(skip_last=True)
             self.valid_actions.mark(skip_last=True)
             self.rewards = self.rewards[left_over_slide]
-            self.last_truncates = self.last_truncates[left_over_slide]
             self.last_idles = self.last_idles[left_over_slide]
             self.last_dones = self.last_dones[left_over_slide]
+            self.last_truncates = self.last_truncates[left_over_slide]
 
 
         # Choose a random action
@@ -254,7 +252,8 @@ class Model_53(Agent):
                 content
             ),
             operation=memory_action,
-            index=memory_fetch_index
+            index=memory_fetch_index,
+            replace_all_index=[True for _ in range(batch_size)]
         )
 
         # store last states
@@ -273,10 +272,10 @@ class Model_53(Agent):
             np.ones((batch_size, self.policy_model.action_size), dtype=np.bool)
         )
         self.rewards.append(reward)
-        self.last_truncates.append([False for _ in range(batch_size)])
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         self.last_dones.append([False for _ in range(batch_size)])
-        
+        self.last_truncates.append([False for _ in range(batch_size)])
+
         return return_action
     
 
@@ -291,23 +290,23 @@ if __name__ == "__main__":
         [False, False],
         [False, True],
     ]
-    last_truncates = [
-        [False, False],
-        [True, False],
-        [False, False],
-        [True, False],
-        [False, False],
-    ]
     last_dones = [
         [False, False],
         [False, True],
         [False, False],
         [True, True],
         [False, False],
-    ]   
-    updated_masks = apply_cascading_masks(masks, last_idles, last_truncates, last_dones)
+    ] 
+    last_truncates = [
+        [False, False],
+        [True, False],
+        [False, False],
+        [True, False],
+        [False, False],
+    ]  
+    updated_masks = apply_cascading_masks(masks, last_idles, last_dones, last_truncates)
     manual_masks = masks.copy()
     manual_masks = manual_masks * (1.0 - np.stack(last_idles, axis=1).astype(np.float32))
-    manual_masks = manual_masks * (1.0 - np.stack(last_truncates, axis=1).astype(np.float32))
     manual_masks = manual_masks * (1.0 - np.stack(last_dones, axis=1).astype(np.float32))
+    manual_masks = manual_masks * (1.0 - np.stack(last_truncates, axis=1).astype(np.float32))
     assert np.allclose(updated_masks, manual_masks), "Cascading mask application failed!"

@@ -221,6 +221,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         context_full = context
         context = context_full[:, :-1, :]  # remove last context for computing logprob
+        # target_position = context_full[:, 1:, (1 + 1 + 3):(1 + 1 + 3 + self.position_size)]  # only position part for position loss
         target_content = context_full[:, 1:, (1 + 1 + 3 + self.position_size): ]  # only content part for action loss
 
         available_flags = None
