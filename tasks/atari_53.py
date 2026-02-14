@@ -45,7 +45,7 @@ def format_float(f):
     else:
         return "{: .1f}".format(f)
 
-async def run(env, agent, rollout_length=16):
+async def run(env, agent, rollout_length=16, verbose=False):
 
     observations, info = env.reset()
     rewards = [np.float32(0) for _ in observations]
@@ -90,7 +90,7 @@ async def run(env, agent, rollout_length=16):
                 )
 
         steps += 1
-        if any([r != 0 for r in rewards]):
+        if any([r != 0 for r in rewards]) and verbose:
             logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in rewards])}")
 
         if steps % rollout_length == 0:
@@ -126,8 +126,9 @@ if __name__ == "__main__":
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
     parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
-    parser.add_argument("--use-memory",             "-um",  action="store_true",                help="Enable the use of memory in the agent.")
-    parser.add_argument("--with-auxiliary",       "-aux", action="store_true",                help="Enable auxiliary loss along with PPO.")
+    parser.add_argument("--use-memory",             "-um",  action="store_true", help="Enable the use of memory in the agent.")
+    parser.add_argument("--with-auxiliary",         "-aux", action="store_true", help="Enable auxiliary loss along with PPO.")
+    parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     args = parser.parse_args()
 
     # print summary of arguments that are not default
@@ -255,4 +256,4 @@ if __name__ == "__main__":
         strategy=model_53.Strategy_Type.COGNITIVE if args.use_memory else model_53.Strategy_Type.REACTIVE
     )
 
-    asyncio.run(run(env, model_53_agent, rollout_length))
+    asyncio.run(run(env, model_53_agent, rollout_length, verbose=not args.silent))

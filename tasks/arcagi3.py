@@ -50,7 +50,7 @@ def get_state_reward(state: Game_State) -> int:
     return reward
     
 
-async def run(env, agent, rollout_length=16):
+async def run(env, agent, rollout_length=16, verbose=False):
 
     all_games_info = await env.list_games()
     all_public_game_ids = [game["game_id"] for game in all_games_info if game.get("game_type") == "public"]
@@ -105,7 +105,7 @@ async def run(env, agent, rollout_length=16):
         if steps % (rollout_length) == 0:
             ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
 
-        if steps % (rollout_length) == 0 or has_event:
+        if (steps % (rollout_length) == 0 or has_event) and verbose:
             log_str = "; ".join([s.short_str() for s in states])
             logging.info(f"{steps}| States: [{log_str}]")
             logging.info(f"{steps}| Rewards: {[get_state_reward(s) for s in states]}")
@@ -135,8 +135,9 @@ if __name__ == "__main__":
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
     parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
-    parser.add_argument("--use-memory",             "-um",  action="store_true",                help="Enable the use of memory in the agent.")
-    parser.add_argument("--with-auxiliary",       "-aux", action="store_true",                help="Enable auxiliary loss along with PPO.")
+    parser.add_argument("--use-memory",             "-um",  action="store_true", help="Enable the use of memory in the agent.")
+    parser.add_argument("--with-auxiliary",         "-aux", action="store_true", help="Enable auxiliary loss along with PPO.")
+    parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     args = parser.parse_args()
 
     # print summary of arguments that are not default
@@ -229,4 +230,4 @@ if __name__ == "__main__":
         strategy=model_53.Strategy_Type.COGNITIVE if args.use_memory else model_53.Strategy_Type.REACTIVE
     )
 
-    asyncio.run(run(env, model_53_agent, rollout_length))
+    asyncio.run(run(env, model_53_agent, rollout_length, verbose=not args.silent))

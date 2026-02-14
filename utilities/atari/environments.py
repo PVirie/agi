@@ -57,7 +57,7 @@ class Multi_Atari_Environment:
                 noop_max=30
             )
 
-            # now apply other wrappers
+            # record stats before any other wrappers to capture true episode returns and lengths
             env = RecordEpisodeStatistics(env)
 
             if img_height != 84 or img_width != 84:
