@@ -158,12 +158,31 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
-    # game_ids=[
-    #     "ALE/Pong-v5", "ALE/SpaceInvaders-v5", "ALE/Breakout-v5", "ALE/Carnival-v5",
-    #     "ALE/BankHeist-v5", "ALE/Amidar-v5", "ALE/VideoPinball-v5", "ALE/VideoCheckers-v5"
-    # ]
-    # game_ids=["ALE/Pong-v5"] * 16
-    game_ids=["ALE/Pong-v5", "ALE/SpaceInvaders-v5", "ALE/Breakout-v5", "ALE/Carnival-v5"] * 4
+    """
+        These games are chosen based on their simplicity and mechanics similarity.
+        Reward clipping should be applied for all games.
+
+        Very simple games:
+            ALE/Freeway-v5: 21-24
+
+        Simple games:
+            ALE/Pong-v5: 21
+            ALE/Breakout-v5: 216
+
+        Shoot up games (harder):
+            ALE/SpaceInvaders-v5: 50
+            ALE/BeamRider-v5: 50
+            ALE/DemonAttack-v5: 100
+            ALE/Galaxian-v5: 50
+            ALE/Assault-v5: 50
+
+        City block games (harder):
+            ALE/MsPacman-v5: 60-80
+            ALE/Pacman-v5: 60-80
+            ALE/Amidar-v5: 20-30
+    """
+
+    game_ids=["ALE/Freeway-v5"] * 16 + ["ALE/Pong-v5"] * 16 + ["ALE/SpaceInvaders-v5"] * 16 + ["ALE/MsPacman-v5"] * 16
     env = Multi_Atari_Environment(
         game_ids=game_ids,   
         img_height=64,           # Height to resize frames to
@@ -180,24 +199,24 @@ if __name__ == "__main__":
 
     if args.scale == "small":
         history_steps = 1
-        hidden_size = 128
-        conv_layers = [16, 32, 64, 32] # basic impala
+        hidden_size = 64
+        conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
         position_size = 32
     elif args.scale == "medium":
-        history_steps = 3
+        history_steps = 1
         hidden_size = 128
-        conv_layers = [32, 64, 64, 64] # medium impala
-        rollout_length = 128
-        minibatch_size = 4
+        conv_layers = [16, 32, 64, 64] # medium impala
+        rollout_length = 256
+        minibatch_size = 8
         position_size = 32
     else:  # large
-        history_steps = 7
-        hidden_size = 128
-        conv_layers = [64, 64, 128, 128, 256, 256] # large impala
-        rollout_length = 128
-        minibatch_size = 4
+        history_steps = 1
+        hidden_size = 256
+        conv_layers = [16, 32, 64, 128, 128] # large impala
+        rollout_length = 256
+        minibatch_size = 8
         position_size = 32
 
     parameters_path = f"{experiment_path}/parameters"

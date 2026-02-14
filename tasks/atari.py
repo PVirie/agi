@@ -68,7 +68,7 @@ async def run(env, agent, rollout_length=16):
             latest_frames=[obs.astype(np.float32) / 255.0 for obs in observations],
             rewards=[r.item() for r in rewards],
             next_available_actions=[
-                list(range(6)) for _ in observations
+                list(range(action_space_size)) for _ in observations
             ],
             force_train=steps % rollout_length == 0 or should_stop,
         )
@@ -157,7 +157,7 @@ if __name__ == "__main__":
     os.makedirs(experiment_path, exist_ok=True)
 
     env = AtariVectorEnv(
-        game="pong",  # The ROM id not name, i.e., camel case compared to `gymnasium.make` name versions
+        game="pong",                # The ROM id not name, i.e., camel case compared to `gymnasium.make` name versions
         num_envs=16,                # Number of parallel environments
         img_height=64,              # Height to resize frames to
         img_width=32,               # Width to resize frames to
@@ -168,6 +168,7 @@ if __name__ == "__main__":
         episodic_life=True,         # Recommended for harder games (Breakout/Montezuma)
         reward_clipping=True,
     )
+    action_space_size = env.single_action_space.n.item()
 
     random_agent = random_agent.Random_Agent("01")
 
@@ -196,7 +197,7 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        action_size=6, position_size=position_size,
+        action_size=action_space_size, position_size=position_size,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=conv_layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
