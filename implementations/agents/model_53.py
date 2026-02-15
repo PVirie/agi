@@ -78,6 +78,9 @@ class Model_53(Agent):
         elif scheme == Scheme.POINTER:
             self.valid_int_actions = [0, 1, 2, 3]
 
+        # set of external observation is a subset of valid_int_actions that triggers external observation override
+        self.observe_external_int_actions = list(set([0, 1]).intersection(set(self.valid_int_actions)))
+
         self.reset()
 
 
@@ -110,43 +113,62 @@ class Model_53(Agent):
             self.actions.append(
                 np.zeros((batch_size, self.policy_model.packed_action_size), dtype=np.float32)
             )
-            self.rewards.append(
-                np.zeros((batch_size,), dtype=np.float32)
-            )
             self.valid_actions.append(
                 np.ones((batch_size, self.policy_model.flag_size), dtype=np.bool),
                 np.ones((batch_size, self.policy_model.action_size), dtype=np.bool)
+            )
+            self.rewards.append(
+                np.zeros((batch_size,), dtype=np.float32)
             )
             self.last_idles.append([False for _ in range(batch_size)])
             self.last_dones.append([False for _ in range(batch_size)])
             self.last_truncates.append([True for _ in range(batch_size)])
         
+        content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
+        reward = np.array([r for r in rewards])
+
         # get last action's position
         last_action = self.actions.get_last()
-        int_action, ext_action, position, _ = self.policy_model.unpack_action(last_action)
+        int_action, ext_action, position, last_content = self.policy_model.unpack_action(last_action)
 
         memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
         memory_fetch_index = [-1 for _ in range(batch_size)]
+        memory_replace_all = [False for _ in range(batch_size)]
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
             flag = int_action[i].item()
             if r:
                 memory_action[i] |= Memory_Operation_Type.RESET
             if not idle:
+                # flag == 0 is normal content override with observation
+                # flag == 1 using the observation to fetch related position from memory
                 memory_action[i] |= Memory_Operation_Type.CACHE
                 if flag == 1:
                     memory_action[i] |= Memory_Operation_Type.FETCH
                     memory_fetch_index[i] = 2
+            else:
+                content[i, :] = last_content[i, :]
+                reward[i] = 0
+                memory_replace_all[i] = True
+                # flag == 2 use memory content directly without memory operation
+                if flag == 3:
+                    # position based retrieve
+                    memory_action[i] |= Memory_Operation_Type.FETCH
+                    memory_fetch_index[i] = 1
+                elif flag == 4:
+                    # content based retrieve
+                    memory_action[i] |= Memory_Operation_Type.FETCH
+                    memory_fetch_index[i] = 2
+                elif flag == 5:
+                    # record node
+                    memory_action[i] |= Memory_Operation_Type.CACHE
             if d or t:
                 self.thought_steps[i] = 0
             self.last_idles[-1][i] = idle
             self.last_dones[-1][i] = d
             self.last_truncates[-1][i] = t
 
-        content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
-        reward = np.array([r for r in rewards])
-
         # update memory
-        _, position, _ = self.memory.operate(
+        _, position, content = self.memory.operate(
             tuple_record=(
                 np.reshape(reward, (-1, 1)), 
                 position,
@@ -170,7 +192,7 @@ class Model_53(Agent):
         self.rewards[-1] = reward
         self.valid_actions.update_last(
             make_valid_mask([
-                [0] if self.thought_steps[i] == 0 else self.valid_int_actions 
+                self.observe_external_int_actions if self.thought_steps[i] == self.max_num_thought_steps else self.valid_int_actions 
                 for i in range(batch_size)
             ], self.policy_model.flag_size),
             make_valid_mask(next_available_actions, self.policy_model.action_size)
@@ -229,62 +251,25 @@ class Model_53(Agent):
         # extract output here
         int_action, ext_action, position, content = self.policy_model.unpack_action(packed_action)
 
-        # if next done, reset score and thought steps
+        # check flag for external observation override and update thought steps
         return_action = [None for _ in range(batch_size)]
-        memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
-        memory_fetch_index = [-1 for _ in range(batch_size)]
         for i in range(batch_size):
             flag = int_action[i].item()
             self.thought_steps[i] += 1
-            if flag == 0 or flag == 1 or self.thought_steps[i] >= self.max_num_thought_steps:
-                # flag == 0 is normal content override with observation
-                # flag == 1 using the observation to fetch related position from memory
+            if flag in self.observe_external_int_actions:
                 return_action[i] = ext_action[i]
                 self.thought_steps[i] = 0
-            else:
-                # flag == 2 use memory content directly without memory operation
-                # flag == 3 position based retrieve
-                # flag == 4 content based retrieve
-                # flag == 5 record node
-                if flag == 3:
-                    # position based retrieve
-                    memory_action[i] |= Memory_Operation_Type.FETCH
-                    memory_fetch_index[i] = 1
-                elif flag == 4:
-                    # content based retrieve
-                    memory_action[i] |= Memory_Operation_Type.FETCH
-                    memory_fetch_index[i] = 2
-                elif flag == 5:
-                    # record node
-                    memory_action[i] |= Memory_Operation_Type.CACHE
 
-        reward, position, content = self.memory.operate(
-            tuple_record=(
-                np.zeros((batch_size, 1), dtype=np.float32),
-                position, 
-                content
-            ),
-            operation=memory_action,
-            index=memory_fetch_index,
-            replace_all_index=[True for _ in range(batch_size)]
-        )
-
-        # store last states
+        # populate last states
         self.obs.append(
-            self.policy_model.pack_context(
-                b_reward=reward,
-                b_int=int_action,
-                b_ext=ext_action,
-                b_position=position,
-                b_content=content
-            )
+            np.zeros((batch_size, self.policy_model.packed_context_size), dtype=np.float32)
         )
         self.actions.append(packed_action)
         self.valid_actions.append(
             np.ones((batch_size, self.policy_model.flag_size), dtype=np.bool),
             np.ones((batch_size, self.policy_model.action_size), dtype=np.bool)
         )
-        self.rewards.append(reward)
+        self.rewards.append(np.zeros((batch_size, 1), dtype=np.float32))
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         self.last_dones.append([False for _ in range(batch_size)])
         self.last_truncates.append([False for _ in range(batch_size)])
