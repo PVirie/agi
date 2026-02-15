@@ -146,9 +146,10 @@ class Model_53(Agent):
                     memory_action[i] |= Memory_Operation_Type.FETCH
                     memory_fetch_index[i] = 2
             else:
+                # if idle, use content and reward from last thought
                 content[i, :] = last_content[i, :]
                 reward[i] = 0
-                memory_replace_all[i] = True
+                memory_replace_all[i] = True # allow replace fetched part unless it's the observation
                 # flag == 2 use memory content directly without memory operation
                 if flag == 3:
                     # position based retrieve
@@ -176,7 +177,7 @@ class Model_53(Agent):
             ), 
             operation=memory_action,
             index=memory_fetch_index,
-            replace_all_index=[False for _ in range(batch_size)] # content from obs will never be replaced
+            replace_all_index=memory_replace_all
         )
 
         # replace the reward and content
