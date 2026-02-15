@@ -10,7 +10,12 @@ from utilities.safe_torch_module import Safe_nn_Module
 
 class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
-    def __init__(self, position_size, width, height, channel, layers, device=None, persistence_path=None):
+    def __init__(self, 
+                 position_size, 
+                 width, height, channel, 
+                 layers, 
+                 device=None, 
+                 persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="value_core", device=device, persistence_path=persistence_path)
         self.device = device
@@ -31,7 +36,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         )
 
         self.reset_parameters()
-        self.load()
+        self.load(override_persistence_path=first_load_path)
         self.eval()
 
 

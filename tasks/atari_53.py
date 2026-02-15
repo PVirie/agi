@@ -194,6 +194,7 @@ if __name__ == "__main__":
         grayscale=True,             # 4. Removes noise (Color is usually irrelevant in Atari)
         episodic_life=True,         # Recommended for harder games (Breakout/Montezuma)
         reward_clipping=True,
+        record_statistic_dir=f"{experiment_path}/statistics"
     )
 
     random_agent = random_agent.Random_Agent("01")

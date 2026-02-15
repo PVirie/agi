@@ -15,7 +15,13 @@ from utilities.safe_torch_module import Safe_nn_Module
 
 class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
-    def __init__(self, action_size, position_size, width, height, channel, hidden_size, layers, history_steps=0, max_temporal_len=32, device=None, persistence_path=None):
+    def __init__(self, 
+                 action_size, position_size, 
+                 width, height, channel, 
+                 hidden_size, layers, 
+                 history_steps=0, max_temporal_len=32, 
+                 device=None, 
+                 persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="base_policy_core", device=device, persistence_path=persistence_path)
         self.device = device
@@ -62,7 +68,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.content_logstd = nn.Parameter(torch.zeros(1, 1, self.content_size))
 
         self.reset_parameters()
-        self.load()
+        self.load(override_persistence_path=first_load_path)
         self.eval()
 
 
