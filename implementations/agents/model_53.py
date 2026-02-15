@@ -43,10 +43,10 @@ def apply_cascading_masks(masks, *stop_conditions):
     return masks * keep_factor
 
 
-class Strategy_Type(Enum):
-    REACTIVE = 0
-    COGNITIVE = 1
-    POINTER = 2
+class Scheme(str, Enum):
+    REACTIVE = "reactive"
+    COGNITIVE = "cognitive"
+    POINTER = "pointer"
 
 
 class Model_53(Agent):
@@ -58,7 +58,7 @@ class Model_53(Agent):
                  memory: Memory,
                  max_num_thought_steps: int = 2,
                  do_supervision: bool = False,
-                 strategy: Strategy_Type = Strategy_Type.REACTIVE
+                 scheme: Scheme = Scheme.REACTIVE
                  ):
         self.policy_model = policy_model
         self.value_model = value_model
@@ -71,12 +71,12 @@ class Model_53(Agent):
         self.max_num_thought_steps = max_num_thought_steps
         self.do_supervision = do_supervision
 
-        if strategy == Strategy_Type.REACTIVE:
+        if scheme == Scheme.REACTIVE:
             self.valid_int_actions = [0]
-        elif strategy == Strategy_Type.COGNITIVE:
+        elif scheme == Scheme.COGNITIVE:
             self.valid_int_actions = [0, 1, 2, 3, 4, 5]
-        elif strategy == Strategy_Type.POINTER:
-            self.valid_int_actions = [0, 3]
+        elif scheme == Scheme.POINTER:
+            self.valid_int_actions = [0, 1, 2, 3]
 
         self.reset()
 

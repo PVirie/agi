@@ -135,7 +135,7 @@ if __name__ == "__main__":
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
     parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
-    parser.add_argument("--use-memory",             "-um",  action="store_true", help="Enable the use of memory in the agent.")
+    parser.add_argument("--scheme",                 "-sch", type=str, default="reactive", help="The scheme to use for the agent's decision making. Default is 'reactive'.")
     parser.add_argument("--with-auxiliary",         "-aux", action="store_true", help="Enable auxiliary loss along with PPO.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     args = parser.parse_args()
@@ -227,7 +227,7 @@ if __name__ == "__main__":
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=args.with_auxiliary,
-        strategy=model_53.Strategy_Type.COGNITIVE if args.use_memory else model_53.Strategy_Type.REACTIVE
+        scheme=model_53.Scheme(args.scheme)
     )
 
     asyncio.run(run(env, model_53_agent, rollout_length, verbose=not args.silent))
