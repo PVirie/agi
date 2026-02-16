@@ -237,7 +237,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
+        policy_model=Projector(policy_core, [0, 1, 4]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
         aux_coef=0.1 if args.with_auxiliary else None
     )
