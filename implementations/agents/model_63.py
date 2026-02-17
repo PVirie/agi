@@ -1,0 +1,424 @@
+import numpy as np
+from enum import Enum, IntEnum
+from interfaces.learning import RL_Learner
+from interfaces.agent import Agent
+from interfaces.network import Policy_Network, Value_Network
+from interfaces.memory import Memory, Memory_Operation_Type
+from interfaces.data_structure import Context_Collector
+
+
+def make_valid_mask(valid_actions, action_size):
+    """
+    valid_actions: a list (batch) of list of int
+    action_size: int
+    """
+    valid_mask = np.zeros((len(valid_actions), action_size), dtype=np.bool)
+    for i, va in enumerate(valid_actions):
+        valid_mask[i, va] = True
+    return valid_mask
+
+
+def apply_cascading_masks(masks, *stop_conditions):
+    """
+    Updates masks by zeroing out elements where ANY stop_condition is True.
+    
+    Args:
+        masks (np.array): The initial mask array.
+        *stop_conditions (list): Variable number of lists/arrays to stack and filter by.
+                                 (e.g., last_idles, last_truncates)
+    """
+    combined_stop_flags = None
+
+    for cond in stop_conditions:
+        current_flags = np.stack(cond, axis=1).astype(bool)
+        if combined_stop_flags is None:
+            combined_stop_flags = current_flags
+        else:
+            # In-place logical_or is memory efficient and fast
+            np.logical_or(combined_stop_flags, current_flags, out=combined_stop_flags)
+
+    # ~combined_stop_flags turns True (stop) into False.
+    # .astype(float) turns False into 0.0, True into 1.0.
+    keep_factor = (~combined_stop_flags).astype(np.float32)
+    return masks * keep_factor
+
+
+class Scheme(str, Enum):
+    REACTIVE = "reactive"
+    COGNITIVE = "cognitive"
+    POINTER = "pointer"
+
+
+class Internal_Action(IntEnum):
+    GEN_OBS_X_GEN_OBS = 0
+    GEN_OBS_X_FET_OBS = 1
+    FET_OBS_X_GEN_OBS = 2
+    FET_OBS_X_FET_OBS = 3
+    NOOP_X_GEN_OBS = 4
+    NOOP_X_FET_OBS = 5
+
+    GEN_GEN_X_GEN_GEN = 6
+    GEN_GEN_X_FET_GEN = 7
+    GEN_GEN_X_GEN_FET = 8
+    FET_GEN_X_GEN_GEN = 9
+    FET_GEN_X_FET_GEN = 10
+    FET_GEN_X_GEN_FET = 11
+    GEN_FET_X_GEN_GEN = 12
+    GEN_FET_X_FET_GEN = 13
+    GEN_FET_X_GEN_FET = 14
+    NOOP_X_GEN_GEN = 15
+    NOOP_X_FET_GEN = 16
+    NOOP_X_GEN_FET = 17
+
+    @staticmethod
+    def external_actions():
+        return {
+            Internal_Action.GEN_OBS_X_GEN_OBS,
+            Internal_Action.GEN_OBS_X_FET_OBS,
+            Internal_Action.FET_OBS_X_GEN_OBS,
+            Internal_Action.FET_OBS_X_FET_OBS,
+            Internal_Action.NOOP_X_GEN_OBS,
+            Internal_Action.NOOP_X_FET_OBS,
+        }
+    
+    def observe_external(self):
+        return self in self.external_actions()
+
+    def do_cache(self):
+        return self in {
+            Internal_Action.GEN_OBS_X_GEN_OBS,
+            Internal_Action.GEN_OBS_X_FET_OBS,
+            Internal_Action.FET_OBS_X_GEN_OBS,
+            Internal_Action.FET_OBS_X_FET_OBS,
+            Internal_Action.GEN_GEN_X_GEN_GEN,
+            Internal_Action.GEN_GEN_X_FET_GEN,
+            Internal_Action.GEN_GEN_X_GEN_FET,
+            Internal_Action.FET_GEN_X_GEN_GEN,
+            Internal_Action.FET_GEN_X_FET_GEN,
+            Internal_Action.FET_GEN_X_GEN_FET,
+            Internal_Action.GEN_FET_X_GEN_GEN,
+            Internal_Action.GEN_FET_X_FET_GEN,
+            Internal_Action.GEN_FET_X_GEN_FET,
+        }
+    
+    def is_caching_gen_gen(self):
+        return self in {
+            Internal_Action.GEN_OBS_X_GEN_OBS,
+            Internal_Action.GEN_OBS_X_FET_OBS,
+            Internal_Action.GEN_GEN_X_GEN_GEN,
+            Internal_Action.GEN_GEN_X_FET_GEN,
+            Internal_Action.GEN_GEN_X_GEN_FET
+        }
+    
+    def is_caching_fet_gen(self):
+        return self in {
+            Internal_Action.FET_OBS_X_GEN_OBS,
+            Internal_Action.FET_OBS_X_FET_OBS,
+            Internal_Action.FET_GEN_X_GEN_GEN,
+            Internal_Action.FET_GEN_X_FET_GEN,
+            Internal_Action.FET_GEN_X_GEN_FET
+        }
+    
+    def is_caching_gen_fet(self):
+        return self in {
+            Internal_Action.GEN_FET_X_GEN_GEN,
+            Internal_Action.GEN_FET_X_FET_GEN,
+            Internal_Action.GEN_FET_X_GEN_FET
+        }
+    
+    def is_processing_gen_gen(self):
+        return self in {
+            Internal_Action.GEN_OBS_X_GEN_OBS,
+            Internal_Action.FET_OBS_X_GEN_OBS,
+            Internal_Action.GEN_GEN_X_GEN_GEN,
+            Internal_Action.FET_GEN_X_GEN_GEN,
+            Internal_Action.GEN_FET_X_GEN_GEN,
+            Internal_Action.NOOP_X_GEN_GEN
+        }
+    
+    def is_processing_fet_gen(self):
+        return self in {
+            Internal_Action.GEN_OBS_X_FET_OBS,
+            Internal_Action.FET_OBS_X_FET_OBS,
+            Internal_Action.GEN_GEN_X_FET_GEN,
+            Internal_Action.FET_GEN_X_FET_GEN,
+            Internal_Action.GEN_FET_X_FET_GEN,
+            Internal_Action.NOOP_X_FET_GEN
+        }
+    
+    def is_processing_gen_fet(self):
+        return self in {
+            Internal_Action.GEN_GEN_X_GEN_FET,
+            Internal_Action.FET_GEN_X_GEN_FET,
+            Internal_Action.GEN_FET_X_GEN_FET,
+            Internal_Action.NOOP_X_GEN_FET
+        }
+
+
+class Model_63(Agent):
+    
+    def __init__(self, 
+                 policy_model: Policy_Network, value_model: Value_Network,
+                 trainer: RL_Learner, 
+                 context_collector: Context_Collector, action_collector: Context_Collector, valid_action_collector: Context_Collector,
+                 memory: Memory,
+                 max_num_thought_steps: int = 2,
+                 do_supervision: bool = False,
+                 scheme: Scheme = Scheme.REACTIVE
+                 ):
+        self.policy_model = policy_model
+        self.value_model = value_model
+        self.trainer = trainer
+        self.obs = context_collector
+        self.actions = action_collector
+        self.valid_actions = valid_action_collector
+        self.memory = memory
+
+        self.max_num_thought_steps = max_num_thought_steps
+        self.do_supervision = do_supervision
+
+        if scheme == Scheme.REACTIVE:
+            self.valid_int_actions = [Internal_Action.NOOP_X_GEN_OBS]
+        elif scheme == Scheme.COGNITIVE:
+            self.valid_int_actions = list(range(len(Internal_Action)))
+
+        # set of external observation is a subset of valid_int_actions that triggers external observation override
+        self.observe_external_int_actions = list(Internal_Action.external_actions().intersection(set(self.valid_int_actions)))
+
+        self.reset()
+
+
+    def reset(self):
+        self.obs.clear()
+        self.actions.clear()
+        self.valid_actions.clear()
+        self.rewards = []
+        self.last_idles = []
+        self.last_dones = []
+        self.last_truncates = []
+
+        self.thought_steps = None
+
+
+    def choose_action(self, 
+                      last_idles, last_dones, last_truncates, last_resets, 
+                      latest_frames, rewards, next_available_actions, 
+                      force_train=False):
+
+        batch_size = len(latest_frames)
+        current_cl = len(self.rewards)
+
+        # initialize
+        if self.thought_steps is None:
+            self.thought_steps = [0 for _ in range(batch_size)]
+            self.obs.append(
+                np.zeros((batch_size, self.policy_model.packed_context_size), dtype=np.float32)
+            )
+            self.actions.append(
+                np.zeros((batch_size, self.policy_model.packed_action_size), dtype=np.float32)
+            )
+            self.valid_actions.append(
+                np.ones((batch_size, self.policy_model.flag_size), dtype=np.bool),
+                np.ones((batch_size, self.policy_model.action_size), dtype=np.bool)
+            )
+            self.rewards.append(
+                np.zeros((batch_size,), dtype=np.float32)
+            )
+            self.last_idles.append([False for _ in range(batch_size)])
+            self.last_dones.append([False for _ in range(batch_size)])
+            self.last_truncates.append([True for _ in range(batch_size)])
+        
+        content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
+        reward = np.array([r for r in rewards])
+
+        # get last action's position
+        last_action = self.actions.get_last()
+        int_action, ext_action, position, last_content = self.policy_model.unpack_action(last_action)
+
+        memory_cache_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
+        memory_cache_fetch_index = [-1 for _ in range(batch_size)]
+        memory_process_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
+        memory_process_fetch_index = [-1 for _ in range(batch_size)]
+        for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
+            flag = Internal_Action(int_action[i].item())
+            if r:
+                self.memory.reset(i)
+            if idle:
+                # if idle, use content and reward from last thought
+                content[i, :] = last_content[i, :]
+                reward[i] = 0
+            if d or t:
+                self.thought_steps[i] = 0
+            self.last_idles[-1][i] = idle
+            self.last_dones[-1][i] = d
+            self.last_truncates[-1][i] = t
+
+            if flag.do_cache():
+                memory_cache_action[i] = Memory_Operation_Type.CACHE
+                if flag.is_caching_fet_gen():
+                    memory_cache_action[i] |= Memory_Operation_Type.FETCH
+                    memory_cache_fetch_index[i] = 2
+                elif flag.is_caching_gen_fet():
+                    memory_cache_action[i] |= Memory_Operation_Type.FETCH
+                    memory_cache_fetch_index[i] = 1
+
+            if flag.is_processing_fet_gen():
+                memory_process_action[i] = Memory_Operation_Type.FETCH
+                memory_process_fetch_index[i] = 2
+            elif flag.is_processing_gen_fet():
+                memory_process_action[i] = Memory_Operation_Type.FETCH
+                memory_process_fetch_index[i] = 1
+
+        # cache memory
+        _, _, _ = self.memory.operate(
+            tuple_record=(
+                np.reshape(reward, (-1, 1)), 
+                position,
+                content
+            ), 
+            operation=memory_cache_action,
+            index=memory_cache_fetch_index,
+            replace_all_index=[False for _ in range(batch_size)]
+        )
+
+        # fetch memory
+        _, position, content = self.memory.operate(
+            tuple_record=(
+                np.reshape(reward, (-1, 1)), 
+                position,
+                content
+            ), 
+            operation=memory_process_action,
+            index=memory_process_fetch_index,
+            replace_all_index=[True for _ in range(batch_size)]
+        )
+
+        # replace the reward and content
+        self.obs.update_last(
+            self.policy_model.pack_context(
+                b_reward=reward,
+                b_int=int_action,
+                b_ext=ext_action,
+                b_position=position,
+                b_content=content
+            )
+        )
+        self.rewards[-1] = reward
+        self.valid_actions.update_last(
+            make_valid_mask([
+                self.observe_external_int_actions if self.thought_steps[i] == self.max_num_thought_steps else self.valid_int_actions 
+                for i in range(batch_size)
+            ], self.policy_model.flag_size),
+            make_valid_mask(next_available_actions, self.policy_model.action_size)
+        )
+
+        # if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
+        if force_train and current_cl > 1:
+            
+            if self.do_supervision:
+                # learn Supervise content
+                # masks has shape (batch_size, context_length)
+                svl_masks = apply_cascading_masks(
+                    self.actions.make_mask(batch_led=True)[:, :-1],
+                    self.last_idles[1:],
+                    self.last_dones[1:],
+                    self.last_truncates[1:]
+                )
+            else:
+                svl_masks = None
+
+            # learn RL
+
+            # masks has shape (batch_size, context_length)
+            # need to shift last_truncates by 1 to the left, because t signals whether t-1 is truncated
+            masks = apply_cascading_masks(
+                self.actions.make_mask(batch_led=True)[:, :-1], 
+                self.last_truncates[1:]
+            )
+
+            self.trainer.learn(
+                obs=self.obs.make_batch(batch_led=True), 
+                last_actions=self.actions.make_batch(batch_led=True), 
+                rewards=self.rewards[1:],
+                next_dones=self.last_dones[1:],
+                valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
+                masks=masks,
+                aux_masks=svl_masks
+            )
+            
+            left_over_slide = self.obs.mark(skip_last=True)
+            self.actions.mark(skip_last=True)
+            self.valid_actions.mark(skip_last=True)
+            self.rewards = self.rewards[left_over_slide]
+            self.last_idles = self.last_idles[left_over_slide]
+            self.last_dones = self.last_dones[left_over_slide]
+            self.last_truncates = self.last_truncates[left_over_slide]
+
+
+        # Choose a random action
+        packed_action = self.policy_model.get_action(
+            self.obs.get_last_batch(batch_led=True),
+            self.valid_actions.get_last_batch(batch_led=True)
+        )
+        packed_action = packed_action[:, -1, ...]
+
+        # extract output here
+        int_action, ext_action, position, content = self.policy_model.unpack_action(packed_action)
+
+        # check flag for external observation override and update thought steps
+        return_action = [None for _ in range(batch_size)]
+        for i in range(batch_size):
+            flag = Internal_Action(int_action[i].item())
+            self.thought_steps[i] += 1
+            if flag.observe_external():
+                return_action[i] = ext_action[i]
+                self.thought_steps[i] = 0
+
+        # populate last states
+        self.obs.append(
+            np.zeros((batch_size, self.policy_model.packed_context_size), dtype=np.float32)
+        )
+        self.actions.append(packed_action)
+        self.valid_actions.append(
+            np.ones((batch_size, self.policy_model.flag_size), dtype=np.bool),
+            np.ones((batch_size, self.policy_model.action_size), dtype=np.bool)
+        )
+        self.rewards.append(np.zeros((batch_size, 1), dtype=np.float32))
+        self.last_idles.append([return_action[i] is None for i in range(batch_size)])
+        self.last_dones.append([False for _ in range(batch_size)])
+        self.last_truncates.append([False for _ in range(batch_size)])
+
+        return return_action
+    
+
+if __name__ == "__main__":
+    # test mask
+
+    masks = np.ones((2, 5), dtype=np.float32)
+    last_idles = [
+        [False, True],
+        [False, False],
+        [True, False],
+        [False, False],
+        [False, True],
+    ]
+    last_dones = [
+        [False, False],
+        [False, True],
+        [False, False],
+        [True, True],
+        [False, False],
+    ] 
+    last_truncates = [
+        [False, False],
+        [True, False],
+        [False, False],
+        [True, False],
+        [False, False],
+    ]  
+    updated_masks = apply_cascading_masks(masks, last_idles, last_dones, last_truncates)
+    manual_masks = masks.copy()
+    manual_masks = manual_masks * (1.0 - np.stack(last_idles, axis=1).astype(np.float32))
+    manual_masks = manual_masks * (1.0 - np.stack(last_dones, axis=1).astype(np.float32))
+    manual_masks = manual_masks * (1.0 - np.stack(last_truncates, axis=1).astype(np.float32))
+    assert np.allclose(updated_masks, manual_masks), "Cascading mask application failed!"

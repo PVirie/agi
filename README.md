@@ -7,6 +7,7 @@ An attempt to solve AGI.
 | LIII       | Cognitive algebra | A learnable computationally universal model.                     |
 | LXI        | Fast and slow     | Using fast learnable module to capture fast position assignment. |
 | LXII       | Rapid papagation  | Extend fast position assignment to next step                     |
+| LXIII      | Mem Ops           | Full memory operations                                           |
 
 ## Setup
 

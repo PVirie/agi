@@ -43,6 +43,10 @@ class Energy_Memory(Memory):
         return content
 
 
+    def reset(self, batch):
+        self.data[batch] = [np.zeros((self.max_slot_size, self.sizes[t])) for t in range(len(self.sizes))]
+
+
     def operate(self, tuple_record, operation: List[Memory_Operation_Type], index: List[int]=None, replace_all_index: List[bool]=None):
         """
         tuple_record is a tuple of np array of shape (batch_size, tuple_size[t])

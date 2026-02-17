@@ -197,7 +197,7 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        action_size=7, position_size=position_size,
+        mem_ops_size=6, action_size=7, position_size=position_size,
         width=64, height=64, channel=4,
         hidden_size=hidden_size, layers=conv_layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
