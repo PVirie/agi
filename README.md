@@ -2,31 +2,41 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name        | Description                                                      |
-| ---------- | ----------------- | ---------------------------------------------------------------- |
-| LIII       | Cognitive algebra | A learnable computationally universal model.                     |
-| LXI        | Fast and slow     | Using fast learnable module to capture fast position assignment. |
-| LXII       | Rapid papagation  | Extend fast position assignment to next step                     |
-| LXIII      | Mem Ops           | Full memory operations                                           |
+| Generation | Model Name        | Description                                  |
+| ---------- | ----------------- | -------------------------------------------- |
+| LIII       | Cognitive algebra | A learnable computationally universal model. |
+| LXIII      | Mem Ops           | Full memory operations                       |
 
-## Setup
+## Prerequisites
 
-1. Setup environment in `secrets.env` file, place it in the root directory with the following content:
+1.  Install Docker Desktop
+    - Linux, please follow [docker-ce](https://www.linode.com/docs/guides/installing-and-using-docker-on-ubuntu-and-debian/)
+    - Linux, also add your user to docker group `sudo usermod -aG docker $USER`
+    - Windows and Mac, please install [Docker Desktop](https://www.docker.com/products/docker-desktop)
 
-```env
-    export SCHEME="https"
-    export HOST="three.arcprize.org"
-    export PORT="443"
+2.  Accelerator support: Follow the installation guide for your machine configuration. I would recommend using Linux for the best experience.
+    2.1 CUDA support
+    - Nvidia driver version 555.xx or higher (for CUDA 12.5.1+)
+    - Linux, install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+    - Windows, follow [this guide](https://docs.docker.com/desktop/gpu/) to enable gpu support in docker desktop.
 
-    export ARC_API_KEY="your_arc_api_key_here"
-```
+        2.2 ROCm support
 
-## Run
+    - Install [ROCm-kernel (amdgpu-dkms)](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html)
 
-There are two approaches to run the AGI agent:
+3.  Setup environment in `secrets.env` file, place it in the root directory with the following content:
 
-1. Use vscode debugger with the provided launch configuration.
-2. Run using the shell script:
+    ```env
+        export SCHEME="https"
+        export HOST="three.arcprize.org"
+        export PORT="443"
+
+        export ARC_API_KEY="your_arc_api_key_here"
+    ```
+
+## Running experiments
+
+- By default, use program script `./run_manual.sh {configuration} {path to file} {optional flags}` to execute the python file with the selected configuration:
 
 ```bash
 ./run_manual.sh {torch-rocm} tasks/{arcagi3}.py {flags}
@@ -37,6 +47,49 @@ For example, to run the ARC AGI task with auxiliary loss for 360 seconds:
 ```bash
 ./run_manual.sh torch-rocm tasks/arcagi3.py -aux -hr 0.1
 ```
+
+- To clear the cache and reset the experiment, use `./run_manual.sh {configuration} {path to file} --reset`.
+
+- For VSCode, press `F5` to run the selected configuration:
+    - Launch `Container: Run current file` to run the experiment in the opening file.
+        - You will also need to choose the configuration from the dropdown list.
+            - `torch-cpu` for torch in cpu environment
+            - `torch-cuda` for torch in CUDA environment.
+            - `torch-rocm` for torch in ROCm environment.
+            - `jax-cpu` for jax in cpu environment.
+            - `jax-cuda` for jax in CUDA environment.
+            - `jax-rocm` for jax in ROCm environment.
+        - VSCode will also ask for additional program arguments. Pass nothing if you want to use the default arguments.
+    - Launch `Container: Reset` to clear the cache and reset the experiment.
+
+- Running on Windows
+    - The relative path in Windows that passes to docker has invalid path separators. _Always use POSIX path separators_ when passing `{path to file}` parameter when running `run_manual.sh` script. Or simply create a new configuration in `.vscode/launch.json` with the hard coded configuration you wish to run with the POSIX path separators.
+    - To enable debugger, add python debugger flags `./run_manual.sh {configuration} -m debugpy --listen 0.0.0.0:43690 --wait-for-client {path to file}` to the end of the command, and then attach the VSCode debugger to the running process with the `Attach debugger only` configuration.
+
+- The program **may fail** to run on the first attempt due to the failure to find package directories. If this happens, run the program again.
+
+### Running plots:
+
+- Plots use graphics therefore they cannot be run in the docker container.
+- Create python virtual environment in the root directory of the project.
+    - We recommend using `.venv` as the default virtual environment directory, e.g. `python -m venv .venv`.
+- Install matplotlib and other dependencies in the virtual environment, e.g. `pip install matplotlib scipy`.
+- Run the plot script in the virtual environment, e.g. `python tasks/plot.py`.
+
+## Development
+
+We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for development. It has great support for Python and Docker.
+
+- To assist pylance, add paths to local install python packages in `.vscode/settings.json`:
+
+    ```json
+    {
+        "python.analysis.extraPaths": ["${workspaceFolder}/.venv/lib/python3.12/site-packages", "${workspaceFolder}/artifacts/pip_modules/lib/python3.12/site-packages"]
+    }
+    ```
+
+    - We recommend using `.venv` as the default virtual environment directory.
+    - Note that when building docker, python packages required for the experiment will be installed under `artifacts/pip_modules` directory. Except for pytorch, which will be installed in the docker image. To fix pylance, either refer to local install pytorch or use virtual environment on top.
 
 ## To do
 
@@ -56,3 +109,6 @@ For example, to run the ARC AGI task with auxiliary loss for 360 seconds:
     - [x] Use RL to select two observation modes
         - [x] Override content at the predict position
         - [x] Jump to observed position
+- [x] Model 63: Mem Ops
+    - [x] Full memory operations
+    - [x] Cache then Fetch stack memory execution
