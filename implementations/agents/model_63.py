@@ -185,7 +185,7 @@ class Model_63(Agent):
             self.valid_int_actions = [
                 Internal_Action.GEN_OBS_X_GEN_OBS,
                 Internal_Action.GEN_OBS_X_FET_OBS,
-                Internal_Action.NOOP_X_GEN_GEN
+                Internal_Action.NOOP_X_GEN_FET
             ]
 
         # set of external observation is a subset of valid_int_actions that triggers external observation override
