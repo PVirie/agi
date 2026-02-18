@@ -101,15 +101,14 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         # first slice the image content
         image_content = context[:, :, (1 + 1 + 3 + self.position_size): ]  # (batch_size, context_size, content_size)
         image_part = torch.reshape(image_content, (batch_size, context_size, self.channel, self.height, self.width))
-        reward_action_part = context[:, :, :(1 + 1 + 3)]  # (batch_size, context_size, 1 + 1 + 3)
         last_position = context[:, :, (1 + 1 + 3): (1 + 1 + 3 + self.position_size)]  # (batch_size, context_size, position_size)
 
         # make one hot encoding for action, location
-        reward = reward_action_part[:, :, 0:1]  # (batch_size, context_size, 1)
-        flag_onehot = torch.nn.functional.one_hot(reward_action_part[:, :, 1].long(), num_classes=self.flag_size).float()
-        action_onehot = torch.nn.functional.one_hot(reward_action_part[:, :, 2].long(), num_classes=self.action_size).float()
-        x_onehot = torch.nn.functional.one_hot(reward_action_part[:, :, 3].long(), num_classes=self.width).float()
-        y_onehot = torch.nn.functional.one_hot(reward_action_part[:, :, 4].long(), num_classes=self.height).float()
+        reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
+        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.flag_size).float()
+        action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.action_size).float()
+        x_onehot = torch.nn.functional.one_hot(context[:, :, 3].long(), num_classes=self.width).float()
+        y_onehot = torch.nn.functional.one_hot(context[:, :, 4].long(), num_classes=self.height).float()
         
         vec = torch.concat([last_position, action_onehot], dim=-1)  # (batch_size, context_size, position_size + action_size)
         features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, vec)

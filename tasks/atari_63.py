@@ -31,7 +31,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_63
 from implementations.networks.torch.policy.base import Policy_Core, Projector
-from implementations.networks.torch.value.conv import Value_Core
+from implementations.networks.torch.value.mix import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.networks.states import State_Sequence as Collector
 from implementations.networks.energy_memory import Energy_Memory as Memory
@@ -232,9 +232,10 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        position_size=position_size,
+        mem_ops_size=18, action_size=18, position_size=position_size,
         width=32, height=64, channel=4,
-        layers=conv_layers,
+        hidden_size=hidden_size, layers=conv_layers,
+        history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(

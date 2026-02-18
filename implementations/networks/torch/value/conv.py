@@ -20,7 +20,6 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         Safe_nn_Module.__init__(self, name="value_core", device=device, persistence_path=persistence_path)
         self.device = device
 
-        self.flag_size = 5  # num classes for flag
         self.position_size = position_size
         self.content_size = channel * width * height
 
@@ -52,9 +51,8 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.read_out_layers.apply(init_value_weights)
 
 
-
-    def __compute(self, context):
-        # context has shape (batch, context_size, 1 + position_size + content_size)
+    def compute(self, context):
+        # context has shape (batch, context_size, packed_context_size)
         batch_size = context.size(0)
         context_size = context.size(1)
 
@@ -62,8 +60,8 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         image_content = context[:, :, (1 + 1 + 3 + self.position_size): ]  # (batch_size, context_size, content_size)
         image_part = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))
 
-        values = self.conv_layers(image_part)  # (batch_size * context_size, conv_output_size)
-        values = self.read_out_layers(values)  # (batch_size * context_size, 1)
+        image_features = self.conv_layers(image_part)  # (batch_size * context_size, conv_output_size)
+        values = self.read_out_layers(image_features)  # (batch_size * context_size, 1)
         values = torch.reshape(values, (batch_size, context_size, 1))
         
         return values
@@ -76,7 +74,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
         batch_size = context.size(0)
         context_size = context.size(1)
-        value = self.__compute(context)
+        value = self.compute(context)
 
         # collapse last dimension
         batch_value = torch.reshape(value, (batch_size, context_size))
