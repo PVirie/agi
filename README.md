@@ -63,8 +63,9 @@ For example, to run the ARC AGI task with auxiliary loss for 360 seconds:
     - Launch `Container: Reset` to clear the cache and reset the experiment.
 
 - Running on Windows
-    - The relative path in Windows that passes to docker has invalid path separators. _Always use POSIX path separators_ when passing `{path to file}` parameter when running `run_manual.sh` script. Or simply create a new configuration in `.vscode/launch.json` with the hard coded configuration you wish to run with the POSIX path separators.
-    - To enable debugger, add python debugger flags `./run_manual.sh {configuration} -m debugpy --listen 0.0.0.0:43690 --wait-for-client {path to file}` to the end of the command, and then attach the VSCode debugger to the running process with the `Attach debugger only` configuration.
+    - The relative path for docker launch configuration only support POSIX path separators, which is different from the default path separators in Windows.
+    - To fix this, install the [Command Variables extension](https://marketplace.visualstudio.com/items?itemName=rioj7.command-variable) for VSCode to provide environment variable supports in launch configuration.
+    - Alternatively, you can also manually _use POSIX path separators_ in the command line when passing `{path to file}` in `run_manual.sh` script, or create a new launch configuration in `.vscode/launch.json` with hard coded POSIX path separators. To enable debugger, add python debugger flags `./run_manual.sh {configuration} -m debugpy --listen 0.0.0.0:43690 --wait-for-client {path to file}` to the end of the command, and then attach the VSCode debugger to the running process with the `Attach debugger only` configuration.
 
 - The program **may fail** to run on the first attempt due to the failure to find package directories. If this happens, run the program again.
 
