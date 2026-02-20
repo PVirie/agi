@@ -31,46 +31,62 @@ os.environ['PATH'] = os.environ.get('PATH', '') + ":" + pip_modules_paths[0]
 
 logging.basicConfig(level=logging.INFO)
 
-def install(package):
-    # parse name and version (==, >=, etc.) from for example transformers>=4.45.1, transformers==4.45.1, transformers
-    package_name = None
-    package_condition = None
-    package_version = None
+def install(*argv, f=None):
 
-    match = re.match(r"([a-zA-Z0-9_-]+)([<>=!]+)([0-9.]+)?", package)
-    if match is not None:
-        package_name = match.group(1)
-        package_condition = match.group(2)
-        package_version = match.group(3)
-    else:
-        package_name = package
-    spec = importlib.util.find_spec(package_name)
-    # matched is only when the package is already installed with the satisfying version
-    matched = False
-    if spec is not None:
-        matched = True
-        if package_condition is not None:
-            matched = False
-            # load module and check version
-            module = importlib.import_module(package_name)
-            spec.version = module.__version__
-            if package_version is not None:
-                if package_condition == "==":
-                    matched = spec.version == package_version
-                elif package_condition == ">=":
-                    matched = spec.version >= package_version
-                elif package_condition == "<=":
-                    matched = spec.version <= package_version
-                elif package_condition == ">":
-                    matched = spec.version > package_version
-                elif package_condition == "<":
-                    matched = spec.version < package_version
-                elif package_condition == "!=":
-                    matched = spec.version != package_version
+    target_packages = []
+    for package in argv:
+        # parse name and version (==, >=, etc.) from for example transformers>=4.45.1, transformers==4.45.1, transformers
+        package_name = None
+        package_condition = None
+        package_version = None
 
-    if not matched:
-        logging.warning(f"Installing: {package}")
-        subprocess.check_call([venv_python, "-m", "pip", "install", package, "--prefix", f"{APP_ROOT}/pip_modules"])
+        match = re.match(r"([a-zA-Z0-9_-]+)([<>=!]+)([0-9.]+)?", package)
+        if match is not None:
+            package_name = match.group(1)
+            package_condition = match.group(2)
+            package_version = match.group(3)
+        else:
+            package_name = package
+        spec = importlib.util.find_spec(package_name)
+        # matched is only when the package is already installed with the satisfying version
+        matched = False
+        if spec is not None:
+            matched = True
+            if package_condition is not None:
+                matched = False
+                # load module and check version
+                module = importlib.import_module(package_name)
+                spec.version = module.__version__
+                if package_version is not None:
+                    if package_condition == "==":
+                        matched = spec.version == package_version
+                    elif package_condition == ">=":
+                        matched = spec.version >= package_version
+                    elif package_condition == "<=":
+                        matched = spec.version <= package_version
+                    elif package_condition == ">":
+                        matched = spec.version > package_version
+                    elif package_condition == "<":
+                        matched = spec.version < package_version
+                    elif package_condition == "!=":
+                        matched = spec.version != package_version
+
+        if not matched:
+            target_packages.append(package)
+
+    if len(target_packages) > 0:    
+        logging.warning(f"Installing: {" ".join(target_packages)}")
+        try:
+            call_args = [venv_python, "-m", "pip", "install"]
+            for package in target_packages:
+                call_args.append(package)
+            call_args.extend(["--prefix", f"{APP_ROOT}/pip_modules"])
+            if f is not None:
+                call_args.append("-f")
+                call_args.append(f)
+            subprocess.check_call(call_args)
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Failed to install packages: {e}")
 
 
 def install_pyproject_toml(path):
