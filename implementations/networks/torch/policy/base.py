@@ -38,7 +38,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.channel = channel
         self.hidden_size = hidden_size
 
-        vec_dim = position_size + action_size
+        vec_dim = 1 + self.flag_size + action_size + position_size
         self.temporal_unet = TemporalUNet(
             output_dims=hidden_size,
             input_channels=channel, width=width, height=height,
@@ -110,7 +110,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         x_onehot = torch.nn.functional.one_hot(context[:, :, 3].long(), num_classes=self.width).float()
         y_onehot = torch.nn.functional.one_hot(context[:, :, 4].long(), num_classes=self.height).float()
         
-        vec = torch.concat([last_position, action_onehot], dim=-1)  # (batch_size, context_size, position_size + action_size)
+        vec = torch.concat([reward, flag_onehot, action_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + flag_size + action_size + position_size)
         features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, vec)
         
         logits_flag = self.head_flag(features)    # (B, T, flag_size)

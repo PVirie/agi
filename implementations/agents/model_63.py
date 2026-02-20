@@ -184,7 +184,7 @@ class Model_63(Agent):
         elif scheme == Scheme.POINTER:
             self.valid_int_actions = [
                 Internal_Action.GEN_OBS_X_GEN_OBS,
-                Internal_Action.GEN_OBS_X_FET_OBS,
+                Internal_Action.FET_OBS_X_FET_OBS,
                 Internal_Action.NOOP_X_GEN_FET
             ]
 
