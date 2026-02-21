@@ -122,8 +122,7 @@ if __name__ == "__main__":
     parser.add_argument("--reset",                  "-r",   action="store_true")
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
-    parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
-    parser.add_argument("--scheme",                 "-sch", type=str, default="reactive", help="The scheme to use for the agent's decision making. Default is 'reactive'.")
+    parser.add_argument("--max-thought-steps",      "-mts", type=int, default=1, help="Maximum number of thought steps the agent can take before being forced to act externally.")
     args = parser.parse_args()
 
     # print summary of arguments that are not default
