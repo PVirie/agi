@@ -2,10 +2,11 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name        | Description                                  |
-| ---------- | ----------------- | -------------------------------------------- |
-| LIII       | Cognitive algebra | A learnable computationally universal model. |
-| LXIII      | Mem Ops           | Full memory operations                       |
+| Generation | Model Name        | Description                                              |
+| ---------- | ----------------- | -------------------------------------------------------- |
+| LIII       | Cognitive algebra | A learnable computationally universal model              |
+| LXIII      | Mem Ops           | Mk. 53 with full memory operations                       |
+| LXIV       | Dualism           | Disentangle position from observation for generalization |
 
 ## Prerequisites
 
@@ -113,3 +114,5 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] Model 63: Mem Ops
     - [x] Full memory operations
     - [x] Cache then Fetch stack memory execution
+- [ ] Model 64: Dualism
+    - [ ] Disentangle position from observation for generalization

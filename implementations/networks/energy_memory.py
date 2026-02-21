@@ -22,10 +22,14 @@ class Energy_Memory(Memory):
         o2: (dim)
         return: (slot_size)
         """
-        dot_score = np.matmul(o1, np.expand_dims(o2, axis=1))  # (slot_size, 1)
-        energy = np.exp(dot_score - np.max(dot_score))  # (slot_size, 1)
-        energy = energy / np.sum(energy)  # (slot_size, 1)
-        return energy[:, 0]  # (slot_size)
+        o1_norm = np.linalg.norm(o1, axis=1, keepdims=True) + 1e-8  # (slot_size)
+        o2_norm = np.linalg.norm(o2) + 1e-8  # scalar
+        o1_normalized = o1 / o1_norm  # (slot_size, dim)
+        o2_normalized = o2 / o2_norm  # (dim)
+        dot_score = np.matmul(o1_normalized, o2_normalized)  # (slot_size)
+        energy = np.exp(dot_score - np.max(dot_score))  # (slot_size), for numerical stability
+        energy = energy / np.sum(energy)  # (slot_size)
+        return energy
     
     
     def __fetch(self, o1, prob):

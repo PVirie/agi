@@ -245,7 +245,7 @@ if __name__ == "__main__":
         sizes=(1, position_size, policy_core.content_size),
         max_slot_size=256
     )
-    model_53_agent = model_53.Model_53(
+    agent = model_53.Model_53(
         policy_model=policy_core, value_model=value_core,
         trainer=ppo_learner,
         context_collector=Collector(max_history=history_steps),
@@ -257,4 +257,4 @@ if __name__ == "__main__":
         scheme=model_53.Scheme(args.scheme)
     )
 
-    asyncio.run(run(env, model_53_agent, rollout_length, verbose=not args.silent))
+    asyncio.run(run(env, agent, rollout_length, verbose=not args.silent))
