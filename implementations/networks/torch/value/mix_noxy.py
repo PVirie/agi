@@ -19,15 +19,15 @@ class Value_Core(Base_Value_Core):
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="mix_value_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="mix_noxy_value_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.flag_size = mem_ops_size  # num classes for flag
         self.action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
-        self.packed_action_size = 1 + 3 + position_size + self.content_size  # int_flag + action + x + y + position + content
-        self.packed_context_size = 1 + 1 + 3 + position_size + self.content_size  # reward + packed_action_size
+        self.packed_action_size = 1 + 1 + position_size + self.content_size  # int_flag + action + position + content
+        self.packed_context_size = 1 + 1 + 1 + position_size + self.content_size  # reward + packed_action_size
 
         self.width = width
         self.height = height
@@ -74,16 +74,14 @@ class Value_Core(Base_Value_Core):
         context_size = context.size(1)
 
         # first slice the image content
-        image_content = context[:, :, (1 + 1 + 3 + self.position_size): ]  # (batch_size, context_size, content_size)
+        image_content = context[:, :, (1 + 1 + 1 + self.position_size): ]  # (batch_size, context_size, content_size)
         image_part = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))
-        last_position = context[:, :, (1 + 1 + 3): (1 + 1 + 3 + self.position_size)]  # (batch_size, context_size, position_size)
+        last_position = context[:, :, (1 + 1 + 1): (1 + 1 + 1 + self.position_size)]  # (batch_size, context_size, position_size)
 
         # make one hot encoding for action, location
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.flag_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.action_size).float()
-        x_onehot = torch.nn.functional.one_hot(context[:, :, 3].long(), num_classes=self.width).float()
-        y_onehot = torch.nn.functional.one_hot(context[:, :, 4].long(), num_classes=self.height).float()
 
         vec = torch.concat([reward, flag_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + flag_size + position_size)
         embedded_features = self.vec_embedding(vec)  # (batch_size, context_size, hidden_size)

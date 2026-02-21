@@ -134,8 +134,9 @@ class Policy_Core(Base_Policy_Core):
         vec = torch.concat([flag_onehot, action_onehot, last_position], dim=-1)  # (batch_size, context_size, flag_size + action_size + position_size)
         step_position_logits = self.position_step(vec) + last_position  # (batch_size, context_size, position_size)
 
-        obs_logits = self.conv_layers(image_part.view(batch_size * context_size, self.channel, self.height, self.width))  # (batch_size * context_size, conv_output_size)
-        obs_logits = obs_logits.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, conv_output_size)
+        image_part = torch.reshape(image_part, (batch_size * context_size, self.channel, self.height, self.width))
+        obs_logits = self.conv_layers(image_part)  # (batch_size * context_size, conv_output_size)
+        obs_logits = torch.reshape(obs_logits, (batch_size, context_size, self.hidden_size))  # (batch_size, context_size, conv_output_size)
 
         # use reparameterize trick to sample position
         obs_means = self.obs_feature_to_mean(obs_logits)  # (batch_size, context_size, position_size)
@@ -153,6 +154,14 @@ class Policy_Core(Base_Policy_Core):
 
         logits_flag = self.head_flag(positions)    # (B, T, flag_size)
         logits_action = self.head_action(positions) # (B, T, action_size)
+
+        # # check nan
+        # if torch.isnan(logits_flag).any() or torch.isnan(logits_action).any() or torch.isnan(positions).any() or torch.isnan(vae_loss).any():
+        #     logging.warning(f"logits_flag: {logits_flag}")
+        #     logging.warning(f"logits_action: {logits_action}")
+        #     logging.warning(f"positions: {positions}")
+        #     logging.warning(f"vae_loss: {vae_loss}")
+        #     logging.warning("NaN detected in compute()")
 
         return logits_flag, logits_action, positions, vae_loss
     

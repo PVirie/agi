@@ -27,7 +27,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_base
 from implementations.networks.torch.policy.dualism import Policy_Core, Projector
-from implementations.networks.torch.value.mix import Value_Core
+from implementations.networks.torch.value.mix_noxy import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.networks.states import State_Sequence as Collector
 
@@ -208,7 +208,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
+        policy_model=Projector(policy_core, [1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
         aux_coef=0.1
     )
