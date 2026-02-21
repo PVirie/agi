@@ -98,7 +98,6 @@ class Policy_Core(Base_Policy_Core):
     def reset_parameters(self):
         # Reset parameters of all layers
         self.conv_layers.reset_parameters()
-        self.position_step.apply(init_weights)
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -110,6 +109,7 @@ class Policy_Core(Base_Policy_Core):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
+        self.position_step.apply(init_actor_weights)
         self.obs_feature_to_mean.apply(init_actor_weights) # need near zero initialization for stable training with reparameterization trick
         self.obs_feature_to_logvar.apply(init_actor_weights) # need near zero initialization for stable training with reparameterization trick
         self.head_flag.apply(init_actor_weights)
