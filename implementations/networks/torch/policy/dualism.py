@@ -135,10 +135,11 @@ class Policy_Core(Base_Policy_Core):
         step_position_logits = self.position_step(vec) + last_position  # (batch_size, context_size, position_size)
 
         obs_logits = self.conv_layers(image_part.view(batch_size * context_size, self.channel, self.height, self.width))  # (batch_size * context_size, conv_output_size)
+        obs_logits = obs_logits.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, conv_output_size)
 
         # use reparameterize trick to sample position
-        obs_means = self.obs_feature_to_mean(obs_logits)  # (batch_size * context_size, position_size)
-        obs_logvars = self.obs_feature_to_logvar(obs_logits)  # (batch_size * context_size, position_size)
+        obs_means = self.obs_feature_to_mean(obs_logits)  # (batch_size, context_size, position_size)
+        obs_logvars = self.obs_feature_to_logvar(obs_logits)  # (batch_size, context_size, position_size)
         std = torch.exp(0.5 * obs_logvars) # convert log-var to std
         epsilon = torch.randn_like(std) # sample random noise
         obs_position_logits = obs_means + epsilon * std
@@ -161,9 +162,6 @@ class Policy_Core(Base_Policy_Core):
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
-        batch_size = context.size(0)
-        context_size = context.size(1)
-
         available_flags = None
         available_actions = None
         if valid_actions is not None:
@@ -178,18 +176,20 @@ class Policy_Core(Base_Policy_Core):
         probs_flag = Categorical_With_Mask(logits=logits_flag, mask=available_flags)
         probs_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
 
+        batch_size = context.size(0)
+        context_size = context.size(1)
+
         action_flag = probs_flag.sample()
         action_action = probs_action.sample()
         action_content = np.zeros((batch_size, context_size, self.content_size), dtype=np.float32)
-
-        action = torch.cat([
-            action_flag.unsqueeze(-1),
-            action_action.unsqueeze(-1),
-            positions.detach(),
+        action = np.concatenate([
+            action_flag.unsqueeze(-1).cpu().numpy(),
+            action_action.unsqueeze(-1).cpu().numpy(),
+            positions.detach().cpu().numpy(),
             action_content
-        ], dim=-1)
+        ], axis=-1)
 
-        return action.cpu().numpy().astype(float)
+        return action.astype(float)
     
 
     def get_log_probability(self, context, selected_action, valid_actions=None):

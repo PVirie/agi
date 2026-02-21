@@ -122,7 +122,7 @@ if __name__ == "__main__":
     parser.add_argument("--reset",                  "-r",   action="store_true")
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
-    parser.add_argument("--max-thought-steps",      "-mts", type=int, default=1, help="Maximum number of thought steps the agent can take before being forced to act externally.")
+    parser.add_argument("--max-thought-steps",      "-mts", type=int, default=0, help="Maximum number of thought steps the agent can take before being forced to act externally.")
     args = parser.parse_args()
 
     # print summary of arguments that are not default
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     np.random.seed(20260221)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/atari"
+    experiment_path = f"{APP_ROOT}/experiments/atari_64"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -170,26 +170,26 @@ if __name__ == "__main__":
     random_agent = random_agent.Random_Agent("01")
 
     if args.scale == "small":
-        history_steps = 1
+        history_steps = 0
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
         position_size = 2
     elif args.scale == "medium":
-        history_steps = 8
-        hidden_size = 128
-        conv_layers = [16, 32, 64, 128, 256] # medium impala
-        rollout_length = 128
+        history_steps = 0
+        hidden_size = 64
+        conv_layers = [16, 32, 64] # medium impala
+        rollout_length = 256
         minibatch_size = 8
-        position_size = 16
+        position_size = 8
     else:  # large
-        history_steps = 16
+        history_steps = 0
         hidden_size = 256
         conv_layers = [32, 64, 128, 128, 256, 256] # large impala
-        rollout_length = 128
+        rollout_length = 256
         minibatch_size = 8
-        position_size = 64
+        position_size = 16
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -208,9 +208,9 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1, 2]), value_model=value_core,
+        policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=1.0
+        aux_coef=0.1
     )
     agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,
@@ -219,7 +219,7 @@ if __name__ == "__main__":
         action_collector=Collector(max_history=history_steps),
         valid_action_collector=Collector(max_history=history_steps),
         max_num_thought_steps=args.max_thought_steps,
-        do_supervision=args.with_auxiliary
+        do_supervision=False
     )
 
     asyncio.run(run(env, agent, rollout_length))

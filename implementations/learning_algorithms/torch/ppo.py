@@ -88,7 +88,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
         
         if self.aux_coef is not None:
-            b_aux_masks = torch.ones_like(b_rewards).to(self.device) if aux_masks is None else convert_np_array_to_float_tensor(aux_masks, self.device)
+            b_aux_masks = b_masks if aux_masks is None else convert_np_array_to_float_tensor(aux_masks, self.device)
 
         batch_size = b_rewards.shape[0]
         sequence_size = b_rewards.shape[1]
