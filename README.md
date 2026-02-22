@@ -114,5 +114,5 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] Model 63: Mem Ops
     - [x] Full memory operations
     - [x] Cache then Fetch stack memory execution
-- [ ] Model 64: Dualism
-    - [ ] Disentangle position from observation for generalization
+- [x] Model 64: Dualism
+    - [x] Disentangle position from observation for generalization
