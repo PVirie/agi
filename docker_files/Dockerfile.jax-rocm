@@ -1,4 +1,4 @@
-FROM rocm/dev-ubuntu-24.04:7.0.2-complete
+FROM rocm/dev-ubuntu-24.04:7.1-complete
 
 RUN apt update
 RUN apt install -y python3 python3-pip python3-venv python3-dev
@@ -12,10 +12,11 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 WORKDIR /app
 
 # install jax with cuda support https://github.com/jax-ml/jax/blob/main/build/rocm/README.md
-RUN pip3 install https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.6.0/jax_rocm7_pjrt-0.6.0-py3-none-manylinux_2_28_x86_64.whl \
-    https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.6.0/jax_rocm7_plugin-0.6.0-cp312-cp312-manylinux_2_28_x86_64.whl \
-    https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.6.0/jaxlib-0.6.2-cp312-cp312-manylinux2014_x86_64.whl \
-    jax==0.6.2 flax optax orbax-checkpoint
+RUN pip3 install https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.8.2/jax_rocm7_pjrt-0.8.2+rocm7.1.1-py3-none-manylinux_2_28_x86_64.whl \
+    https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.8.2/jax_rocm7_plugin-0.8.2+rocm7.1.1-cp312-cp312-manylinux_2_28_x86_64.whl \
+    https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.8.2/jaxlib-0.8.2+rocm7-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl \
+    jax==0.8.2 
+RUN pip3 install flax optax orbax-checkpoint
 RUN pip3 install debugpy
 
 CMD ["python3", "-m", "debugpy", "--listen", "0.0.0.0:43690", "tasks/benchmark.py"]

@@ -19,8 +19,7 @@ from utilities.package_install import install
 
 install("opencv-python-headless") 
 install("ale-py")
-install("gymnasium[other]")
-install("gymnasium[atari]")
+install("gymnasium[atari, other]")
 install("colorama")
 
 import ale_py
@@ -31,7 +30,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_63
 from implementations.networks.torch.policy.base import Policy_Core, Projector
-from implementations.networks.torch.value.mix import Value_Core
+from implementations.networks.torch.value.mix_aggregate import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.networks.states import State_Sequence as Collector
 from implementations.networks.energy_memory import Energy_Memory as Memory
