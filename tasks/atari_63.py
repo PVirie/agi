@@ -231,7 +231,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        mem_ops_size=18, action_size=18, position_size=position_size,
+        int_action_size=18, ext_action_size=18, position_size=position_size,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=conv_layers,
         history_steps=history_steps, max_temporal_len=rollout_length,

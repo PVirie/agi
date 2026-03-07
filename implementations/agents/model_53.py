@@ -114,8 +114,8 @@ class Model_53(Agent):
                 np.zeros((batch_size, self.policy_model.packed_action_size), dtype=np.float32)
             )
             self.valid_actions.append(
-                np.ones((batch_size, self.policy_model.flag_size), dtype=np.bool),
-                np.ones((batch_size, self.policy_model.action_size), dtype=np.bool)
+                np.ones((batch_size, self.policy_model.int_action_size), dtype=np.bool),
+                np.ones((batch_size, self.policy_model.ext_action_size), dtype=np.bool)
             )
             self.rewards.append(
                 np.zeros((batch_size,), dtype=np.float32)
@@ -195,8 +195,8 @@ class Model_53(Agent):
             make_valid_mask([
                 self.observe_external_int_actions if self.thought_steps[i] == self.max_num_thought_steps else self.valid_int_actions 
                 for i in range(batch_size)
-            ], self.policy_model.flag_size),
-            make_valid_mask(next_available_actions, self.policy_model.action_size)
+            ], self.policy_model.int_action_size),
+            make_valid_mask(next_available_actions, self.policy_model.ext_action_size)
         )
 
         # if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
@@ -267,8 +267,8 @@ class Model_53(Agent):
         )
         self.actions.append(packed_action)
         self.valid_actions.append(
-            np.ones((batch_size, self.policy_model.flag_size), dtype=np.bool),
-            np.ones((batch_size, self.policy_model.action_size), dtype=np.bool)
+            np.ones((batch_size, self.policy_model.int_action_size), dtype=np.bool),
+            np.ones((batch_size, self.policy_model.ext_action_size), dtype=np.bool)
         )
         self.rewards.append(np.zeros((batch_size, 1), dtype=np.float32))
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])

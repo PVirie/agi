@@ -12,7 +12,7 @@ from implementations.networks.torch.value.conv import Value_Core as Base_Value_C
 class Value_Core(Base_Value_Core):
 
     def __init__(self, 
-                 mem_ops_size, action_size, position_size, 
+                 int_action_size, ext_action_size, position_size, 
                  width, height, channel, 
                  hidden_size, layers, 
                  history_steps=0, max_temporal_len=32, 
@@ -22,8 +22,8 @@ class Value_Core(Base_Value_Core):
         Safe_nn_Module.__init__(self, name="mix_noxy_value_core", device=device, persistence_path=persistence_path)
         self.device = device
 
-        self.flag_size = mem_ops_size  # num classes for flag
-        self.action_size = action_size
+        self.int_action_size = int_action_size  # num classes for flag
+        self.action_size = ext_action_size
         self.position_size = position_size
         self.content_size = channel * width * height
         self.packed_action_size = 1 + 1 + position_size + self.content_size  # int_flag + action + position + content
@@ -34,7 +34,7 @@ class Value_Core(Base_Value_Core):
         self.channel = channel
         self.hidden_size = hidden_size
 
-        vec_dim = 1 + self.flag_size + self.position_size  # reward + flag_onehot + position
+        vec_dim = 1 + self.int_action_size + self.position_size  # reward + flag_onehot + position
         self.vec_embedding = nn.Sequential(
             nn.Linear(vec_dim, hidden_size),
             nn.ReLU(),
@@ -80,10 +80,10 @@ class Value_Core(Base_Value_Core):
 
         # make one hot encoding for action, location
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
-        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.flag_size).float()
+        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.action_size).float()
 
-        vec = torch.concat([reward, flag_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + flag_size + position_size)
+        vec = torch.concat([reward, flag_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + int_action_size + position_size)
         embedded_features = self.vec_embedding(vec)  # (batch_size, context_size, hidden_size)
 
         image_features = self.conv_layers(image_part)  # (batch_size * context_size, hidden_size)

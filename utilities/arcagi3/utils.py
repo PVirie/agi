@@ -70,7 +70,7 @@ def extract_frame(frame_data) -> np.ndarray:
     # Convert frame to numpy array with color indices 0-15
 
     last_frame = frame_data[-1] # get only last frame
-    frame = np.array(last_frame, dtype=np.int64)  # shape (H, W)
+    frame = np.array(last_frame, dtype=np.int32)  # shape (H, W)
     frame = convert_chw_to_4bit(frame)  # shape (4, H, W)
     frame = np.reshape(frame, (4*64*64))  # flatten to (4*64*64)
     

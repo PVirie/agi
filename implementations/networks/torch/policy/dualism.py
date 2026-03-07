@@ -26,8 +26,8 @@ class Policy_Core(Base_Policy_Core):
         Safe_nn_Module.__init__(self, name="dualism_core", device=device, persistence_path=persistence_path)
         self.device = device
 
-        self.flag_size = mem_ops_size  # num classes for flag
-        self.action_size = action_size
+        self.int_action_size = mem_ops_size  # num classes for flag
+        self.ext_action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
         self.packed_action_size = 1 + 1 + position_size + self.content_size  # int_flag + action + position + content
@@ -39,7 +39,7 @@ class Policy_Core(Base_Policy_Core):
         self.hidden_size = hidden_size
 
         self.conv_layers = ImpalaCNN(output_dims=hidden_size, input_channels=channel, width=width, height=height, depths=layers)
-        vec_dim = self.flag_size + action_size + position_size
+        vec_dim = self.int_action_size + action_size + position_size
 
         self.position_step = nn.Sequential(
             nn.Linear(vec_dim, hidden_size),
@@ -64,7 +64,7 @@ class Policy_Core(Base_Policy_Core):
         self.head_flag = nn.Sequential(
             nn.Linear(position_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
+            nn.Linear(hidden_size, self.int_action_size)   # self.int_action_size classes
         )
         self.head_action = nn.Sequential(
             nn.Linear(position_size, hidden_size),
@@ -128,10 +128,10 @@ class Policy_Core(Base_Policy_Core):
 
         # make one hot encoding for action, location
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
-        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.flag_size).float()
-        action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.action_size).float()
+        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
+        action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         
-        vec = torch.concat([flag_onehot, action_onehot, last_position], dim=-1)  # (batch_size, context_size, flag_size + action_size + position_size)
+        vec = torch.concat([flag_onehot, action_onehot, last_position], dim=-1)  # (batch_size, context_size, int_action_size + ext_action_size + position_size)
         step_position_logits = self.position_step(vec) + last_position  # (batch_size, context_size, position_size)
 
         image_part = torch.reshape(image_part, (batch_size * context_size, self.channel, self.height, self.width))
@@ -152,8 +152,8 @@ class Policy_Core(Base_Policy_Core):
 
         positions = step_position_logits + obs_position_logits # (batch_size, context_size, position_size)
 
-        logits_flag = self.head_flag(positions)    # (B, T, flag_size)
-        logits_action = self.head_action(positions) # (B, T, action_size)
+        logits_flag = self.head_flag(positions)    # (B, T, int_action_size)
+        logits_action = self.head_action(positions) # (B, T, ext_action_size)
 
         # # check nan
         # if torch.isnan(logits_flag).any() or torch.isnan(logits_action).any() or torch.isnan(positions).any() or torch.isnan(vae_loss).any():
@@ -176,9 +176,9 @@ class Policy_Core(Base_Policy_Core):
         if valid_actions is not None:
             if isinstance(valid_actions, np.ndarray):
                 valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, flag_size + action_size)
-            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
-            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
+            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
+            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
         logits_flag, logits_action, positions, _ = self.compute(context)
 
@@ -212,9 +212,9 @@ class Policy_Core(Base_Policy_Core):
         if valid_actions is not None:
             if isinstance(valid_actions, np.ndarray):
                 valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, flag_size + action_size)
-            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
-            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
+            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
+            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
         logits_flag, logits_action, positions, _ = self.compute(context)
 
@@ -252,9 +252,9 @@ class Policy_Core(Base_Policy_Core):
         if valid_actions is not None:
             if isinstance(valid_actions, np.ndarray):
                 valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, flag_size + action_size)
-            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
-            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
+            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
+            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
         logits_flag, logits_action, positions, aux_loss = self.compute(context)
 

@@ -21,7 +21,7 @@ class Memory(abc.ABC):
 class Episodic_Memory(abc.ABC):
 
     @abc.abstractmethod
-    def make_batch(batch_led=True):
+    def make_batch(self, batch_led=True):
         pass
 
     @abc.abstractmethod

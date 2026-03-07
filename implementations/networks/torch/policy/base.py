@@ -26,8 +26,8 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         Safe_nn_Module.__init__(self, name="base_policy_core", device=device, persistence_path=persistence_path)
         self.device = device
 
-        self.flag_size = mem_ops_size  # num classes for flag
-        self.action_size = action_size
+        self.int_action_size = mem_ops_size  # num classes for flag
+        self.ext_action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
         self.packed_action_size = 1 + 3 + position_size + self.content_size  # int_flag + action + x + y + position + content
@@ -38,7 +38,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.channel = channel
         self.hidden_size = hidden_size
 
-        vec_dim = 1 + self.flag_size + action_size + position_size
+        vec_dim = 1 + self.int_action_size + action_size + position_size
         self.temporal_unet = TemporalUNet(
             output_dims=hidden_size,
             input_channels=channel, width=width, height=height,
@@ -48,7 +48,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.head_flag = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, self.flag_size)   # self.flag_size classes
+            nn.Linear(hidden_size, self.int_action_size)   # self.int_action_size classes
         )
         self.head_action = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
@@ -105,16 +105,16 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
         # make one hot encoding for action, location
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
-        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.flag_size).float()
-        action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.action_size).float()
+        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
+        action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         x_onehot = torch.nn.functional.one_hot(context[:, :, 3].long(), num_classes=self.width).float()
         y_onehot = torch.nn.functional.one_hot(context[:, :, 4].long(), num_classes=self.height).float()
         
-        vec = torch.concat([reward, flag_onehot, action_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + flag_size + action_size + position_size)
+        vec = torch.concat([reward, flag_onehot, action_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + int_action_size + ext_action_size + position_size)
         features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, vec)
         
-        logits_flag = self.head_flag(features)    # (B, T, flag_size)
-        logits_action = self.head_action(features) # (B, T, action_size)
+        logits_flag = self.head_flag(features)    # (B, T, int_action_size)
+        logits_action = self.head_action(features) # (B, T, ext_action_size)
         position_logits = self.position_step(features)
         content_logits = self.head_content(torch.reshape(content_logits, (batch_size * context_size, self.channel, self.height, self.width)))
 
@@ -133,9 +133,9 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         if valid_actions is not None:
             if isinstance(valid_actions, np.ndarray):
                 valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, flag_size + action_size)
-            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
-            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
+            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
+            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
         logits_flag, logits_action, x_logits, y_logits, position_logits, content_logits = self.compute(context)
 
@@ -176,9 +176,9 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         if valid_actions is not None:
             if isinstance(valid_actions, np.ndarray):
                 valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, flag_size + action_size)
-            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
-            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
+            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
+            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
         logits_flag, logits_action, x_logits, y_logits, position_logits, content_logits = self.compute(context)
 
@@ -233,9 +233,9 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         if valid_actions is not None:
             if isinstance(valid_actions, np.ndarray):
                 valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, flag_size + action_size)
-            available_flags = valid_actions[:, :, :self.flag_size].to(self.device)
-            available_actions = valid_actions[:, :, self.flag_size:].to(self.device)
+            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
+            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
+            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
         logits_flag, logits_action, x_logits, y_logits, position_logits, content_logits = self.compute(context)
 
