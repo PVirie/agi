@@ -16,7 +16,7 @@ from utilities.safe_torch_module import Safe_nn_Module
 class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, 
-                 mem_ops_size, action_size, position_size, 
+                 int_action_size, ext_action_size, position_size, 
                  width, height, channel, 
                  hidden_size, layers, 
                  history_steps=0, max_temporal_len=32, 
@@ -26,11 +26,11 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         Safe_nn_Module.__init__(self, name="base_policy_core", device=device, persistence_path=persistence_path)
         self.device = device
 
-        self.int_action_size = mem_ops_size  # num classes for flag
-        self.ext_action_size = action_size
+        self.int_action_size = int_action_size  # num classes for flag
+        self.ext_action_size = ext_action_size
         self.position_size = position_size
         self.content_size = channel * width * height
-        self.packed_action_size = 1 + 3 + position_size + self.content_size  # int_flag + action + x + y + position + content
+        self.packed_action_size = 1 + 3 + position_size + self.content_size  # int_action_size + ext_action_size + x + y + position + content
         self.packed_context_size = 1 + 1 + 3 + position_size + self.content_size  # reward + packed_action_size
 
         self.width = width
@@ -38,7 +38,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.channel = channel
         self.hidden_size = hidden_size
 
-        vec_dim = 1 + self.int_action_size + action_size + position_size
+        vec_dim = 1 + self.int_action_size + ext_action_size + position_size
         self.temporal_unet = TemporalUNet(
             output_dims=hidden_size,
             input_channels=channel, width=width, height=height,
@@ -48,12 +48,12 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.head_flag = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, self.int_action_size)   # self.int_action_size classes
+            nn.Linear(hidden_size, self.int_action_size)   # int_action_size classes
         )
         self.head_action = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, action_size)   # action_size classes
+            nn.Linear(hidden_size, ext_action_size)   # ext_action_size classes
         )
         self.position_step = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
