@@ -29,7 +29,7 @@ from implementations.agents import random_agent, model_base
 from implementations.networks.torch.policy.dualism import Policy_Core, Projector
 from implementations.networks.torch.value.mix_noxy import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
-from implementations.networks.states import State_Sequence as Collector
+from implementations.collectors.states import State_Sequence as Collector
 
 torch.autograd.set_detect_anomaly(True)
 

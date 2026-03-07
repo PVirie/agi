@@ -8,7 +8,6 @@ import logging
 
 from interfaces.learning import RL_Learner
 from interfaces.network import Policy_Network, Value_Network
-from interfaces.data_structure import Context_Collector
 from utilities.safe_torch_module import Safe_nn_Module
 
 from .base import convert_list_of_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, convert_np_array_to_bool_tensor

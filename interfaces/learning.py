@@ -14,3 +14,14 @@ class RL_Learner(abc.ABC):
               next_dones: List[List[bool]],
               valid_actions: Any = None, masks: Any = None, aux_masks: Any = None):
         pass
+
+
+class RL_Index_Learner(RL_Learner):
+
+    @abc.abstractmethod
+    def learn(self, 
+              obs: Any, indices: Any,
+              last_actions: Any, rewards: List[Any], 
+              next_dones: List[List[bool]],
+              valid_actions: Any = None, masks: Any = None, aux_masks: Any = None):
+        pass

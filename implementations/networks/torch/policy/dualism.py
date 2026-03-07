@@ -30,7 +30,7 @@ class Policy_Core(Base_Policy_Core):
         self.action_size = action_size
         self.position_size = position_size
         self.content_size = channel * width * height
-        self.packed_action_size = 1 + 1 + position_size + self.content_size  # int_flag + action + x + y + position + content
+        self.packed_action_size = 1 + 1 + position_size + self.content_size  # int_flag + action + position + content
         self.packed_context_size = 1 + 1 + 1 + position_size + self.content_size  # reward + packed_action_size
 
         self.width = width

@@ -32,8 +32,8 @@ from implementations.agents import random_agent, model_63
 from implementations.networks.torch.policy.base import Policy_Core, Projector
 from implementations.networks.torch.value.mix_aggregate import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
-from implementations.networks.states import State_Sequence as Collector
-from implementations.networks.energy_memory import Energy_Memory as Memory
+from implementations.collectors.states import State_Sequence as Collector
+from implementations.memories.energy_memory import Energy_Memory as Memory
 
 torch.autograd.set_detect_anomaly(True)
 
