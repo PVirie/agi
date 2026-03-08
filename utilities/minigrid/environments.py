@@ -133,6 +133,13 @@ class Multi_Environment:
                 # record episode return and length
                 self.__record_episode_statistics(i)
                 obs, _ = env.reset() # You must manually reset!
+                self.return_infos[i] = {
+                    "episode": {
+                        "r": self.last_batch_episode_returns[i],
+                        "l": self.last_batch_episode_lengths[i],
+                        "t": self.last_batch_episode_times[i]
+                    }
+                }
             self.return_obs[i] = self.obs_to_object(obs)
         self.steps += 1
         self.__save_episode_statistics()       
