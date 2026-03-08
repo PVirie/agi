@@ -1,37 +1,18 @@
 import gymnasium as gym
+from minigrid.wrappers import ActionBonus
 import numpy as np
-from gymnasium.wrappers import (
-    RecordEpisodeStatistics,
-    AtariPreprocessing,
-    FrameStackObservation,
-    ResizeObservation,
-    NormalizeReward,
-    ClipReward
-)
 import os
 import csv
+import time
 
-# Standard Atari Action Set (Order matters!)
-ATARI_ACTIONS = [
-    "NOOP", "FIRE", "UP", "RIGHT", 
-    "LEFT", "DOWN", "UPRIGHT", "UPLEFT", 
-    "DOWNRIGHT", "DOWNLEFT", "UPFIRE", "RIGHTFIRE", 
-    "LEFTFIRE", "DOWNFIRE", "UPRIGHTFIRE", "UPLEFTFIRE", 
-    "DOWNRIGHTFIRE", "DOWNLEFTFIRE"
+MINIGRID_ACTIONS = [
+    "left", "right", "forward", "pickup", "drop", "toggle", "done"
 ]
 
-class Multi_Atari_Environment:
+class Multi_Environment:
     def __init__(self, 
         game_ids,
-        img_height=64,
-        img_width=32,
-        maxpool=True,
-        stack_num=4,
-        frameskip=4,
-        grayscale=True,
-        episodic_life=True,
         reward_clipping=True,
-        render_mode=None,
         record_statistic_dir=None
         ):
 
@@ -53,39 +34,8 @@ class Multi_Atari_Environment:
         self.available_actions = []
         self.envs = []
         for gid in game_ids:
-            # Initialize temp env with minimal action space to see what's valid
-            temp_env = gym.make(gid, full_action_space=False)
-            valid_action_names = temp_env.unwrapped.get_action_meanings()
-            # Convert names (e.g., "UP") to indices (e.g., 2)
-            game_indices = []
-            for name in valid_action_names:
-                if name in ATARI_ACTIONS:
-                    game_indices.append(ATARI_ACTIONS.index(name))
-            self.available_actions.append(game_indices)
-            temp_env.close()
-
-            env = gym.make(gid, full_action_space=True, render_mode=render_mode)
-            env = AtariPreprocessing(
-                env,
-                frame_skip=1,
-                grayscale_obs=grayscale,
-                scale_obs=False, # returns uint8 (0-255). Ensure your Agent divides by 255.0!
-                terminal_on_life_loss=episodic_life,
-                noop_max=30
-            )
-
-            # record stats before any other wrappers to capture true episode returns and lengths
-            env = RecordEpisodeStatistics(env)
-
-            if img_height != 84 or img_width != 84:
-                env = ResizeObservation(env, (img_height, img_width))
-
-            if reward_clipping:
-                # env = NormalizeReward(env, gamma=0.99)
-                env = ClipReward(env, min_reward=-1, max_reward=1)
-
-            if stack_num > 1:
-                env = FrameStackObservation(env, stack_size=stack_num, padding_type='zero')
+            self.available_actions.append(list(range(len(MINIGRID_ACTIONS)))) 
+            env = gym.make(gid)
 
             self.envs.append(env)
 
@@ -96,11 +46,18 @@ class Multi_Atari_Environment:
         self.return_truncations = [False] * total
         self.return_infos = [None] * total
 
+        self.total_return = [0] * total
+        self.total_length = [0] * total
+        self.total_duration = [0] * total
 
-    def __record_episode_statistics(self, batch, info):
-        r = info.get("episode", {}).get("r", 0)
-        l = info.get("episode", {}).get("l", 0)
-        t = info.get("episode", {}).get("t", 0)
+
+    def __record_episode_statistics(self, batch):
+        r = self.total_return[batch]
+        l = self.total_length[batch]
+        t = time.perf_counter() - self.total_duration[batch]
+        self.total_return[batch] = 0
+        self.total_length[batch] = 0
+        self.total_duration[batch] = time.perf_counter()
         self.last_batch_episode_returns[batch] = r
         self.last_batch_episode_lengths[batch] = l
         self.last_batch_episode_times[batch] = t
@@ -109,7 +66,7 @@ class Multi_Atari_Environment:
     def __save_episode_statistics(self):
         if self.record_statistic_dir is None:
             return
-        
+
         for i in range(len(self.game_ids)):
             self.batch_episode_returns[i].append(self.last_batch_episode_returns[i])
             self.batch_episode_lengths[i].append(self.last_batch_episode_lengths[i])
@@ -149,6 +106,10 @@ class Multi_Atari_Environment:
             obs, info = env.reset(seed=seed)
             self.return_obs[i] = obs
             self.return_infos[i] = info
+
+            self.total_return[i] = 0
+            self.total_length[i] = 0
+            self.total_duration[i] = time.perf_counter()
         return self.return_obs, self.return_infos
 
 
@@ -160,13 +121,13 @@ class Multi_Atari_Environment:
                 self.return_truncations[i] = False
                 continue
             obs, reward, termination, truncation, info = env.step(actions[i])
-            self.return_rewards[i] = reward.item()
+            self.return_rewards[i] = reward
             self.return_terminations[i] = termination
             self.return_truncations[i] = truncation
             self.return_infos[i] = info
             if termination or truncation:
                 # record episode return and length
-                self.__record_episode_statistics(i, info)
+                self.__record_episode_statistics(i)
                 obs, _ = env.reset() # You must manually reset!
             self.return_obs[i] = obs
         self.steps += 1
@@ -204,3 +165,9 @@ class Multi_Atari_Environment:
         self.return_terminations = None
         self.return_truncations = None
         self.return_infos = None
+
+        self.total_return = None
+        self.total_length = None
+        self.total_duration = None
+
+

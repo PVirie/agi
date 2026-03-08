@@ -22,7 +22,6 @@ install("ale-py")
 install("gymnasium[atari, other]")
 install("colorama")
 
-import ale_py
 from utilities.atari.environments import Multi_Atari_Environment
 from colorama import Fore, Back, Style
 
