@@ -27,7 +27,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_base
 from implementations.networks.torch.policy.dualism import Policy_Core, Projector
-from implementations.networks.torch.value.mix_noxy import Value_Core
+from implementations.networks.torch.value.mix import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.collectors.states import State_Sequence as Collector
 
@@ -204,6 +204,7 @@ if __name__ == "__main__":
     value_core = Value_Core(
         int_action_size=2, ext_action_size=action_space_size, position_size=position_size,
         width=32, height=64, channel=4,
+        output_dims=1,
         hidden_size=hidden_size, layers=conv_layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path

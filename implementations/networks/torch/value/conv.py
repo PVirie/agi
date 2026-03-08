@@ -13,11 +13,12 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
     def __init__(self, 
                  position_size, 
                  width, height, channel, 
+                 output_dims,
                  layers, 
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="value_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="conv_value_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.position_size = position_size
@@ -26,6 +27,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.width = width
         self.height = height
         self.channel = channel
+        self.output_dims = output_dims
 
         self.conv_layers = ImpalaCNN(output_dims=32, input_channels=channel, width=width, height=height, depths=layers)
         self.read_out_layers = nn.Sequential(
@@ -57,7 +59,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         context_size = context.size(1)
 
         # first slice the image content
-        image_content = context[:, :, (1 + 1 + 3 + self.position_size): ]  # (batch_size, context_size, content_size)
+        image_content = context[:, :, (1 + 1 + self.output_dims + self.position_size): ]  # (batch_size, context_size, content_size)
         image_part = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))
 
         image_features = self.conv_layers(image_part)  # (batch_size * context_size, conv_output_size)

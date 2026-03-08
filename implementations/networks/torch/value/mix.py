@@ -12,8 +12,9 @@ from implementations.networks.torch.value.conv import Value_Core as Base_Value_C
 class Value_Core(Base_Value_Core):
 
     def __init__(self, 
-                 int_action_size, ext_action_size, position_size, 
-                 width, height, channel, 
+                 int_action_size, ext_action_size, position_size,
+                 width, height, channel,
+                 output_dims,
                  hidden_size, layers, 
                  history_steps=0, max_temporal_len=32, 
                  device=None, 
@@ -26,13 +27,14 @@ class Value_Core(Base_Value_Core):
         self.action_size = ext_action_size
         self.position_size = position_size
         self.content_size = channel * width * height
-        self.packed_action_size = 1 + 3 + position_size + self.content_size  # int_flag + action + x + y + position + content
-        self.packed_context_size = 1 + 1 + 3 + position_size + self.content_size  # reward + packed_action_size
+        self.packed_action_size = 1 + output_dims + position_size + self.content_size  # int_flag + action + x + y + position + content
+        self.packed_context_size = 1 + 1 + output_dims + position_size + self.content_size  # reward + packed_action_size
 
         self.width = width
         self.height = height
         self.channel = channel
         self.hidden_size = hidden_size
+        self.output_dims = output_dims
 
         vec_dim = 1 + self.int_action_size + self.position_size  # reward + flag_onehot + position
         self.vec_embedding = nn.Sequential(
@@ -74,16 +76,14 @@ class Value_Core(Base_Value_Core):
         context_size = context.size(1)
 
         # first slice the image content
-        image_content = context[:, :, (1 + 1 + 3 + self.position_size): ]  # (batch_size, context_size, content_size)
+        image_content = context[:, :, (1 + 1 + self.output_dims + self.position_size): ]  # (batch_size, context_size, content_size)
         image_part = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))
-        last_position = context[:, :, (1 + 1 + 3): (1 + 1 + 3 + self.position_size)]  # (batch_size, context_size, position_size)
+        last_position = context[:, :, (1 + 1 + self.output_dims): (1 + 1 + self.output_dims + self.position_size)]  # (batch_size, context_size, position_size)
 
         # make one hot encoding for action, location
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.action_size).float()
-        x_onehot = torch.nn.functional.one_hot(context[:, :, 3].long(), num_classes=self.width).float()
-        y_onehot = torch.nn.functional.one_hot(context[:, :, 4].long(), num_classes=self.height).float()
 
         vec = torch.concat([reward, flag_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + int_action_size + position_size)
         embedded_features = self.vec_embedding(vec)  # (batch_size, context_size, hidden_size)

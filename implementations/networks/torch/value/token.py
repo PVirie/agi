@@ -12,18 +12,19 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, 
                  position_size, content_size,
+                 output_dims,
                  hidden_size, layers, 
                  dict_size=256,
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="value_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="token_value_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.position_size = position_size
         self.content_size = content_size
-        self.packed_context_size = 1 + 1 + 1 + position_size + self.content_size  # reward + packed_action_size
-        
+        self.packed_context_size = 1 + 1 + output_dims + position_size + self.content_size  # reward + packed_action_size
+
         self.embedding = nn.Embedding(dict_size, 8)  # for direction token
         self.backbone = ResNet(output_dims=hidden_size, input_dims=8 * self.packed_context_size, hidden_dims=hidden_size, layers=layers)
         self.read_out_layers = nn.Sequential(

@@ -30,7 +30,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_68
 from implementations.networks.torch.policy.working_memory import Policy_Core, Projector
-from implementations.networks.torch.value.mix_noxy import Value_Core
+from implementations.networks.torch.value.mix import Value_Core
 from implementations.learning_algorithms.torch.ppo_wm import PPO
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.energy_episodic_memory import Energy_Episodic_Memory as Memory
@@ -233,6 +233,7 @@ if __name__ == "__main__":
         int_action_size=working_memory_size, ext_action_size=18, 
         position_size=position_size,
         width=32, height=64, channel=4,
+        output_dims=1,
         hidden_size=hidden_size, layers=conv_layers,
         history_steps=0, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path

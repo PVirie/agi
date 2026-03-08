@@ -9,7 +9,7 @@ import logging
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_conv import ImpalaCNN
-from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core, Projector as Base_Projector
+from implementations.networks.torch.policy.base_xy import Policy_Core as Base_Policy_Core, Projector as Base_Projector
 from utilities.safe_torch_module import Safe_nn_Module
 
 
