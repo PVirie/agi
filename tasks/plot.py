@@ -96,7 +96,7 @@ def parse_statistic_file(file_path, aggregate_steps=1000):
         info = []
         for col in header:
             parts = col.split('/')
-            if len(parts) != 3:
+            if len(parts) < 2:
                 logging.warning(f"Unexpected column name format: {col}")
                 continue
             metric_name = parts[-1]
