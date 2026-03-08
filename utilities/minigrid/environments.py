@@ -52,19 +52,19 @@ class Multi_Environment:
 
         self.total_return = [0] * total
         self.total_length = [0] * total
-        self.total_duration = [0] * total
+        self.total_duration = [0] * total # store the start time of the episode for each env, misnoming but consistent with other statistics
 
 
     def __record_episode_statistics(self, batch):
         r = self.total_return[batch]
         l = self.total_length[batch]
         t = time.perf_counter() - self.total_duration[batch]
-        self.total_return[batch] = 0
-        self.total_length[batch] = 0
-        self.total_duration[batch] = time.perf_counter()
         self.last_batch_episode_returns[batch] = r
         self.last_batch_episode_lengths[batch] = l
         self.last_batch_episode_times[batch] = t
+        self.total_return[batch] = 0
+        self.total_length[batch] = 0
+        self.total_duration[batch] = time.perf_counter()
 
     
     def __save_episode_statistics(self):
@@ -129,6 +129,9 @@ class Multi_Environment:
             self.return_terminations[i] = termination
             self.return_truncations[i] = truncation
             self.return_infos[i] = info
+
+            self.total_return[i] += reward
+            self.total_length[i] += 1
             if termination or truncation:
                 # record episode return and length
                 self.__record_episode_statistics(i)

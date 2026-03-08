@@ -103,6 +103,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
             policy_core.save()
             value_core.save()
             ppo_learner.save()
+            tokenizer.save(f"{experiment_path}/parameters")
 
         if steps % (rollout_length * 10) == 0:
             # compute estimated time left
@@ -158,10 +159,13 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
+    tokenizer = Text_Tokenizer(max_vocab_size=256)
+    tokenizer.load(f"{experiment_path}/parameters")
+
     game_ids=["BabyAI-GoToRedBall-v0", "BabyAI-GoToSeqS5R2-v0", "MiniGrid-SimpleCrossingS11N5-v0", "MiniGrid-GoToDoor-8x8-v0"] * 16
     env = Multi_Environment(
         game_ids=game_ids,
-        tokenizer=Text_Tokenizer(max_vocab_size=100)
+        tokenizer=tokenizer
     )
 
     random_agent = random_agent.Random_Agent("01")
