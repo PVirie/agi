@@ -7,6 +7,7 @@ An attempt to solve AGI.
 | LIII       | Cognitive algebra | A learnable computationally universal model              |
 | LXIII      | Mem Ops           | Mk. 53 with full memory operations                       |
 | LXIV       | Dualism           | Disentangle position from observation for generalization |
+| LXVIII     | Mem Hierarchy     | Working memory and Episodic memory                       |
 
 ## Prerequisites
 
@@ -115,4 +116,5 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [x] Full memory operations
     - [x] Cache then Fetch stack memory execution
 - [x] Model 64: Dualism
-    - [x] Disentangle position from observation for generalization
+- [x] Model 68: Mem Hierarchy
+- [x] minigrid environment
