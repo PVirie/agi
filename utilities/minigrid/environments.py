@@ -12,7 +12,6 @@ MINIGRID_ACTIONS = [
 class Multi_Environment:
     def __init__(self, 
         game_ids,
-        reward_clipping=True,
         record_statistic_dir=None
         ):
 

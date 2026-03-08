@@ -16,8 +16,7 @@ from utilities.minigrid.environments import Multi_Environment
 
 # Create a vector environment with 4 parallel instances of Breakout
 envs = Multi_Environment(
-    game_ids=["BabyAI-GoToRedBall-v0", "BabyAI-GoToSeqS5R2-v0", "MiniGrid-SimpleCrossingS11N5-v0", "MiniGrid-GoToDoor-8x8-v0"],
-    reward_clipping=True,
+    game_ids=["BabyAI-GoToRedBall-v0", "BabyAI-GoToSeqS5R2-v0", "MiniGrid-SimpleCrossingS11N5-v0", "MiniGrid-GoToDoor-8x8-v0"]
 )
 
 # Reset all environments
