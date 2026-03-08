@@ -1,15 +1,13 @@
 import re
-import numpy as np
-import torch
 import os
 import json
 
 
 class Text_Tokenizer:
 
-    def __init__(self, max_vocab_size, device):
+    def __init__(self, max_vocab_size):
         self.max_vocab_size = max_vocab_size
-        self.device = device
+        self.pad_token_id = 0
         self.id2word = ["<PAD>", "<UNK>"]
         self.word2id = {w: i for i, w in enumerate(self.id2word)}
 
@@ -59,18 +57,7 @@ class Text_Tokenizer:
         return len(self.id2word)
     
 
-    def __call__(self, texts, stack=True):
+    def __call__(self, texts):
         texts = list(map(self._tokenize, texts))
+        return texts
 
-        if stack:
-            max_len = max(len(l) for l in texts)
-            padded = np.ones((len(texts), max_len)) * self.word2id["<PAD>"]
-
-            for i, text in enumerate(texts):
-                padded[i, :len(text)] = text
-
-            padded_tensor = torch.from_numpy(padded).type(torch.long).to(self.device)
-            return padded_tensor
-        else:
-            # return list of tensors instead
-            return [torch.from_numpy(np.array(text)).type(torch.long).to(self.device) for text in texts]

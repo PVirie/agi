@@ -5,15 +5,20 @@ import os
 import csv
 import time
 
+
 MINIGRID_ACTIONS = [
     "left", "right", "forward", "pickup", "drop", "toggle", "done"
 ]
 
+
 class Multi_Environment:
     def __init__(self, 
         game_ids,
+        tokenizer,
         record_statistic_dir=None
         ):
+
+        self.tokenizer = tokenizer
 
         self.game_ids = game_ids
         self.record_statistic_dir = record_statistic_dir
@@ -103,7 +108,7 @@ class Multi_Environment:
             # return self.envs.reset(seed=seed)
         for i, env in enumerate(self.envs):
             obs, info = env.reset(seed=seed)
-            self.return_obs[i] = obs
+            self.return_obs[i] = self.obs_to_object(obs)
             self.return_infos[i] = info
 
             self.total_return[i] = 0
@@ -128,7 +133,7 @@ class Multi_Environment:
                 # record episode return and length
                 self.__record_episode_statistics(i)
                 obs, _ = env.reset() # You must manually reset!
-            self.return_obs[i] = obs
+            self.return_obs[i] = self.obs_to_object(obs)
         self.steps += 1
         self.__save_episode_statistics()       
         return self.return_obs, self.return_rewards, self.return_terminations, self.return_truncations, self.return_infos
@@ -170,3 +175,20 @@ class Multi_Environment:
         self.total_duration = None
 
 
+    def obs_to_object(self, obs, mission_max_len=32):
+        # obs is a dict with keys: 'image', 'mission', 'direction'
+        direction = obs['direction']  # scalar in [0, 3]
+        image = obs['image']  # shape (7, 7, 3)
+        mission = obs['mission']  # string
+
+        output = np.zeros((1 + 7 * 7 * 3 + mission_max_len,), dtype=np.int32)
+        output[0] = direction
+        output[1:1 + 7 * 7 * 3] = image.flatten()
+        mission_tokens = np.array(self.tokenizer([mission])[0], dtype=np.int32)
+        # now padd to mission_max_len
+        if len(mission_tokens) > mission_max_len:
+            mission_tokens = mission_tokens[:mission_max_len]
+        else:
+            mission_tokens = np.pad(mission_tokens, (0, mission_max_len - len(mission_tokens)), constant_values=self.tokenizer.pad_token_id)
+        output[1 + 7 * 7 * 3:] = mission_tokens
+        return output

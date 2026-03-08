@@ -2,6 +2,7 @@ import os
 import sys
 import time
 from PIL import Image
+import numpy as np
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -13,10 +14,12 @@ install("minigrid")
 install("gymnasium[other]")
 
 from utilities.minigrid.environments import Multi_Environment
+from utilities.tokenizer import Text_Tokenizer
 
 # Create a vector environment with 4 parallel instances of Breakout
 envs = Multi_Environment(
-    game_ids=["BabyAI-GoToRedBall-v0", "BabyAI-GoToSeqS5R2-v0", "MiniGrid-SimpleCrossingS11N5-v0", "MiniGrid-GoToDoor-8x8-v0"]
+    game_ids=["BabyAI-GoToRedBall-v0", "BabyAI-GoToSeqS5R2-v0", "MiniGrid-SimpleCrossingS11N5-v0", "MiniGrid-GoToDoor-8x8-v0"],
+    tokenizer=Text_Tokenizer(max_vocab_size=100)
 )
 
 # Reset all environments
@@ -40,9 +43,7 @@ print(f"Throughput: {total_steps / elapsed_time:.2f} steps/second")
 artifacts_path = f"{APP_ROOT}/log"
 os.makedirs(artifacts_path, exist_ok=True)
 for i, obs in enumerate(observations):
-    direction = obs['direction']
-    frame = obs['image']
-    mission = obs['mission']
+    frame = obs[1:1 + 7 * 7 * 3].reshape((7, 7, 3)).astype(np.uint8)
     for j in range(frame.shape[0]):
         img = Image.fromarray(frame[j, ...], mode='L')  # 'L' mode for grayscale
         img.save(f"{artifacts_path}/env_{i}_{j}.png")
