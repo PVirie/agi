@@ -2,12 +2,10 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name        | Description                                              |
-| ---------- | ----------------- | -------------------------------------------------------- |
-| LIII       | Cognitive algebra | A learnable computationally universal model              |
-| LXIII      | Mem Ops           | Mk. 53 with full memory operations                       |
-| LXIV       | Dualism           | Disentangle position from observation for generalization |
-| LXVIII     | Mem Hierarchy     | Working memory and Episodic memory                       |
+| Generation | Model Name        | Description                                 |
+| ---------- | ----------------- | ------------------------------------------- |
+| LIII       | Cognitive algebra | A learnable computationally universal model |
+| LXIII      | Mem Ops           | Mk. 53 with full memory operations          |
 
 ## Prerequisites
 

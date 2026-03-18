@@ -23,33 +23,10 @@ class Policy_Network(abc.ABC):
         pass
 
 
-class Policy_Index_Network(Policy_Network):
-    
-    @abc.abstractmethod
-    def get_action(self, context, indices, valid_actions=None):
-        pass
-
-    @abc.abstractmethod
-    def get_log_probability(self, context, indices, selected_action, valid_actions=None):
-        pass
-
-    @abc.abstractmethod
-    def get_log_probability_with_aux_loss(self, context, indices, selected_action, valid_actions=None):
-        pass
-
-
-
 class Value_Network(abc.ABC):
 
     @abc.abstractmethod
     def get_value(self, context):
-        pass
-
-
-class Value_Index_Network(Value_Network):
-
-    @abc.abstractmethod
-    def get_value(self, context, indices):
         pass
 
 
