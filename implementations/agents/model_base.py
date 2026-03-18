@@ -50,7 +50,6 @@ class Model_Base(Agent):
                  context_collector: Context_Collector, 
                  action_collector: Context_Collector, 
                  valid_action_collector: Context_Collector,
-                 max_num_thought_steps: int = 2,
                  do_supervision: bool = False
                  ):
         self.policy_model = policy_model
@@ -59,11 +58,7 @@ class Model_Base(Agent):
         self.obs = context_collector
         self.actions = action_collector
         self.valid_actions = valid_action_collector
-
-        self.max_num_thought_steps = max_num_thought_steps
         self.do_supervision = do_supervision
-
-        self.valid_int_actions = list(range(self.policy_model.int_action_size))
         self.observe_external_int_actions = [0]
 
         self.reset()
@@ -141,8 +136,7 @@ class Model_Base(Agent):
         self.rewards[-1] = reward
         self.valid_actions.update_last(
             make_valid_mask([
-                self.observe_external_int_actions if self.thought_steps[i] == self.max_num_thought_steps else self.valid_int_actions 
-                for i in range(batch_size)
+                self.observe_external_int_actions for i in range(batch_size)
             ], self.policy_model.int_action_size),
             make_valid_mask(next_available_actions, self.policy_model.ext_action_size)
         )
@@ -203,11 +197,7 @@ class Model_Base(Agent):
         # check flag for external observation override and update thought steps
         return_action = [None for _ in range(batch_size)]
         for i in range(batch_size):
-            flag = int_action[i].item()
-            self.thought_steps[i] += 1
-            if flag in self.observe_external_int_actions:
-                return_action[i] = ext_action[i]
-                self.thought_steps[i] = 0
+            return_action[i] = ext_action[i]
 
         # populate last states
         self.obs.append(

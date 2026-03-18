@@ -20,12 +20,12 @@ class Policy_Core(Base_Policy_Core):
     def __init__(self, 
                  int_action_size, ext_action_size, 
                  position_size, content_size,
+                 dict_size, embedding_dim,
                  hidden_size, layers, 
-                 dict_size=256,
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="dualism_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="base_token_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.int_action_size = int_action_size  # num classes for flag
@@ -37,8 +37,8 @@ class Policy_Core(Base_Policy_Core):
 
         self.hidden_size = hidden_size
 
-        self.embedding = nn.Embedding(dict_size, 8)  # for direction token
-        vec_dim = self.int_action_size + ext_action_size + position_size + content_size * 8
+        self.embedding = nn.Embedding(dict_size, embedding_dim)  # for direction token
+        vec_dim = self.int_action_size + ext_action_size + position_size + content_size * embedding_dim
         
         #self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
         self.adapter = nn.Linear(vec_dim, hidden_size)

@@ -117,3 +117,4 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] Model 68: Mem Hierarchy
 - [x] minigrid environment
 - [x] MAMBA
+- [ ] A real world environment (required for pretigious conference publication, but not necessary for the project itself)
