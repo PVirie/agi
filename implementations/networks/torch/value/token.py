@@ -3,6 +3,9 @@ import torch.nn as nn
 import numpy as np
 import logging
 
+from mambapy.mamba import Mamba as Mamba, MambaConfig as MambaConfig
+
+from implementations.networks.torch.components.base import init_weights
 from interfaces.network import Value_Network
 from implementations.networks.torch.components.std_resnet import ResNet
 from utilities.safe_torch_module import Safe_nn_Module
@@ -26,7 +29,12 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.packed_context_size = 1 + 1 + output_dims + position_size + self.content_size  # reward + packed_action_size
 
         self.embedding = nn.Embedding(dict_size, 8)  # for direction token
-        self.backbone = ResNet(output_dims=hidden_size, input_dims=8 * self.packed_context_size, hidden_dims=hidden_size, layers=layers)
+        
+        # self.backbone = ResNet(output_dims=hidden_size, input_dims=8 * self.packed_context_size, hidden_dims=hidden_size, layers=layers)
+        self.adapter = nn.Linear(8 * self.packed_context_size, hidden_size)
+        config = MambaConfig(d_model=hidden_size, n_layers=2)
+        self.backbone = Mamba(config)
+
         self.read_out_layers = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
@@ -40,7 +48,9 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
     def reset_parameters(self):
         self.embedding.reset_parameters()
-        self.backbone.reset_parameters()
+        self.adapter.reset_parameters()
+        #self.backbone.reset_parameters()
+        self.backbone.apply(init_weights)
 
         def init_value_weights(m):
             if isinstance(m, nn.Linear):
@@ -58,7 +68,11 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
         embedded = self.embedding(context.long())  # (batch_size, context_size, packed_context_size, embedding_dim)
         embedded = embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, content_size * embedding_dim)
-        features = self.backbone(embedded)  # (batch_size, context_size, hidden_size)
+        
+        #features = self.backbone(embedded)  # (batch_size, context_size, hidden_size)
+        vec = self.adapter(embedded)  # (batch_size, context_size, hidden_size)
+        features = self.backbone(vec)  # (batch_size, context_size, hidden_size)
+        
         values = self.read_out_layers(features)  # (batch_size, context_size, 1)
         
         return values

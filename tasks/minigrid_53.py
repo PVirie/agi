@@ -19,6 +19,7 @@ from utilities.package_install import install
 
 install("minigrid")
 install("gymnasium[other]")
+install("mambapy")
 
 from utilities.minigrid.environments import Multi_Environment
 from utilities.tokenizer import Text_Tokenizer
@@ -218,9 +219,9 @@ if __name__ == "__main__":
     agent = model_53.Model_53(
         policy_model=policy_core, value_model=value_core,
         trainer=ppo_learner,
-        context_collector=Collector(max_history=0),
-        action_collector=Collector(max_history=0),
-        valid_action_collector=Collector(max_history=0),
+        context_collector=Collector(max_history=8),
+        action_collector=Collector(max_history=8),
+        valid_action_collector=Collector(max_history=8),
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=args.with_auxiliary,

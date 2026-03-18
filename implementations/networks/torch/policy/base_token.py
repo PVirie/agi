@@ -6,6 +6,8 @@ from torch.distributions import Bernoulli
 import numpy as np
 import logging
 
+from mambapy.mamba import Mamba as Mamba, MambaConfig as MambaConfig
+
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
@@ -37,7 +39,11 @@ class Policy_Core(Base_Policy_Core):
 
         self.embedding = nn.Embedding(dict_size, 8)  # for direction token
         vec_dim = self.int_action_size + ext_action_size + position_size + content_size * 8
-        self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
+        
+        #self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
+        self.adapter = nn.Linear(vec_dim, hidden_size)
+        config = MambaConfig(d_model=hidden_size, n_layers=2)
+        self.backbone = Mamba(config)
 
         self.head_int = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
@@ -64,7 +70,9 @@ class Policy_Core(Base_Policy_Core):
     def reset_parameters(self):
         # Reset parameters of all layers
         self.embedding.reset_parameters()
-        self.backbone.reset_parameters()
+        self.adapter.reset_parameters()
+        #self.backbone.reset_parameters()
+        self.backbone.apply(init_weights)
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -97,6 +105,7 @@ class Policy_Core(Base_Policy_Core):
         embedded = embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, content_size * embedding_dim)
 
         vec = torch.concat([flag_onehot, action_onehot, last_position, embedded], dim=-1)  # (batch_size, context_size, int_action_size + ext_action_size + position_size + content_size * embedding_dim)
+        vec = self.adapter(vec)  # (batch_size, context_size, hidden_size)
         backbone_output = self.backbone(vec)  # (batch_size, context_size, hidden_size)
         
         int_logits = self.head_int(backbone_output)  # (batch_size, context_size, int_action_size)
