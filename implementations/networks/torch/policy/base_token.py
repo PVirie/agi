@@ -58,8 +58,7 @@ class Policy_Core(Base_Policy_Core):
         self.head_position = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, position_size),
-            nn.Sigmoid()
+            nn.Linear(hidden_size, position_size)
         )
 
         self.reset_parameters()
@@ -133,7 +132,7 @@ class Policy_Core(Base_Policy_Core):
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
-        probs_position = Bernoulli(probs=position_logits)
+        probs_position = Bernoulli(logits=position_logits)
 
         batch_size = context.size(0)
         context_size = context.size(1)
@@ -172,7 +171,7 @@ class Policy_Core(Base_Policy_Core):
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
-        probs_position = Bernoulli(probs=position_logits)
+        probs_position = Bernoulli(logits=position_logits)
 
         action_int = selected_action[:, :, 0]
         action_ext = selected_action[:, :, 1]
@@ -214,7 +213,7 @@ class Policy_Core(Base_Policy_Core):
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
-        probs_position = Bernoulli(probs=position_logits)
+        probs_position = Bernoulli(logits=position_logits)
 
         action_int = selected_action[:, :, 0]
         action_ext = selected_action[:, :, 1]

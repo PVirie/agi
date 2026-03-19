@@ -58,8 +58,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.position_step = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, position_size),
-            nn.Sigmoid()
+            nn.Linear(hidden_size, position_size)
         )
         self.head_content = nn.Sequential(
             nn.Conv2d(channel, channel, kernel_size=1)
@@ -143,7 +142,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         probs_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
         probs_x = Categorical(logits=x_logits)
         probs_y = Categorical(logits=y_logits)
-        probs_position = Bernoulli(probs=position_logits)
+        probs_position = Bernoulli(logits=position_logits)
         probs_content = Normal(content_logits, torch.exp(self.content_logstd.expand_as(content_logits)))
 
         action_flag = probs_flag.sample()
@@ -186,7 +185,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         probs_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
         probs_x = Categorical(logits=x_logits)
         probs_y = Categorical(logits=y_logits)
-        probs_position = Bernoulli(probs=position_logits)
+        probs_position = Bernoulli(logits=position_logits)
         probs_content = Normal(content_logits, torch.exp(self.content_logstd.expand_as(content_logits)))
 
         action_flag = selected_action[:, :, 0]
@@ -243,7 +242,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         probs_action = Categorical_With_Mask(logits=logits_action, mask=available_actions)
         probs_x = Categorical(logits=x_logits)
         probs_y = Categorical(logits=y_logits)
-        probs_position = Bernoulli(probs=position_logits)
+        probs_position = Bernoulli(logits=position_logits)
         probs_content = Normal(content_logits, torch.exp(self.content_logstd.expand_as(content_logits)))
 
         action_flag = selected_action[:, :, 0]

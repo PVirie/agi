@@ -16,7 +16,11 @@ from .base import masked_mean, masked_std
 
 class PPO(RL_Learner, Safe_nn_Module):
 
-    def __init__(self, policy_model: Policy_Network, value_model: Value_Network, device, persistence_path=None, minibatch_size=8, aux_coef=None):
+    def __init__(self, 
+                 policy_model: Policy_Network, value_model: Value_Network, 
+                 device, persistence_path=None, 
+                 lr=3e-4, minibatch_size=8, 
+                 aux_coef=None):
         """
         PPO: Proximal Policy Optimization Algorithm
 
@@ -28,7 +32,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.value_model = value_model
         self.device = device
 
-        self.lr = 3e-4
+        self.lr = lr
         self.gamma = 0.99
         self.gae_lambda = 0.95
         self.clip_coef = 0.2
