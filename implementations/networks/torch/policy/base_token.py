@@ -42,7 +42,7 @@ class Policy_Core(Base_Policy_Core):
         
         #self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
         self.adapter = nn.Linear(vec_dim, hidden_size)
-        config = MambaConfig(d_model=hidden_size, n_layers=2)
+        config = MambaConfig(d_model=hidden_size, n_layers=layers)
         self.backbone = Mamba(config)
 
         self.head_int = nn.Sequential(

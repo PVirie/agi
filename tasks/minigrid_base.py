@@ -157,7 +157,7 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
-    vocab_size = 512
+    vocab_size = 256
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
@@ -182,14 +182,14 @@ if __name__ == "__main__":
         layers = 4
         rollout_length = 256
         minibatch_size = 8
-        position_size = 8
+        position_size = 4
         embedding_dim = 16
     else:  # large
         hidden_size = 512
         layers = 8
         rollout_length = 256
         minibatch_size = 8
-        position_size = 8
+        position_size = 4
         embedding_dim = 32
 
     parameters_path = f"{experiment_path}/parameters"

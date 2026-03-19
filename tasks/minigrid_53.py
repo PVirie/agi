@@ -160,7 +160,7 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
-    vocab_size = 512
+    vocab_size = 256
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 

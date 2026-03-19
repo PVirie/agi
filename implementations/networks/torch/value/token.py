@@ -32,7 +32,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         
         # self.backbone = ResNet(output_dims=hidden_size, input_dims=embedding_dim * self.packed_context_size, hidden_dims=hidden_size, layers=layers)
         self.adapter = nn.Linear(embedding_dim * self.packed_context_size, hidden_size)
-        config = MambaConfig(d_model=hidden_size, n_layers=2)
+        config = MambaConfig(d_model=hidden_size, n_layers=layers)
         self.backbone = Mamba(config)
 
         self.read_out_layers = nn.Sequential(
