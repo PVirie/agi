@@ -58,11 +58,11 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         batch_size = context.size(0)
         context_size = context.size(1)
 
-        # first slice the image content
-        image_content = context[:, :, (1 + 1 + self.output_dims + self.position_size): ]  # (batch_size, context_size, content_size)
-        image_part = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))
-
+        content = context[:, :, (1 + 1 + self.output_dims + self.position_size): ]  # (batch_size, context_size, content_size)
+        
+        image_part = torch.reshape(content, (batch_size * context_size, self.channel, self.height, self.width))
         image_features = self.conv_layers(image_part)  # (batch_size * context_size, conv_output_size)
+        
         values = self.read_out_layers(image_features)  # (batch_size * context_size, 1)
         values = torch.reshape(values, (batch_size, context_size, 1))
         

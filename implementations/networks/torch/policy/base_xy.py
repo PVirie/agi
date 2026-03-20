@@ -97,19 +97,16 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         batch_size = context.size(0)
         context_size = context.size(1)
 
-        # first slice the image content
-        image_content = context[:, :, (1 + 1 + 3 + self.position_size): ]  # (batch_size, context_size, content_size)
-        image_part = torch.reshape(image_content, (batch_size, context_size, self.channel, self.height, self.width))
-        last_position = context[:, :, (1 + 1 + 3): (1 + 1 + 3 + self.position_size)]  # (batch_size, context_size, position_size)
-
-        # make one hot encoding for action, location
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         x_onehot = torch.nn.functional.one_hot(context[:, :, 3].long(), num_classes=self.width).float()
         y_onehot = torch.nn.functional.one_hot(context[:, :, 4].long(), num_classes=self.height).float()
-        
+        last_position = context[:, :, (1 + 1 + 3): (1 + 1 + 3 + self.position_size)]  # (batch_size, context_size, position_size)
+        content = context[:, :, (1 + 1 + 3 + self.position_size): ]  # (batch_size, context_size, content_size)
+
         vec = torch.concat([reward, flag_onehot, action_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + int_action_size + ext_action_size + position_size)
+        image_part = torch.reshape(content, (batch_size, context_size, self.channel, self.height, self.width))
         features, x_logits, y_logits, content_logits = self.temporal_unet(image_part, vec)
         
         logits_flag = self.head_flag(features)    # (B, T, int_action_size)

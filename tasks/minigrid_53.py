@@ -205,6 +205,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
+        int_action_size=6, ext_action_size=7, 
         position_size=position_size, content_size=content_size,
         output_dims=1,
         dict_size=vocab_size, embedding_dim=embedding_dim,

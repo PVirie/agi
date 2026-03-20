@@ -3,8 +3,6 @@ import torch.nn as nn
 import numpy as np
 import logging
 
-from mambapy.mamba import Mamba as Mamba, MambaConfig as MambaConfig
-
 from implementations.networks.torch.components.base import init_weights
 from interfaces.network import Value_Network
 from implementations.networks.torch.components.std_resnet import ResNet
@@ -14,6 +12,7 @@ from utilities.safe_torch_module import Safe_nn_Module
 class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, 
+                 int_action_size, ext_action_size,
                  position_size, content_size,
                  output_dims,
                  dict_size, embedding_dim,
@@ -24,16 +23,19 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         Safe_nn_Module.__init__(self, name="token_value_core", device=device, persistence_path=persistence_path)
         self.device = device
 
+        self.int_action_size = int_action_size  # num classes for flag
+        self.action_size = ext_action_size
         self.position_size = position_size
         self.content_size = content_size
+        self.packed_action_size = 1 + output_dims + position_size + self.content_size  # int_flag + action + ... + position + content
         self.packed_context_size = 1 + 1 + output_dims + position_size + self.content_size  # reward + packed_action_size
 
+        self.hidden_size = hidden_size
+        self.output_dims = output_dims
+
         self.embedding = nn.Embedding(dict_size, embedding_dim)  # for direction token
-        
-        # self.backbone = ResNet(output_dims=hidden_size, input_dims=embedding_dim * self.packed_context_size, hidden_dims=hidden_size, layers=layers)
-        self.adapter = nn.Linear(embedding_dim * self.packed_context_size, hidden_size)
-        config = MambaConfig(d_model=hidden_size, n_layers=layers)
-        self.backbone = Mamba(config)
+        vec_dim = 1 + ext_action_size + self.position_size + content_size * embedding_dim
+        self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
 
         self.read_out_layers = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
@@ -48,9 +50,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
     def reset_parameters(self):
         self.embedding.reset_parameters()
-        self.adapter.reset_parameters()
-        #self.backbone.reset_parameters()
-        self.backbone.apply(init_weights)
+        self.backbone.reset_parameters()
 
         def init_value_weights(m):
             if isinstance(m, nn.Linear):
@@ -66,11 +66,16 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         batch_size = context.size(0)
         context_size = context.size(1)
 
-        embedded = self.embedding(context.long())  # (batch_size, context_size, packed_context_size, embedding_dim)
+        reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
+        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
+        action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.action_size).float()
+        last_position = context[:, :, (1 + 1 + self.output_dims): (1 + 1 + self.output_dims + self.position_size)]  # (batch_size, context_size, position_size)
+        content = context[:, :, (1 + 1 + self.output_dims + self.position_size): ]  # (batch_size, context_size, content_size)
+        
+        embedded = self.embedding(content.long())  # (batch_size, context_size, packed_context_size, embedding_dim)
         embedded = embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, content_size * embedding_dim)
         
-        #features = self.backbone(embedded)  # (batch_size, context_size, hidden_size)
-        vec = self.adapter(embedded)  # (batch_size, context_size, hidden_size)
+        vec = torch.concat([reward, action_onehot, last_position, embedded], dim=-1)  # (batch_size, context_size, 1 + ext_action_size + position_size + content_size * embedding_dim)
         features = self.backbone(vec)  # (batch_size, context_size, hidden_size)
         
         values = self.read_out_layers(features)  # (batch_size, context_size, 1)

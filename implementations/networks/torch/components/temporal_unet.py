@@ -29,7 +29,11 @@ class UpConvBlock(nn.Module):
     
 
 class TemporalUNet(nn.Module):
-    def __init__(self, output_dims, input_channels=1, width=64, height=64, vec_dim=128, hidden_dim=32, depths=[16, 32, 32], history_steps=1, max_temporal_len=32):
+    def __init__(self, 
+            output_dims, input_channels=1, 
+            width=64, height=64, vec_dim=128, 
+            hidden_dim=32, depths=[16, 32, 32], 
+            history_steps=1, max_temporal_len=32):
         super(TemporalUNet, self).__init__()
 
         self.output_dims = output_dims

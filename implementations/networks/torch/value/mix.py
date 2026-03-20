@@ -12,7 +12,8 @@ from implementations.networks.torch.value.conv import Value_Core as Base_Value_C
 class Value_Core(Base_Value_Core):
 
     def __init__(self, 
-                 int_action_size, ext_action_size, position_size,
+                 int_action_size, ext_action_size, 
+                 position_size,
                  width, height, channel,
                  output_dims,
                  hidden_size, layers, 
@@ -27,7 +28,7 @@ class Value_Core(Base_Value_Core):
         self.action_size = ext_action_size
         self.position_size = position_size
         self.content_size = channel * width * height
-        self.packed_action_size = 1 + output_dims + position_size + self.content_size  # int_flag + action + x + y + position + content
+        self.packed_action_size = 1 + output_dims + position_size + self.content_size  # int_flag + action + ... + position + content
         self.packed_context_size = 1 + 1 + output_dims + position_size + self.content_size  # reward + packed_action_size
 
         self.width = width
@@ -36,15 +37,15 @@ class Value_Core(Base_Value_Core):
         self.hidden_size = hidden_size
         self.output_dims = output_dims
 
-        vec_dim = 1 + self.int_action_size + self.position_size  # reward + flag_onehot + position
+        self.conv_layers = ImpalaCNN(output_dims=hidden_size, input_channels=channel, width=width, height=height, depths=layers)
+
+        vec_dim = 1 + ext_action_size + self.position_size  # reward + action_onehot + position
         self.vec_embedding = nn.Sequential(
             nn.Linear(vec_dim, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU()
         )
-
-        self.conv_layers = ImpalaCNN(output_dims=hidden_size, input_channels=channel, width=width, height=height, depths=layers)
 
         self.read_out_layers = nn.Sequential(
             nn.Linear(hidden_size * 2, hidden_size * 4),
@@ -58,8 +59,8 @@ class Value_Core(Base_Value_Core):
 
 
     def reset_parameters(self):
-        self.vec_embedding.apply(init_weights)
         self.conv_layers.reset_parameters()
+        self.vec_embedding.apply(init_weights)
 
         def init_value_weights(m):
             if isinstance(m, nn.Linear):
@@ -75,19 +76,16 @@ class Value_Core(Base_Value_Core):
         batch_size = context.size(0)
         context_size = context.size(1)
 
-        # first slice the image content
-        image_content = context[:, :, (1 + 1 + self.output_dims + self.position_size): ]  # (batch_size, context_size, content_size)
-        image_part = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))
-        last_position = context[:, :, (1 + 1 + self.output_dims): (1 + 1 + self.output_dims + self.position_size)]  # (batch_size, context_size, position_size)
-
-        # make one hot encoding for action, location
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.action_size).float()
-
-        vec = torch.concat([reward, flag_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + int_action_size + position_size)
+        last_position = context[:, :, (1 + 1 + self.output_dims): (1 + 1 + self.output_dims + self.position_size)]  # (batch_size, context_size, position_size)
+        content = context[:, :, (1 + 1 + self.output_dims + self.position_size): ]  # (batch_size, context_size, content_size)
+        
+        vec = torch.concat([reward, action_onehot, last_position], dim=-1)  # (batch_size, context_size, 1 + ext_action_size + position_size)
         embedded_features = self.vec_embedding(vec)  # (batch_size, context_size, hidden_size)
 
+        image_part = torch.reshape(content, (batch_size * context_size, self.channel, self.height, self.width))
         image_features = self.conv_layers(image_part)  # (batch_size * context_size, hidden_size)
         image_features = torch.reshape(image_features, (batch_size, context_size, self.hidden_size))  # (batch_size, context_size, hidden_size)
 
