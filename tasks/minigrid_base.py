@@ -161,7 +161,8 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16
+    # game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
+    game_ids=["BabyAI-GoToRedBall-v0"]*16 + ["BabyAI-GoToSeqS5R2-v0"]*16 + ["MiniGrid-SimpleCrossingS11N5-v0"]*16 + ["MiniGrid-GoToDoor-8x8-v0"]*16
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -175,21 +176,21 @@ if __name__ == "__main__":
         layers = 2
         rollout_length = 128
         minibatch_size = 8
-        position_size = 8
+        position_size = 4
         embedding_dim = 8
     elif args.scale == "medium":
         hidden_size = 256
         layers = 4
         rollout_length = 256
         minibatch_size = 8
-        position_size = 16
+        position_size = 8
         embedding_dim = 16
     else:  # large
         hidden_size = 512
         layers = 8
         rollout_length = 256
         minibatch_size = 8
-        position_size = 32
+        position_size = 8
         embedding_dim = 32
 
     parameters_path = f"{experiment_path}/parameters"
@@ -210,7 +211,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [1, 2]), value_model=value_core,
+        policy_model=Projector(policy_core, [1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
         aux_coef=0.1 if args.with_auxiliary else None
     )
