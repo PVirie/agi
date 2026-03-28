@@ -17,6 +17,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
                  output_dims,
                  dict_size, embedding_dim,
                  hidden_size, layers, 
+                 history_steps=0, max_temporal_len=32, 
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
@@ -33,8 +34,9 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.hidden_size = hidden_size
         self.output_dims = output_dims
 
-        self.embedding = nn.Embedding(dict_size, embedding_dim)  # for direction token
-        vec_dim = 1 + ext_action_size + self.position_size + content_size * embedding_dim
+        self.embedding = nn.Embedding(dict_size, embedding_dim)  # for tokens
+        # vec_dim = 1 + ext_action_size + self.position_size + content_size * embedding_dim
+        vec_dim = content_size * embedding_dim
         self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
 
         self.read_out_layers = nn.Sequential(
@@ -75,7 +77,8 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         embedded = self.embedding(content.long())  # (batch_size, context_size, packed_context_size, embedding_dim)
         embedded = embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, content_size * embedding_dim)
         
-        vec = torch.concat([reward, action_onehot, last_position, embedded], dim=-1)  # (batch_size, context_size, 1 + ext_action_size + position_size + content_size * embedding_dim)
+        # vec = torch.concat([reward, action_onehot, last_position, embedded], dim=-1)  # (batch_size, context_size, 1 + ext_action_size + position_size + content_size * embedding_dim)
+        vec = embedded  # (batch_size, context_size, content_size * embedding_dim)
         features = self.backbone(vec)  # (batch_size, context_size, hidden_size)
         
         values = self.read_out_layers(features)  # (batch_size, context_size, 1)

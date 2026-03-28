@@ -35,7 +35,7 @@ class Policy_Core(Base_Policy_Core):
 
         self.hidden_size = hidden_size
 
-        self.embedding = nn.Embedding(dict_size, embedding_dim)  # for direction token
+        self.embedding = nn.Embedding(dict_size, embedding_dim)  # for tokens
         
         vec_dim = self.int_action_size + ext_action_size + position_size + content_size * embedding_dim
         self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)

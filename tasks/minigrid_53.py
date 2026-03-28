@@ -210,6 +210,7 @@ if __name__ == "__main__":
         output_dims=1,
         dict_size=vocab_size, embedding_dim=embedding_dim,
         hidden_size=hidden_size, layers=layers,
+        history_steps=0, max_temporal_len=32, 
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
@@ -224,9 +225,9 @@ if __name__ == "__main__":
     agent = model_53.Model_53(
         policy_model=policy_core, value_model=value_core,
         trainer=ppo_learner,
-        context_collector=Collector(max_history=8),
-        action_collector=Collector(max_history=8),
-        valid_action_collector=Collector(max_history=8),
+        context_collector=Collector(max_history=0),
+        action_collector=Collector(max_history=0),
+        valid_action_collector=Collector(max_history=0),
         memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=args.with_auxiliary,

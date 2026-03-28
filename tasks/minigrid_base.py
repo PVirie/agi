@@ -28,7 +28,7 @@ from colorama import Fore, Back, Style
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_base
-from implementations.networks.torch.policy.base_token import Policy_Core
+from implementations.networks.torch.policy.cultivate_token import Policy_Core
 from implementations.networks.torch.policy.base_xy import Projector
 from implementations.networks.torch.value.token import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
@@ -170,44 +170,47 @@ if __name__ == "__main__":
     )
 
     random_agent = random_agent.Random_Agent("01")
-    content_size = 1 + 7 * 7 * 3 + 32 # direction + image + mission tokens
+    mission_size = 32
+    content_size = 1 + 7 * 7 * 3 + mission_size # direction + image + mission tokens
     if args.scale == "small":
+        history_steps = 4
         hidden_size = 128
         layers = 2
         rollout_length = 128
         minibatch_size = 8
-        position_size = 4
         embedding_dim = 8
     elif args.scale == "medium":
+        history_steps = 4
         hidden_size = 256
         layers = 4
         rollout_length = 256
         minibatch_size = 8
-        position_size = 8
         embedding_dim = 16
     else:  # large
+        history_steps = 4
         hidden_size = 512
         layers = 8
         rollout_length = 256
         minibatch_size = 8
-        position_size = 8
         embedding_dim = 32
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
         int_action_size=6, ext_action_size=7, 
-        position_size=position_size, content_size=content_size,
+        obs_size=content_size-mission_size, goal_size=mission_size,
         dict_size=vocab_size, embedding_dim=embedding_dim,
         hidden_size=hidden_size, layers=layers,
+        history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
         int_action_size=6, ext_action_size=7, 
-        position_size=position_size, content_size=content_size,
+        position_size=mission_size, content_size=content_size,
         output_dims=1,
         dict_size=vocab_size, embedding_dim=embedding_dim,
         hidden_size=hidden_size, layers=layers,
+        history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
@@ -218,9 +221,9 @@ if __name__ == "__main__":
     agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,
         trainer=ppo_learner,
-        context_collector=Collector(max_history=0),
-        action_collector=Collector(max_history=0),
-        valid_action_collector=Collector(max_history=0),
+        context_collector=Collector(max_history=history_steps),
+        action_collector=Collector(max_history=history_steps),
+        valid_action_collector=Collector(max_history=history_steps),
         do_supervision=args.with_auxiliary
     )
 
