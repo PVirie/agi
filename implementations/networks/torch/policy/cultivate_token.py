@@ -30,9 +30,9 @@ class Policy_Core(Base_Policy_Core):
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
         self.position_size = goal_size # use position to store sub-goal information
-        self.content_size = obs_size + goal_size
-        self.packed_action_size = 1 + 1 + goal_size + obs_size + goal_size
-        self.packed_context_size = 1 + 1 + 1 + goal_size + obs_size + goal_size
+        self.content_size = goal_size + obs_size
+        self.packed_action_size = 1 + 1 + goal_size + goal_size + obs_size
+        self.packed_context_size = 1 + 1 + 1 + goal_size + goal_size + obs_size
 
         self.goal_size = goal_size
         self.obs_size = obs_size
@@ -104,15 +104,15 @@ class Policy_Core(Base_Policy_Core):
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         last_subgoal = context[:, :, (1 + 1 + 1): (1 + 1 + 1 + self.position_size)]  # (batch_size, context_size, goal_size)
-        obs = context[:, :, (1 + 1 + 1 + self.position_size):(1 + 1 + 1 + self.position_size + self.obs_size) ]  # (batch_size, context_size, obs_size)
-        goal = context[:, :, (1 + 1 + 1 + self.position_size + self.obs_size): ]  # (batch_size, context_size, goal_size)
+        goal = context[:, :, (1 + 1 + 1 + self.position_size): (1 + 1 + 1 + self.position_size + self.goal_size)]  # (batch_size, context_size, goal_size)
+        obs = context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size): ]  # (batch_size, context_size, obs_size)
 
         last_subgoal_embedded = self.goal_embedding(last_subgoal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         last_subgoal_embedded = last_subgoal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
-        obs_embedded = self.obs_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
-        obs_embedded = obs_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, obs_size * embedding_dim)
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         goal_embedded = goal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
+        obs_embedded = self.obs_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
+        obs_embedded = obs_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, obs_size * embedding_dim)
 
         base_input = torch.concat([goal_embedded, obs_embedded], dim=-1)  # (batch_size, context_size, (goal_size + obs_size) * embedding_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)

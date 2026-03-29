@@ -118,6 +118,7 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] minigrid environment
 - [x] MAMBA
 - [ ] Cultivate Hierarchy
-    - [ ] Model 69
-    - [ ] Return propagation through subgoals
+    - [x] Minigrid full MDP
+    - [ ] Sub-task flag (alpha factor)
+    - [ ] Return propagation by sub-goal difference (gamma factor)
 - [ ] A real world environment (required for pretigious conference publication, but not necessary for the project itself)

@@ -19,7 +19,6 @@ from utilities.package_install import install
 
 install("minigrid")
 install("gymnasium[other]")
-install("mambapy")
 
 from utilities.minigrid.environments import Multi_Environment
 from utilities.tokenizer import Text_Tokenizer
@@ -171,7 +170,7 @@ if __name__ == "__main__":
 
     random_agent = random_agent.Random_Agent("01")
     mission_size = 32
-    content_size = 1 + 7 * 7 * 3 + mission_size # direction + image + mission tokens
+    content_size = mission_size + 1 + 7 * 7 * 3  # mission tokens + direction + image
     if args.scale == "small":
         history_steps = 4
         hidden_size = 128

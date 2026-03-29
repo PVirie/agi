@@ -26,13 +26,12 @@ from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.base_token import Policy_Core
+from implementations.agents import random_agent, model_base
+from implementations.networks.torch.policy.cultivate_token import Policy_Core
 from implementations.networks.torch.policy.base_xy import Projector
 from implementations.networks.torch.value.token import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.collectors.states import State_Sequence as Collector
-from implementations.memories.energy_memory import Energy_Memory as Memory
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -125,8 +124,6 @@ if __name__ == "__main__":
     parser.add_argument("--reset",                  "-r",   action="store_true")
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
-    parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
-    parser.add_argument("--scheme",                 "-sch", type=str, default="reactive", help="The scheme to use for the agent's decision making. Default is 'reactive'.")
     parser.add_argument("--with-auxiliary",         "-aux", action="store_true", help="Enable auxiliary loss along with PPO.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     args = parser.parse_args()
@@ -146,12 +143,12 @@ if __name__ == "__main__":
     logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(20260308)  
-    torch.manual_seed(20260308)
-    np.random.seed(20260308)
+    random.seed(202603129)  
+    torch.manual_seed(20260329)
+    np.random.seed(20260329)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/minigrid_53"
+    experiment_path = f"{APP_ROOT}/experiments/minigrid_base"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -163,74 +160,72 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids=["BabyAI-GoToRedBall-v0"]*16 + ["BabyAI-GoToSeqS5R2-v0"]*16 + ["MiniGrid-SimpleCrossingS11N5-v0"]*16 + ["MiniGrid-GoToDoor-8x8-v0"]*16
+    game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
+        full_mdp=True,
+        full_mdp_width=32,
+        full_mdp_height=32,
         record_statistic_dir=f"{experiment_path}/statistics"
     )
 
     random_agent = random_agent.Random_Agent("01")
-    content_size = 32 + 1 + 7 * 7 * 3 # direction + image + mission tokens
+    mission_size = 32
+    content_size = mission_size + 32 * 32 * 3 # image + mission tokens
     if args.scale == "small":
+        history_steps = 0
         hidden_size = 128
         layers = 2
         rollout_length = 128
         minibatch_size = 8
-        position_size = 4
         embedding_dim = 8
     elif args.scale == "medium":
+        history_steps = 0
         hidden_size = 256
         layers = 4
         rollout_length = 256
         minibatch_size = 8
-        position_size = 8
         embedding_dim = 16
     else:  # large
+        history_steps = 0
         hidden_size = 512
         layers = 8
         rollout_length = 256
         minibatch_size = 8
-        position_size = 8
         embedding_dim = 32
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
         int_action_size=6, ext_action_size=7, 
-        position_size=position_size, content_size=content_size,
+        obs_size=content_size-mission_size, goal_size=mission_size,
         dict_size=vocab_size, embedding_dim=embedding_dim,
         hidden_size=hidden_size, layers=layers,
+        history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
         int_action_size=6, ext_action_size=7, 
-        position_size=position_size, content_size=content_size,
+        position_size=mission_size, content_size=content_size,
         output_dims=1,
         dict_size=vocab_size, embedding_dim=embedding_dim,
         hidden_size=hidden_size, layers=layers,
-        history_steps=0, max_temporal_len=32, 
+        history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
+        policy_model=Projector(policy_core, [1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
         aux_coef=0.1 if args.with_auxiliary else None
     )
-    memory = Memory(
-        sizes=(1, position_size, policy_core.content_size),
-        max_slot_size=256
-    )
-    agent = model_53.Model_53(
+    agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,
         trainer=ppo_learner,
-        context_collector=Collector(max_history=0),
-        action_collector=Collector(max_history=0),
-        valid_action_collector=Collector(max_history=0),
-        memory=memory,
-        max_num_thought_steps=args.max_thought_steps,
-        do_supervision=args.with_auxiliary,
-        scheme=model_53.Scheme(args.scheme)
+        context_collector=Collector(max_history=history_steps),
+        action_collector=Collector(max_history=history_steps),
+        valid_action_collector=Collector(max_history=history_steps),
+        do_supervision=args.with_auxiliary
     )
 
     asyncio.run(run(env, agent, rollout_length, verbose=not args.silent))
