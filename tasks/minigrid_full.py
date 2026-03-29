@@ -172,7 +172,7 @@ if __name__ == "__main__":
 
     random_agent = random_agent.Random_Agent("01")
     mission_size = 32
-    content_size = mission_size + 32 * 32 * 3 # image + mission tokens
+    content_size = mission_size + 32 * 32 * 3 # mission tokens + image
     if args.scale == "small":
         history_steps = 0
         hidden_size = 128
@@ -217,7 +217,7 @@ if __name__ == "__main__":
     ppo_learner = PPO(
         policy_model=Projector(policy_core, [1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=0.1 if args.with_auxiliary else None
+        aux_coef=0.5 if args.with_auxiliary else None
     )
     agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,

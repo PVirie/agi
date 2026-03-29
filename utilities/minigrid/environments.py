@@ -4,7 +4,6 @@ import numpy as np
 import os
 import csv
 import time
-from PIL import Image
 
 
 MINIGRID_ACTIONS = [

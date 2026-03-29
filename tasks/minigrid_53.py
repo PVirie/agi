@@ -171,7 +171,7 @@ if __name__ == "__main__":
     )
 
     random_agent = random_agent.Random_Agent("01")
-    content_size = 32 + 1 + 7 * 7 * 3 # direction + image + mission tokens
+    content_size = 32 + 1 + 7 * 7 * 3 # mission tokens + direction + image
     if args.scale == "small":
         hidden_size = 128
         layers = 2
