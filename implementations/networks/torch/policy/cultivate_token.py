@@ -138,7 +138,7 @@ class Policy_Core(Base_Policy_Core):
         action_loss = torch.mean((int_logits - aux_int_logits)**2, dim=-1) + torch.mean((ext_logits - aux_ext_logits)**2, dim=-1)
         # subgoal_logits should not deviate much from last_subgoal_embedded 
         subgoal_loss = torch.mean((subgoal_logits - last_subgoal_embedded)**2, dim=-1)
-        aux_loss = action_loss + 0.1 * subgoal_loss
+        aux_loss = action_loss + 0.2 * subgoal_loss
 
         return int_logits, ext_logits, subgoal_logits, aux_loss
     
