@@ -45,10 +45,11 @@ class Policy_Core(Base_Policy_Core):
         self.packed_context_size = 1 + 1 + 1 + goal_size + self.goal_size + self.obs_size
 
         self.goal_embedding = nn.Embedding(dict_size, embedding_dim)  # for goal token
-
+        self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
+        self.feature_channel = self.channel * 4
         self.conv_layers = ImpalaCNN(
             output_dims=hidden_size, 
-            input_channels=channel, width=width, height=height,
+            input_channels=self.feature_channel, width=width, height=height,
             depths=[16, 32, 32]
         )
 
@@ -85,6 +86,7 @@ class Policy_Core(Base_Policy_Core):
         # Reset parameters of all layers
 
         self.goal_embedding.reset_parameters()
+        self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
 
         self.backbone.reset_parameters()
@@ -121,9 +123,10 @@ class Policy_Core(Base_Policy_Core):
         last_subgoal_embedded = last_subgoal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         goal_embedded = goal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
-
-        obs_features = torch.reshape(obs, (batch_size * context_size, self.channel, self.height, self.width))  # (batch_size * context_size, channel, height, width)
-        obs_features = self.conv_layers(obs_features.float())  # (batch_size * context_size, hidden_size)
+        
+        obs_embedded = self.image_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
+        obs_features = torch.reshape(obs_embedded, (batch_size * context_size, self.feature_channel, self.height, self.width))  # (batch_size * context_size, channel, height, width)
+        obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
         # Base flow

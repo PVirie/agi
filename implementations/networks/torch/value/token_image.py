@@ -45,10 +45,11 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.output_dims = output_dims
 
         self.embedding = nn.Embedding(dict_size, embedding_dim)  # for tokens
-
+        self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
+        self.feature_channel = self.channel * 4
         self.conv_layers = ImpalaCNN(
             output_dims=hidden_size, 
-            input_channels=channel, width=width, height=height,
+            input_channels=self.feature_channel, width=width, height=height,
             depths=[16, 32, 32]
         )
 
@@ -68,6 +69,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
     def reset_parameters(self):
         self.embedding.reset_parameters()
+        self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
         self.backbone.reset_parameters()
 
@@ -96,11 +98,12 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         embedded = embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, content_size * embedding_dim)
 
         # process image content through conv layers
-        image_content = torch.reshape(image_content, (batch_size * context_size, self.channel, self.height, self.width))  # (batch_size * context_size, channel, height, width)
-        conv_features = self.conv_layers(image_content.float())  # (batch_size * context_size, hidden_size)
-        conv_features = conv_features.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, hidden_size)
+        image_embedded = self.image_embedding(image_content.long())  # (batch_size, context_size, image_part_size, embedding_dim)
+        obs_features = torch.reshape(image_embedded, (batch_size * context_size, self.feature_channel, self.height, self.width))  # (batch_size * context_size, channel, height, width)
+        obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
+        obs_features = obs_features.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, hidden_size)
         
-        vec = torch.concat([embedded, conv_features], dim=-1)  # 
+        vec = torch.concat([embedded, obs_features], dim=-1)  # (batch_size, context_size, content_size * embedding_dim + hidden_size)
         features = self.backbone(vec)  # (batch_size, context_size, hidden_size)
         
         values = self.read_out_layers(features)  # (batch_size, context_size, 1)
