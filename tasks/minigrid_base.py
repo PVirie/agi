@@ -29,7 +29,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from implementations.agents import random_agent, model_base
 from implementations.networks.torch.policy.cultivate_token import Policy_Core
 from implementations.networks.torch.policy.base_xy import Projector
-from implementations.networks.torch.value.token import Value_Core
+from implementations.networks.torch.value.token_image import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.collectors.states import State_Sequence as Collector
 
@@ -143,9 +143,9 @@ if __name__ == "__main__":
     logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(20260319)  
-    torch.manual_seed(20260319)
-    np.random.seed(20260319)
+    random.seed(202603129)  
+    torch.manual_seed(20260329)
+    np.random.seed(20260329)
     torch.use_deterministic_algorithms(True)
 
     experiment_path = f"{APP_ROOT}/experiments/minigrid_base"
@@ -161,33 +161,36 @@ if __name__ == "__main__":
     tokenizer.load(f"{experiment_path}/parameters")
 
     # game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
-    game_ids=["BabyAI-GoToRedBall-v0"]*16 + ["BabyAI-GoToSeqS5R2-v0"]*16 + ["MiniGrid-SimpleCrossingS11N5-v0"]*16 + ["MiniGrid-GoToDoor-8x8-v0"]*16
+    game_ids=["BabyAI-Unlock-v0"]*16 + ["BabyAI-GoToSeqS5R2-v0"]*16 + ["MiniGrid-FourRooms-v0"]*16 + ["MiniGrid-ObstructedMaze-Full-v0"]*16
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
-        mission_max_len=32,
+        mission_max_len=12,
+        full_mdp=True,
+        full_mdp_width=22,
+        full_mdp_height=22,
         record_statistic_dir=f"{experiment_path}/statistics"
     )
 
     random_agent = random_agent.Random_Agent("01")
     mission_size = env.mission_max_len
-    content_size = mission_size + 1 + 7 * 7 * 3  # mission tokens + direction + image
+    content_size = mission_size + env.full_mdp_width * env.full_mdp_height * 3 # mission tokens + image
     if args.scale == "small":
-        history_steps = 4
+        history_steps = 0
         hidden_size = 128
         layers = 2
         rollout_length = 128
         minibatch_size = 8
         embedding_dim = 8
     elif args.scale == "medium":
-        history_steps = 4
+        history_steps = 0
         hidden_size = 256
         layers = 4
         rollout_length = 256
         minibatch_size = 8
         embedding_dim = 16
     else:  # large
-        history_steps = 4
+        history_steps = 0
         hidden_size = 512
         layers = 8
         rollout_length = 256
@@ -198,17 +201,20 @@ if __name__ == "__main__":
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
         int_action_size=6, ext_action_size=7, 
-        obs_size=content_size-mission_size, goal_size=mission_size,
+        goal_size=mission_size,
         dict_size=vocab_size, embedding_dim=embedding_dim,
+        width=env.full_mdp_width, height=env.full_mdp_height, channel=3,
         hidden_size=hidden_size, layers=layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
         int_action_size=6, ext_action_size=7, 
-        position_size=mission_size, content_size=content_size,
+        position_size=mission_size,
         output_dims=1,
+        token_part_size=mission_size,
         dict_size=vocab_size, embedding_dim=embedding_dim,
+        width=env.full_mdp_width, height=env.full_mdp_height, channel=3,
         hidden_size=hidden_size, layers=layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path

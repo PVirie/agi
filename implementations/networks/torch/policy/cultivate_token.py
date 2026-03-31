@@ -9,6 +9,7 @@ import logging
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
+from implementations.networks.torch.components.std_conv import ImpalaCNN
 from implementations.networks.torch.policy.base_token import Policy_Core as Base_Policy_Core
 from utilities.safe_torch_module import Safe_nn_Module
 
@@ -17,8 +18,9 @@ class Policy_Core(Base_Policy_Core):
 
     def __init__(self, 
                  int_action_size, ext_action_size, 
-                 obs_size, goal_size,
+                 goal_size,
                  dict_size, embedding_dim,
+                 width, height, channel,
                  hidden_size, layers, 
                  history_steps=0, max_temporal_len=32, 
                  device=None, 
@@ -27,25 +29,33 @@ class Policy_Core(Base_Policy_Core):
         Safe_nn_Module.__init__(self, name="base_token_core", device=device, persistence_path=persistence_path)
         self.device = device
 
-        self.int_action_size = int_action_size  # num classes for flag
-        self.ext_action_size = ext_action_size
-        self.position_size = goal_size # use position to store sub-goal information
-        self.content_size = goal_size + obs_size
-        self.packed_action_size = 1 + 1 + goal_size + goal_size + obs_size
-        self.packed_context_size = 1 + 1 + 1 + goal_size + goal_size + obs_size
+        self.width = width
+        self.height = height
+        self.channel = channel
 
         self.goal_size = goal_size
-        self.obs_size = obs_size
+        self.obs_size = width * height * channel
         self.hidden_size = hidden_size
 
-        self.goal_embedding = nn.Embedding(dict_size, embedding_dim)  # for goal token
-        self.obs_embedding = nn.Embedding(dict_size, embedding_dim)  # for obs token
+        self.int_action_size = int_action_size  # num classes for flag
+        self.ext_action_size = ext_action_size
+        self.position_size = self.goal_size # use position to store sub-goal information
+        self.content_size = self.goal_size + self.obs_size
+        self.packed_action_size = 1 + 1 + goal_size + self.goal_size + self.obs_size
+        self.packed_context_size = 1 + 1 + 1 + goal_size + self.goal_size + self.obs_size
 
-        predict_input_dim = (goal_size + obs_size) * embedding_dim # goal, obs -> hidden
+        self.goal_embedding = nn.Embedding(dict_size, embedding_dim)  # for goal token
+
+        self.conv_layers = ImpalaCNN(
+            output_dims=hidden_size, 
+            input_channels=channel, width=width, height=height,
+            depths=[16, 32, 32]
+        )
+
+        predict_input_dim = goal_size * embedding_dim + hidden_size  # goal, obs -> hidden
         self.backbone = ResNet(output_dims=hidden_size, input_dims=predict_input_dim, hidden_dims=hidden_size, layers=layers)
 
-        evaluate_input_dim = (obs_size) * embedding_dim
-        self.evaluator = ResNet(output_dims=obs_size * embedding_dim, input_dims=evaluate_input_dim, hidden_dims=hidden_size, layers=layers)
+        self.evaluator = ResNet(output_dims=hidden_size, input_dims=hidden_size, hidden_dims=hidden_size, layers=layers)
 
         # hidden -> action
         self.head_int = nn.Sequential(
@@ -75,7 +85,7 @@ class Policy_Core(Base_Policy_Core):
         # Reset parameters of all layers
 
         self.goal_embedding.reset_parameters()
-        self.obs_embedding.reset_parameters()
+        self.conv_layers.reset_parameters()
 
         self.backbone.reset_parameters()
         self.evaluator.reset_parameters()
@@ -111,25 +121,31 @@ class Policy_Core(Base_Policy_Core):
         last_subgoal_embedded = last_subgoal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         goal_embedded = goal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
-        obs_embedded = self.obs_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
-        obs_embedded = obs_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, obs_size * embedding_dim)
 
-        base_input = torch.concat([goal_embedded, obs_embedded], dim=-1)  # (batch_size, context_size, (goal_size + obs_size) * embedding_dim)
+        obs_features = torch.reshape(obs, (batch_size * context_size, self.channel, self.height, self.width))  # (batch_size * context_size, channel, height, width)
+        obs_features = self.conv_layers(obs_features.float())  # (batch_size * context_size, hidden_size)
+        obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
+
+        # Base flow
+
+        base_input = torch.concat([goal_embedded, obs_features], dim=-1)  # (batch_size, context_size, (goal_size * embedding_dim + hidden_size))
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
-
-        lwlv_input = torch.concat([last_subgoal_embedded, obs_embedded], dim=-1)  # (batch_size, context_size, (goal_size + obs_size) * embedding_dim)
-        lwlv_output = self.backbone(lwlv_input)  # (batch_size, context_size, hidden_size)
-
-        lw_eval_input = obs_embedded  # (batch_size, context_size, obs_size * embedding_dim)
-        lw_result = self.evaluator(lw_eval_input)  # (batch_size, context_size, obs_size * embedding_dim)
-
-        sub_input = torch.concat([goal_embedded, lw_result], dim=-1)  # (batch_size, context_size, (goal_size + obs_size) * embedding_dim)
-        sub_output = self.backbone(sub_input)  # (batch_size, context_size, hidden_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
         ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
         
+        # Cultivate flow
+
+        lw_eval_input = obs_features  # (batch_size, context_size, obs_size)
+        lw_result = self.evaluator(lw_eval_input)  # (batch_size, context_size, hidden_size)
+
+        sub_input = torch.concat([goal_embedded, lw_result], dim=-1)  # (batch_size, context_size, (goal_size * embedding_dim + hidden_size))
+        sub_output = self.backbone(sub_input)  # (batch_size, context_size, hidden_size)
+
         subgoal_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, goal_size * embedding_dim)
+
+        lwlv_input = torch.concat([subgoal_logits, obs_features], dim=-1)  # (batch_size, context_size, (goal_size * embedding_dim + hidden_size))
+        lwlv_output = self.backbone(lwlv_input)  # (batch_size, context_size, hidden_size)
 
         aux_int_logits = self.head_int(lwlv_output)  # (batch_size, context_size, int_action_size)
         aux_ext_logits = self.head_ext(lwlv_output)  # (batch_size, context_size, ext_action_size)
