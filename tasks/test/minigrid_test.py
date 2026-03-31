@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-from PIL import Image
 import numpy as np
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -12,14 +11,24 @@ from utilities.package_install import install
 
 install("minigrid")
 install("gymnasium[other]")
+install("pillow")
+
+from PIL import Image
 
 from utilities.minigrid.environments import Multi_Environment
+from utilities.minigrid import constants
 from utilities.tokenizer import Text_Tokenizer
+
+tokenizer = Text_Tokenizer(max_vocab_size=100)
 
 # Create a vector environment with 4 parallel instances of Breakout
 envs = Multi_Environment(
-    game_ids=["BabyAI-GoToRedBall-v0", "BabyAI-GoToSeqS5R2-v0", "MiniGrid-SimpleCrossingS11N5-v0", "MiniGrid-GoToDoor-8x8-v0"],
-    tokenizer=Text_Tokenizer(max_vocab_size=100)
+    game_ids=["BabyAI-Unlock-v0", "BabyAI-GoToSeqS5R2-v0", "MiniGrid-FourRooms-v0", "MiniGrid-ObstructedMaze-Full-v0"],
+    mission_max_len=12,
+    full_mdp=True,
+    full_mdp_width=22,
+    full_mdp_height=22,
+    tokenizer=tokenizer
 )
 
 # Reset all environments
@@ -43,9 +52,24 @@ print(f"Throughput: {total_steps / elapsed_time:.2f} steps/second")
 artifacts_path = f"{APP_ROOT}/log"
 os.makedirs(artifacts_path, exist_ok=True)
 for i, obs in enumerate(observations):
-    frame = obs[1:1 + 7 * 7 * 3].reshape((7, 7, 3)).astype(np.uint8)
+    mission = obs[:envs.mission_max_len]
+    # decode mission
+    mission_text = tokenizer.decode(mission)
+    print(f"Environment {i} Mission: {mission_text}")
+
+    frame = obs[envs.mission_max_len:].reshape((envs.full_mdp_height, envs.full_mdp_width, 3)).astype(np.uint8)
+    # convert frame to color using IDX_TO_COLOR and gather
+    color_indices = frame[..., 1]
+    # map color indices to RGB using constants.IDX_TO_COLOR
+    color_frame = np.zeros((frame.shape[0], frame.shape[1], 3), dtype=np.uint8)
+    for color_idx, color in constants.IDX_TO_COLOR.items():
+        color_frame[color_indices == color_idx] = constants.COLORS[color]
+    frame = color_frame
+
     for j in range(frame.shape[0]):
-        img = Image.fromarray(frame[j, ...], mode='L')  # 'L' mode for grayscale
+        img = Image.fromarray(frame, mode='RGB')
+        # resize image four times
+        img = img.resize((img.width * 4, img.height * 4), resample=Image.NEAREST)
         img.save(f"{artifacts_path}/env_{i}_{j}.png")
 
 # Close the environment when done

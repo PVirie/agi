@@ -15,12 +15,14 @@ class Multi_Environment:
     def __init__(self, 
         game_ids,
         tokenizer,
+        mission_max_len=32,
         full_mdp=False,
         full_mdp_width=64,
         full_mdp_height=64,
         record_statistic_dir=None
         ):
 
+        self.mission_max_len = mission_max_len
         self.full_mdp = full_mdp
         self.full_mdp_width = full_mdp_width
         self.full_mdp_height = full_mdp_height
@@ -195,33 +197,37 @@ class Multi_Environment:
         self.total_duration = None
 
 
-    def obs_to_object(self, obs, mission_max_len=32):
+    def obs_to_object(self, obs):
         mission = obs['mission']  # string
         mission_tokens = np.array(self.tokenizer([mission])[0], dtype=np.int32)
         # now padd to mission_max_len
-        if len(mission_tokens) > mission_max_len:
-            mission_tokens = mission_tokens[:mission_max_len]
+        if len(mission_tokens) > self.mission_max_len:
+            mission_tokens = mission_tokens[:self.mission_max_len]
         else:
-            mission_tokens = np.pad(mission_tokens, (0, mission_max_len - len(mission_tokens)), constant_values=self.tokenizer.pad_token_id)
+            mission_tokens = np.pad(mission_tokens, (0, self.mission_max_len - len(mission_tokens)), constant_values=self.tokenizer.pad_token_id)
             
         if self.full_mdp:
             # obs is a dict with keys: 'image', 'mission'
+            # output (mission, image) as a flat array
+            # where image is padded to the top left corner of a full_mdp_width x full_mdp_height x 3 array, 
+            # and the rest is 0, then flattened and concatenated with mission tokens
             image = obs['image']  # shape (h, w, 3)
             
             # pad image to top left corner of a full_mdp_width x full_mdp_height x 3 array, and the rest is 0, then flatten it and concatenate with mission tokens
             image_padded = np.zeros((self.full_mdp_width, self.full_mdp_height, 3), dtype=np.uint8)
             h, w, _ = image.shape
             image_padded[:h, :w, :] = image
-            output = np.zeros((mission_max_len + (self.full_mdp_width * self.full_mdp_height * 3),), dtype=np.int32)
-            output[:mission_max_len] = mission_tokens
-            output[mission_max_len:] = image_padded.flatten()
+            output = np.zeros((self.mission_max_len + (self.full_mdp_width * self.full_mdp_height * 3),), dtype=np.int32)
+            output[:self.mission_max_len] = mission_tokens
+            output[self.mission_max_len:] = image_padded.flatten()
         else:
             # obs is a dict with keys: 'image', 'mission', 'direction'
+            # output (mission, direction, image) as a flat array
             direction = obs['direction']  # scalar in [0, 3]
             image = obs['image']  # shape (7, 7, 3)
 
-            output = np.zeros((mission_max_len + 1 + (7 * 7 * 3),), dtype=np.int32)
+            output = np.zeros((self.mission_max_len + 1 + (7 * 7 * 3),), dtype=np.int32)
             output[0] = direction
-            output[1:1 + mission_max_len] = mission_tokens
-            output[1 + mission_max_len:] = image.flatten()
+            output[1:1 + self.mission_max_len] = mission_tokens
+            output[1 + self.mission_max_len:] = image.flatten()
         return output

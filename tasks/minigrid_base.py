@@ -165,11 +165,12 @@ if __name__ == "__main__":
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
+        mission_max_len=32,
         record_statistic_dir=f"{experiment_path}/statistics"
     )
 
     random_agent = random_agent.Random_Agent("01")
-    mission_size = 32
+    mission_size = env.mission_max_len
     content_size = mission_size + 1 + 7 * 7 * 3  # mission tokens + direction + image
     if args.scale == "small":
         history_steps = 4

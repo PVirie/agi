@@ -160,19 +160,21 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
+    # game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
+    game_ids=["BabyAI-Unlock-v0"]*16 + ["BabyAI-GoToSeqS5R2-v0"]*16 + ["MiniGrid-FourRooms-v0"]*16 + ["MiniGrid-ObstructedMaze-Full-v0"]*16
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
+        mission_max_len=32,
         full_mdp=True,
-        full_mdp_width=32,
-        full_mdp_height=32,
+        full_mdp_width=22,
+        full_mdp_height=22,
         record_statistic_dir=f"{experiment_path}/statistics"
     )
 
     random_agent = random_agent.Random_Agent("01")
-    mission_size = 32
-    content_size = mission_size + 32 * 32 * 3 # mission tokens + image
+    mission_size = env.mission_max_len
+    content_size = mission_size + env.self.full_mdp_width * env.full_mdp_height * 3 # mission tokens + image
     if args.scale == "small":
         history_steps = 0
         hidden_size = 128

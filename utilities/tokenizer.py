@@ -60,4 +60,9 @@ class Text_Tokenizer:
     def __call__(self, texts):
         texts = list(map(self._tokenize, texts))
         return texts
+    
+    
+    def decode(self, token_ids):
+        words = [self.id2word[token_id] if token_id < len(self.id2word) else "<UNK>" for token_id in token_ids]
+        return " ".join(words)
 
