@@ -57,7 +57,10 @@ for i, obs in enumerate(observations):
     mission_text = tokenizer.decode(mission)
     print(f"Environment {i} Mission: {mission_text}")
 
-    frame = obs[envs.mission_max_len:].reshape((envs.full_mdp_height, envs.full_mdp_width, 3)).astype(np.uint8)
+    frame = obs[envs.mission_max_len:].reshape((3, envs.full_mdp_height, envs.full_mdp_width)).astype(np.uint8)
+    # transpose to channel last
+    frame = frame.transpose(1, 2, 0)  # shape (full_mdp_height, full_mdp_width, 3)
+    
     # convert frame to color using IDX_TO_COLOR and gather
     color_indices = frame[..., 1]
     # map color indices to RGB using constants.IDX_TO_COLOR
