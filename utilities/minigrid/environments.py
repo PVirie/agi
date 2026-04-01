@@ -217,8 +217,6 @@ class Multi_Environment:
             image_padded = np.zeros((self.full_mdp_width, self.full_mdp_height, 3), dtype=np.uint8)
             h, w, _ = image.shape
             image_padded[:h, :w, :] = image
-            # transpose to channel first
-            image_padded = image_padded.transpose(2, 0, 1)  # shape (3, full_mdp_width, full_mdp_height)
 
             output = np.zeros((self.mission_max_len + (self.full_mdp_width * self.full_mdp_height * 3),), dtype=np.int32)
             output[:self.mission_max_len] = mission_tokens
@@ -228,8 +226,6 @@ class Multi_Environment:
             # output (mission, direction, image) as a flat array
             direction = obs['direction']  # scalar in [0, 3]
             image = obs['image']  # shape (7, 7, 3)
-            # transpose to channel first
-            image = image.transpose(2, 0, 1)  # shape (3, 7, 7)
 
             output = np.zeros((self.mission_max_len + 1 + (7 * 7 * 3),), dtype=np.int32)
             output[0] = direction

@@ -125,7 +125,8 @@ class Policy_Core(Base_Policy_Core):
         goal_embedded = goal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
         
         obs_embedded = self.image_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
-        obs_features = torch.reshape(obs_embedded, (batch_size * context_size, self.feature_channel, self.height, self.width))  # (batch_size * context_size, channel, height, width)
+        obs_features = torch.reshape(obs_embedded, (batch_size * context_size, self.height, self.width, self.feature_channel))  # (batch_size * context_size, height, width, channel * embedding_dim)
+        obs_features = obs_features.permute(0, 3, 1, 2)  # (batch_size * context_size, channel * embedding_dim, height, width)
         obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
