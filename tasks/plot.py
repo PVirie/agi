@@ -3,15 +3,15 @@ import sys
 import logging
 from datetime import datetime
 import argparse
-import csv
-
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-
 from tkinter import filedialog
 import matplotlib.pyplot as plt
 from matplotlib import lines, markers
 from cycler import cycler
 import tkinter as tk
+
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+from utilities import compact_csv as csv
 
 
 def open_file_dialog():
@@ -88,7 +88,7 @@ def parse_statistic_file(file_path, aggregate_steps=1000):
     """
 
     game_data = {}
-    with open(file_path, 'r') as f:
+    with open(file_path, 'rb') as f:
         reader = csv.reader(f)
         header = next(reader)
 

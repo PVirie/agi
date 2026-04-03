@@ -2,8 +2,8 @@ import gymnasium as gym
 from minigrid.wrappers import FullyObsWrapper
 import numpy as np
 import os
-import csv
 import time
+from .. import compact_csv as csv
 
 
 MINIGRID_ACTIONS = [
@@ -92,14 +92,14 @@ class Multi_Environment:
             # create a csv file for each env
             stat_file_name = os.path.join(self.record_statistic_dir, f"episode_statistics.csv")
             if not os.path.exists(stat_file_name):
-                with open(stat_file_name, mode='w', newline='') as stat_file:
+                with open(stat_file_name, mode='wb') as stat_file:
                     writer = csv.writer(stat_file)
                     header = []
                     for gid in self.game_ids:
                         header.extend([f"{gid}/return", f"{gid}/length", f"{gid}/time"])
                     writer.writerow(header)
             # append new stats
-            with open(stat_file_name, mode='a', newline='') as stat_file:
+            with open(stat_file_name, mode='ab') as stat_file:
                 writer = csv.writer(stat_file)
                 for i in range(len(self.batch_episode_returns[0])): # assuming all batches have same number of episodes
                     row = []
