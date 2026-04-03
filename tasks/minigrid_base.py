@@ -161,14 +161,14 @@ if __name__ == "__main__":
     tokenizer.load(f"{experiment_path}/parameters")
 
     # game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
-    game_ids=["BabyAI-Unlock-v0"]*16 + ["BabyAI-GoToSeqS5R2-v0"]*16 + ["MiniGrid-FourRooms-v0"]*16 + ["MiniGrid-ObstructedMaze-Full-v0"]*16
+    game_ids=["BabyAI-GoToLocalS8N7-v0"]*64 + ["BabyAI-PickupDistDebug-v0"]*64 + ["BabyAI-PutNextLocalS6N4-v0"]*64 + ["BabyAI-MiniBossLevel-v0"]*64
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
-        mission_max_len=12,
+        mission_max_len=16,
         full_mdp=True,
-        full_mdp_width=22,
-        full_mdp_height=22,
+        full_mdp_width=10,
+        full_mdp_height=10,
         record_statistic_dir=f"{experiment_path}/statistics"
     )
 
