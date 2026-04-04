@@ -178,21 +178,21 @@ if __name__ == "__main__":
     content_size = mission_size + inventory_size + env.full_mdp_width * env.full_mdp_height * 3 # mission tokens + image
     if args.scale == "small":
         history_steps = 0
-        hidden_size = 32
+        hidden_size = 128
         layers = 2
         rollout_length = 128
         minibatch_size = 32
         embedding_dim = 16
     elif args.scale == "medium":
         history_steps = 0
-        hidden_size = 64
+        hidden_size = 256
         layers = 4
         rollout_length = 256
         minibatch_size = 32
         embedding_dim = 32
     else:  # large
         history_steps = 0
-        hidden_size = 128
+        hidden_size = 512
         layers = 4
         rollout_length = 256
         minibatch_size = 32
