@@ -161,7 +161,7 @@ if __name__ == "__main__":
     tokenizer.load(f"{experiment_path}/parameters")
 
     # game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
-    game_ids=["BabyAI-GoToLocalS8N7-v0"]*64 + ["BabyAI-PickupDistDebug-v0"]*64 + ["BabyAI-PutNextLocalS6N4-v0"]*64 + ["BabyAI-MiniBossLevel-v0"]*64
+    game_ids=["BabyAI-GoToLocalS8N7-v0"]*16 + ["BabyAI-PickupDistDebug-v0"]*16 + ["BabyAI-PutNextLocalS6N4-v0"]*16 + ["BabyAI-MiniBossLevel-v0"]*16
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -177,24 +177,24 @@ if __name__ == "__main__":
     content_size = mission_size + env.full_mdp_width * env.full_mdp_height * 3 # mission tokens + image
     if args.scale == "small":
         history_steps = 0
-        hidden_size = 128
+        hidden_size = 32
         layers = 2
         rollout_length = 128
-        minibatch_size = 8
-        embedding_dim = 8
+        minibatch_size = 32
+        embedding_dim = 16
     elif args.scale == "medium":
         history_steps = 0
-        hidden_size = 256
+        hidden_size = 64
         layers = 4
         rollout_length = 256
-        minibatch_size = 8
-        embedding_dim = 16
+        minibatch_size = 32
+        embedding_dim = 32
     else:  # large
         history_steps = 0
-        hidden_size = 512
-        layers = 8
+        hidden_size = 128
+        layers = 4
         rollout_length = 256
-        minibatch_size = 8
+        minibatch_size = 32
         embedding_dim = 32
 
     parameters_path = f"{experiment_path}/parameters"

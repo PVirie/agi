@@ -35,8 +35,8 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.output_dims = output_dims
 
         self.embedding = nn.Embedding(dict_size, embedding_dim)  # for tokens
-        # vec_dim = 1 + ext_action_size + self.position_size + content_size * embedding_dim
-        vec_dim = content_size * embedding_dim
+        # vec_dim = 1 + ext_action_size + self.position_size + embedding_dim
+        vec_dim = embedding_dim
         self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
 
         self.read_out_layers = nn.Sequential(
@@ -75,10 +75,10 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         content = context[:, :, (1 + 1 + self.output_dims + self.position_size): ]  # (batch_size, context_size, content_size)
         
         embedded = self.embedding(content.long())  # (batch_size, context_size, packed_context_size, embedding_dim)
-        embedded = embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, content_size * embedding_dim)
+        embedded = torch.sum(embedded, dim=2)  # sum over content_size to get (batch_size, context_size, embedding_dim)
         
-        # vec = torch.concat([reward, action_onehot, last_position, embedded], dim=-1)  # (batch_size, context_size, 1 + ext_action_size + position_size + content_size * embedding_dim)
-        vec = embedded  # (batch_size, context_size, content_size * embedding_dim)
+        # vec = torch.concat([reward, action_onehot, last_position, embedded], dim=-1)  # (batch_size, context_size, 1 + ext_action_size + position_size + embedding_dim)
+        vec = embedded  # (batch_size, context_size, embedding_dim)
         features = self.backbone(vec)  # (batch_size, context_size, hidden_size)
         
         values = self.read_out_layers(features)  # (batch_size, context_size, 1)

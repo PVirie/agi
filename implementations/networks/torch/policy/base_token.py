@@ -37,7 +37,7 @@ class Policy_Core(Base_Policy_Core):
 
         self.embedding = nn.Embedding(dict_size, embedding_dim)  # for tokens
         
-        vec_dim = self.int_action_size + ext_action_size + position_size + content_size * embedding_dim
+        vec_dim = self.int_action_size + ext_action_size + position_size + embedding_dim
         self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
 
         self.head_int = nn.Sequential(
@@ -93,9 +93,9 @@ class Policy_Core(Base_Policy_Core):
         content = context[:, :, (1 + 1 + 1 + self.position_size): ]  # (batch_size, context_size, content_size)
 
         embedded = self.embedding(content.long())  # (batch_size, context_size, content_size, embedding_dim)
-        embedded = embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, content_size * embedding_dim)
+        embedded = torch.sum(embedded, dim=2)  # sum over content_size to get (batch_size, context_size, embedding_dim)
 
-        vec = torch.concat([flag_onehot, action_onehot, last_position, embedded], dim=-1)  # (batch_size, context_size, int_action_size + ext_action_size + position_size + content_size * embedding_dim)
+        vec = torch.concat([flag_onehot, action_onehot, last_position, embedded], dim=-1)  # (batch_size, context_size, int_action_size + ext_action_size + position_size + embedding_dim)
         backbone_output = self.backbone(vec)  # (batch_size, context_size, hidden_size)
         
         int_logits = self.head_int(backbone_output)  # (batch_size, context_size, int_action_size)
