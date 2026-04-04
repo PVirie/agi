@@ -18,7 +18,7 @@ class Policy_Core(Base_Policy_Core):
 
     def __init__(self, 
                  int_action_size, ext_action_size, 
-                 goal_size,
+                 goal_size, inventory_size,
                  dict_size, embedding_dim,
                  width, height, channel,
                  hidden_size, layers, 
@@ -34,15 +34,16 @@ class Policy_Core(Base_Policy_Core):
         self.channel = channel
 
         self.goal_size = goal_size
+        self.inventory_size = inventory_size
         self.obs_size = width * height * channel
         self.hidden_size = hidden_size
 
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
         self.position_size = self.goal_size # use position to store sub-goal information
-        self.content_size = self.goal_size + self.obs_size
-        self.packed_action_size = 1 + 1 + goal_size + self.goal_size + self.obs_size
-        self.packed_context_size = 1 + 1 + 1 + goal_size + self.goal_size + self.obs_size
+        self.content_size = self.goal_size + self.inventory_size + self.obs_size
+        self.packed_action_size = 1 + 1 + self.position_size + self.content_size
+        self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
 
         self.goal_embedding = nn.Embedding(dict_size, embedding_dim)  # for goal token
         self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
@@ -53,10 +54,19 @@ class Policy_Core(Base_Policy_Core):
             depths=[16, 32, 32]
         )
 
-        predict_input_dim = embedding_dim + hidden_size  # goal, obs -> hidden
-        self.backbone = ResNet(output_dims=hidden_size, input_dims=predict_input_dim, hidden_dims=hidden_size, layers=layers)
+        predict_input_dim = embedding_dim + embedding_dim + hidden_size  # goal, inv, obs -> hidden
+        self.backbone = ResNet(
+            output_dims=hidden_size, 
+            input_dims=predict_input_dim, 
+            hidden_dims=hidden_size, 
+            layers=layers
+        )
 
-        self.evaluator = ResNet(output_dims=hidden_size, input_dims=hidden_size, hidden_dims=hidden_size, layers=layers)
+        self.evaluator = ResNet(
+            output_dims=embedding_dim + hidden_size, 
+            input_dims=embedding_dim + hidden_size, 
+            hidden_dims=hidden_size, layers=layers
+        ) # inv, obs -> embedding + hidden
 
         # hidden -> action
         self.head_int = nn.Sequential(
@@ -117,12 +127,15 @@ class Policy_Core(Base_Policy_Core):
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         last_subgoal = context[:, :, (1 + 1 + 1): (1 + 1 + 1 + self.position_size)]  # (batch_size, context_size, goal_size)
         goal = context[:, :, (1 + 1 + 1 + self.position_size): (1 + 1 + 1 + self.position_size + self.goal_size)]  # (batch_size, context_size, goal_size)
-        obs = context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size): ]  # (batch_size, context_size, obs_size)
+        inv = context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size): (1 + 1 + 1 + self.position_size + self.goal_size + self.inventory_size)]  # (batch_size, context_size, inventory_size)
+        obs = context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size + self.inventory_size): ]  # (batch_size, context_size, obs_size)
 
         last_subgoal_embedded = self.goal_embedding(last_subgoal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         last_subgoal_embedded = torch.sum(last_subgoal_embedded, dim=2)  # sum over goal_size to get (batch_size, context_size, embedding_dim)
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         goal_embedded = torch.sum(goal_embedded, dim=2)  # sum over goal_size to get (batch_size, context_size, embedding_dim)
+        inv_embedded = self.goal_embedding(inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
+        inv_embedded = torch.sum(inv_embedded, dim=2)  # sum over
         
         obs_embedded = self.image_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
         obs_features = torch.reshape(obs_embedded, (batch_size * context_size, self.height, self.width, self.feature_channel))  # (batch_size * context_size, height, width, channel * embedding_dim)
@@ -132,7 +145,7 @@ class Policy_Core(Base_Policy_Core):
 
         # Base flow
 
-        base_input = torch.concat([goal_embedded, obs_features], dim=-1)  # (batch_size, context_size, (embedding_dim + hidden_size))
+        base_input = torch.concat([goal_embedded, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, (embedding_dim + embedding_dim + hidden_size))
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
@@ -140,15 +153,15 @@ class Policy_Core(Base_Policy_Core):
         
         # Cultivate flow
 
-        lw_eval_input = obs_features  # (batch_size, context_size, obs_size)
-        lw_result = self.evaluator(lw_eval_input)  # (batch_size, context_size, hidden_size)
+        lw_eval_input = torch.concat([inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, (embedding_dim + hidden_size))
+        lw_result = self.evaluator(lw_eval_input)  # (batch_size, context_size, embedding_dim + hidden_size)
 
-        sub_input = torch.concat([goal_embedded, lw_result], dim=-1)  # (batch_size, context_size, (embedding_dim + hidden_size))
+        sub_input = torch.concat([goal_embedded, lw_result], dim=-1)  # (batch_size, context_size, (embedding_dim + embedding_dim + hidden_size))
         sub_output = self.backbone(sub_input)  # (batch_size, context_size, hidden_size)
 
         subgoal_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, embedding_dim)
 
-        lwlv_input = torch.concat([subgoal_logits, obs_features], dim=-1)  # (batch_size, context_size, (embedding_dim + hidden_size))
+        lwlv_input = torch.concat([subgoal_logits, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, (embedding_dim + embedding_dim + hidden_size))
         lwlv_output = self.backbone(lwlv_input)  # (batch_size, context_size, hidden_size)
 
         aux_int_logits = self.head_int(lwlv_output)  # (batch_size, context_size, int_action_size)
