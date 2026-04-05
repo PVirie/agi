@@ -211,6 +211,7 @@ if __name__ == "__main__":
     ).to(device)
     value_core = Value_Core(
         int_action_size=6, ext_action_size=7, 
+        # position_size=mission_size + 2,  # subgoal + alpha + nu
         position_size=mission_size,
         output_dims=1,
         token_part_size=mission_size + inventory_size,  # mission tokens + inventory tokens

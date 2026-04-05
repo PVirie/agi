@@ -2,10 +2,11 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name        | Description                                 |
-| ---------- | ----------------- | ------------------------------------------- |
-| LIII       | Cognitive algebra | A learnable computationally universal model |
-| LXIII      | Mem Ops           | Mk. 53 with full memory operations          |
+| Generation | Model Name        | Description                                                                      |
+| ---------- | ----------------- | -------------------------------------------------------------------------------- |
+| LIII       | Cognitive algebra | A learnable computationally universal model                                      |
+| LXIII      | Mem Ops           | Mk. 53 with full memory operations                                               |
+| LXX        | $\alpha\nu$       | Mk. 70 Cultivate On-policy Hindsight Abstraction with $\alpha$ and $\nu$ factors |
 
 ## Prerequisites
 
@@ -116,9 +117,9 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] Model 64: Dualism
 - [x] Model 68: Mem Hierarchy
 - [x] minigrid environment
+    - [x] full MDP
 - [x] MAMBA
-- [ ] Cultivate Hierarchy
-    - [x] Minigrid full MDP
+- [ ] Model 70: $\alpha\nu$
     - [ ] Sub-task flag (alpha factor)
-    - [ ] Return propagation by sub-goal difference (gamma factor)
+    - [ ] Return propagation by sub-goal difference (nu factor)
 - [ ] A real world environment (required for pretigious conference publication, but not necessary for the project itself)
