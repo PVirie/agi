@@ -1,8 +1,5 @@
 import torch
 import torch.nn as nn
-from torch.distributions.normal import Normal
-from torch.distributions.categorical import Categorical
-from torch.distributions import Bernoulli
 import numpy as np
 import logging
 
@@ -40,7 +37,7 @@ class Policy_Core(Base_Policy_Core):
 
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
-        self.position_size = self.goal_size # use position to store sub-goal information
+        self.position_size = self.inventory_size + self.obs_size # position part includes inventory and image features for last high-level 
         self.content_size = self.goal_size + self.inventory_size + self.obs_size
         self.packed_action_size = 1 + 1 + self.position_size + self.content_size
         self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
@@ -54,7 +51,8 @@ class Policy_Core(Base_Policy_Core):
             depths=[16, 32, 32]
         )
 
-        predict_input_dim = goal_size * embedding_dim + inventory_size * embedding_dim + hidden_size  # goal, inv, obs -> hidden
+        # goal, inv, obs -> hidden
+        predict_input_dim = goal_size * embedding_dim + inventory_size * embedding_dim + hidden_size
         self.backbone = ResNet(
             output_dims=hidden_size, 
             input_dims=predict_input_dim, 
@@ -62,11 +60,19 @@ class Policy_Core(Base_Policy_Core):
             layers=layers
         )
 
-        self.evaluator = ResNet(
+        # inv, obs -> embedding + hidden
+        self.abstractor = ResNet(
             output_dims=inventory_size * embedding_dim + hidden_size, 
             input_dims=inventory_size * embedding_dim + hidden_size, 
             hidden_dims=hidden_size, layers=layers
-        ) # inv, obs -> embedding + hidden
+        )
+
+        # nu: goal, inv, obs -> [0, 1]
+        self.nu_predictor = ResNet(
+            output_dims=1, 
+            input_dims=predict_input_dim, 
+            hidden_dims=hidden_size, layers=layers
+        )
 
         # hidden -> action
         self.head_int = nn.Sequential(
@@ -100,7 +106,8 @@ class Policy_Core(Base_Policy_Core):
         self.conv_layers.reset_parameters()
 
         self.backbone.reset_parameters()
-        self.evaluator.reset_parameters()
+        self.abstractor.reset_parameters()
+        self.nu_predictor.reset_parameters()
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -125,13 +132,21 @@ class Policy_Core(Base_Policy_Core):
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
-        last_subgoal = context[:, :, (1 + 1 + 1): (1 + 1 + 1 + self.position_size)]  # (batch_size, context_size, goal_size)
+        last_hlv_inv = context[:, :, (1 + 1 + 1): (1 + 1 + 1 + self.inventory_size)]  # (batch_size, context_size, goal_size)
+        last_hlv_obs = context[:, :, (1 + 1 + 1 + self.inventory_size): (1 + 1 + 1 + self.position_size)]  # (batch_size, context_size, goal_size)
         goal = context[:, :, (1 + 1 + 1 + self.position_size): (1 + 1 + 1 + self.position_size + self.goal_size)]  # (batch_size, context_size, goal_size)
         inv = context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size): (1 + 1 + 1 + self.position_size + self.goal_size + self.inventory_size)]  # (batch_size, context_size, inventory_size)
         obs = context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size + self.inventory_size): ]  # (batch_size, context_size, obs_size)
 
-        last_subgoal_embedded = self.goal_embedding(last_subgoal.long())  # (batch_size, context_size, goal_size, embedding_dim)
-        last_subgoal_embedded = last_subgoal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
+        last_hlv_embedded = self.goal_embedding(last_hlv_inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
+        last_hlv_embedded = last_hlv_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, inventory_size * embedding_dim)
+
+        last_hlv_obs_embedded = self.image_embedding(last_hlv_obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
+        last_hlv_obs_features = torch.reshape(last_hlv_obs_embedded, (batch_size * context_size, self.height, self.width, self.feature_channel))  # (batch_size * context_size, height, width, channel * embedding_dim)
+        last_hlv_obs_features = last_hlv_obs_features.permute(0, 3, 1, 2)  # (batch_size * context_size, channel * embedding_dim, height, width)
+        last_hlv_obs_features = self.conv_layers(last_hlv_obs_features)  # (batch_size * context_size, hidden_size)
+        last_hlv_obs_features = last_hlv_obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
+
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         goal_embedded = goal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
         inv_embedded = self.goal_embedding(inv.long())  # (batch_size, context_size, inventory_size, inv_size * embedding_dim)
@@ -152,11 +167,10 @@ class Policy_Core(Base_Policy_Core):
         ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
         
         # Cultivate flow
+        last_hlv = torch.concat([last_hlv_embedded, last_hlv_obs_features], dim=-1)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
+        last_lw_abstraction = self.abstractor(last_hlv)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
 
-        lw_eval_input = torch.concat([inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
-        lw_result = self.evaluator(lw_eval_input)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
-
-        sub_input = torch.concat([goal_embedded, lw_result], dim=-1)  # (batch_size, context_size, vec_dim)
+        sub_input = torch.concat([goal_embedded, last_lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
         sub_output = self.backbone(sub_input)  # (batch_size, context_size, hidden_size)
 
         subgoal_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, goal_size * embedding_dim)
@@ -167,13 +181,23 @@ class Policy_Core(Base_Policy_Core):
         aux_int_logits = self.head_int(lwlv_output)  # (batch_size, context_size, int_action_size)
         aux_ext_logits = self.head_ext(lwlv_output)  # (batch_size, context_size, ext_action_size)
 
-        # calculate aux loss
-        action_loss = torch.mean((int_logits - aux_int_logits)**2, dim=-1) + torch.mean((ext_logits - aux_ext_logits)**2, dim=-1)
-        # subgoal_logits should not deviate much from last_subgoal_embedded 
-        subgoal_loss = torch.mean((subgoal_logits - last_subgoal_embedded)**2, dim=-1)
-        aux_loss = action_loss + 0.2 * subgoal_loss
+        # nu (subgoal is satisfied or not) predictor
+        lw_eval_input = torch.concat([inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
+        lw_abstraction = self.abstractor(lw_eval_input)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
+        nu_input = torch.concat([subgoal_logits, lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
+        nu = self.nu_predictor(nu_input)  # (batch_size, context_size, 1)
+        nu = torch.sigmoid(nu)  # (batch_size, context_size, 1), value in [0, 1]
 
-        return int_logits, ext_logits, subgoal_logits, aux_loss
+        # Choose next position based on nu
+        next_position = \
+            nu * context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size):] \
+            + (1 - nu) * context[:, :, (1 + 1 + 1): (1 + 1 + 1 + self.position_size)]  # (batch_size, context_size, position_size)
+
+        # Calculate aux loss
+        action_loss = torch.mean((int_logits - aux_int_logits)**2, dim=-1) + torch.mean((ext_logits - aux_ext_logits)**2, dim=-1)
+        aux_loss = action_loss
+        
+        return int_logits, ext_logits, next_position, aux_loss
     
 
     def get_action(self, context, valid_actions=None):
@@ -190,7 +214,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, position_logits, aux_loss = self.compute(context)
+        logits_int, logits_ext, next_position, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -200,13 +224,12 @@ class Policy_Core(Base_Policy_Core):
 
         action_int = probs_int.sample()
         action_ext = probs_ext.sample()
-        next_position = torch.argmax(position_logits.view(batch_size, context_size, self.goal_size, -1), dim=-1)  # (batch_size, context_size, goal_size)
         action_content = np.zeros((batch_size, context_size, self.content_size), dtype=np.float32)
 
         action = np.concatenate([
             action_int.unsqueeze(-1).cpu().numpy(),
             action_ext.unsqueeze(-1).cpu().numpy(),
-            next_position.cpu().numpy(),
+            next_position.detach().cpu().numpy(),
             action_content
         ], axis=-1)
 
@@ -228,7 +251,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, position_logits, aux_loss = self.compute(context)
+        logits_int, logits_ext, next_position, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -267,7 +290,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, position_logits, aux_loss = self.compute(context)
+        logits_int, logits_ext, next_position, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -285,7 +308,7 @@ class Policy_Core(Base_Policy_Core):
             log_prob_int, log_prob_ext
         ], dim=-1), torch.stack([
             entropy_int, entropy_ext
-        ], dim=-1), aux_loss  # no aux loss for now
+        ], dim=-1), aux_loss
 
 
 

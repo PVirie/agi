@@ -2,11 +2,11 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name        | Description                                                                      |
-| ---------- | ----------------- | -------------------------------------------------------------------------------- |
-| LIII       | Cognitive algebra | A learnable computationally universal model                                      |
-| LXIII      | Mem Ops           | Mk. 53 with full memory operations                                               |
-| LXX        | $\alpha\nu$       | Mk. 70 Cultivate On-policy Hindsight Abstraction with $\alpha$ and $\nu$ factors |
+| Generation | Model Name        | Description                                                        |
+| ---------- | ----------------- | ------------------------------------------------------------------ |
+| LIII       | Cognitive algebra | A learnable computationally universal model                        |
+| LXIII      | Mem Ops           | Mk. 53 with full memory operations                                 |
+| LXXI       | $\nu$             | Mk. 71 Cultivate On-policy Hindsight Abstraction for Path planning |
 
 ## Prerequisites
 
@@ -119,7 +119,7 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] minigrid environment
     - [x] full MDP
 - [x] MAMBA
-- [ ] Model 70: $\alpha\nu$
-    - [ ] Sub-task flag (alpha factor)
-    - [ ] Return propagation by sub-goal difference (nu factor)
+- [ ] Model 71: $\nu$
+    - [x] Success factor $\nu$
+    - [ ] Record $\nu$ in each step for analysis
 - [ ] A real world environment (required for pretigious conference publication, but not necessary for the project itself)

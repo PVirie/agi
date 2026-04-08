@@ -175,7 +175,7 @@ if __name__ == "__main__":
     random_agent = random_agent.Random_Agent("01")
     mission_size = env.mission_max_len
     inventory_size = 2
-    content_size = mission_size + inventory_size + env.full_mdp_width * env.full_mdp_height * 3 # mission tokens + image
+    content_size = mission_size + inventory_size + env.full_mdp_width * env.full_mdp_height * 3 # mission + inv + image
     if args.scale == "small":
         history_steps = 0
         hidden_size = 128
@@ -211,8 +211,8 @@ if __name__ == "__main__":
     ).to(device)
     value_core = Value_Core(
         int_action_size=6, ext_action_size=7, 
-        # position_size=mission_size + 2,  # subgoal + alpha + nu
-        position_size=mission_size,
+        position_size=content_size - mission_size, # just inv + image
+        # position_size=mission_size,
         output_dims=1,
         token_part_size=mission_size + inventory_size,  # mission tokens + inventory tokens
         dict_size=vocab_size, embedding_dim=embedding_dim,

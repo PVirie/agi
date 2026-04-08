@@ -3,7 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 from torch.nn.init import trunc_normal_
+from torch.distributions.normal import Normal
 from torch.distributions.categorical import Categorical
+from torch.distributions import Bernoulli
 
 import numpy as np
 
