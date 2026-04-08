@@ -30,7 +30,7 @@ from implementations.agents import random_agent, model_base
 from implementations.networks.torch.policy.cultivate_token import Policy_Core
 from implementations.networks.torch.policy.base_xy import Projector
 from implementations.networks.torch.value.token_image import Value_Core
-from implementations.learning_algorithms.torch.ppo import PPO
+from implementations.learning_algorithms.torch.ppo_nu import PPO_Nu as PPO
 from implementations.collectors.states import State_Sequence as Collector
 
 torch.autograd.set_detect_anomaly(True)
