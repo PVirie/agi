@@ -211,7 +211,7 @@ if __name__ == "__main__":
     ).to(device)
     value_core = Value_Core(
         int_action_size=6, ext_action_size=7, 
-        position_size=content_size - mission_size, # just inv + image
+        position_size=1 + content_size - mission_size, # just nu + inv + image
         # position_size=mission_size,
         output_dims=1,
         token_part_size=mission_size + inventory_size,  # mission tokens + inventory tokens
@@ -222,7 +222,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [1]), value_model=value_core,
+        policy_model=Projector(policy_core, [1, 2]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
         aux_coef=0.5 if args.with_auxiliary else None
     )
