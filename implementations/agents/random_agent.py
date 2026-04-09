@@ -26,4 +26,4 @@ class Random_Agent(Agent):
                 actions.append(np.array([random.randint(0, 6), random.randint(0, 63), random.randint(0, 63)], dtype=np.int32))
             else:
                 actions.append(None)
-        return actions
+        return actions, None

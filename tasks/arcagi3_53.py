@@ -79,7 +79,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
         last_reset = [
             s.state == Game_State_Type.RESET for s in states
         ]
-        actions = agent.choose_action(
+        actions, _ = agent.choose_action(
             last_idles=last_idle,
             last_dones=last_done,
             last_truncates=last_truncated,

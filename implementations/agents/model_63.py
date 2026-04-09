@@ -394,7 +394,7 @@ class Model_63(Agent):
         self.last_dones.append([False for _ in range(batch_size)])
         self.last_truncates.append([False for _ in range(batch_size)])
 
-        return return_action
+        return return_action, position
     
 
 if __name__ == "__main__":

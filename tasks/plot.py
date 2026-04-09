@@ -149,7 +149,12 @@ def parse_statistic_file(file_path, aggregate_steps=1000):
                     break
                 metric_name, game_id = info[i]
                 try:
-                    x = float(value)
+                    # check if value is numeric
+                    # if empty string, treat it as 0
+                    if value == "":
+                        x = 0.0
+                    else:
+                        x = float(value)
                 except ValueError:
                     logging.warning(f"Non-numeric value '{value}' for metric '{metric_name}' and game '{game_id}' in row: {row}")
                     continue
@@ -210,6 +215,9 @@ if __name__ == "__main__":
             STD = [var ** 0.5 for var in stats["var"]]
             # normalize Y and STD by their max value for better visualization
             max_Y = max(abs(y) for y in Y) if Y else 1
+            # handle zero
+            if max_Y == 0:
+                max_Y = 1
             Y = [y / max_Y for y in Y]
             STD = [s / max_Y for s in STD]
             label = f"{game_id}"

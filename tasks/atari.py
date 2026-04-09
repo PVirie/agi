@@ -60,7 +60,7 @@ async def run(env, agent, rollout_length=16):
         elapsed_time = time.perf_counter() - start_time
         should_stop = elapsed_time > max_running_time  # run for the specified max time
 
-        actions = agent.choose_action(
+        actions, _ = agent.choose_action(
             last_idles=last_idle,
             last_dones=last_done,
             last_truncates=last_truncated,

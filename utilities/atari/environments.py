@@ -8,8 +8,6 @@ from gymnasium.wrappers import (
     NormalizeReward,
     ClipReward
 )
-import os
-from .. import compact_csv as csv
 
 # Standard Atari Action Set (Order matters!)
 ATARI_ACTIONS = [
@@ -32,21 +30,9 @@ class Multi_Atari_Environment:
         episodic_life=True,
         reward_clipping=True,
         render_mode=None,
-        record_statistic_dir=None
         ):
 
         self.game_ids = game_ids
-        self.record_statistic_dir = record_statistic_dir
-        if record_statistic_dir is not None:
-            os.makedirs(record_statistic_dir, exist_ok=True)
-        self.steps = 0
-        self.save_step_interval = 1000
-        self.last_batch_episode_returns = [0 for _ in game_ids] # List to store the return of the last episode for each env
-        self.last_batch_episode_lengths = [0 for _ in game_ids] # List to store the length of the last episode for each env
-        self.last_batch_episode_times = [0 for _ in game_ids] # List to store the time taken for the last episode for each env
-        self.batch_episode_returns = [[] for _ in game_ids] # List of lists to store episode returns for each env
-        self.batch_episode_lengths = [[] for _ in game_ids] # List of lists to store episode lengths for each env
-        self.batch_episode_times = [[] for _ in game_ids] # List of lists to store episode times for each env
 
         # 1. Generate Available Actions List
         # Structure: List[List[int]] -> [[0, 2, 3], [0, 1, 4, 5], ...]
@@ -97,52 +83,6 @@ class Multi_Atari_Environment:
         self.return_infos = [None] * total
 
 
-    def __record_episode_statistics(self, batch, info):
-        r = info.get("episode", {}).get("r", 0)
-        l = info.get("episode", {}).get("l", 0)
-        t = info.get("episode", {}).get("t", 0)
-        self.last_batch_episode_returns[batch] = r
-        self.last_batch_episode_lengths[batch] = l
-        self.last_batch_episode_times[batch] = t
-
-    
-    def __save_episode_statistics(self):
-        if self.record_statistic_dir is None:
-            return
-        
-        for i in range(len(self.game_ids)):
-            self.batch_episode_returns[i].append(self.last_batch_episode_returns[i])
-            self.batch_episode_lengths[i].append(self.last_batch_episode_lengths[i])
-            self.batch_episode_times[i].append(self.last_batch_episode_times[i])
-
-        if self.steps % self.save_step_interval == 0:
-            # create a csv file for each env
-            stat_file_name = os.path.join(self.record_statistic_dir, f"episode_statistics.csv")
-            if not os.path.exists(stat_file_name):
-                with open(stat_file_name, mode='wb') as stat_file:
-                    writer = csv.writer(stat_file)
-                    header = []
-                    for gid in self.game_ids:
-                        header.extend([f"{gid}/return", f"{gid}/length", f"{gid}/time"])
-                    writer.writerow(header)
-            # append new stats
-            with open(stat_file_name, mode='ab') as stat_file:
-                writer = csv.writer(stat_file)
-                for i in range(len(self.batch_episode_returns[0])): # assuming all batches have same number of episodes
-                    row = []
-                    for j in range(len(self.game_ids)):
-                        row.extend([
-                            self.batch_episode_returns[j][i],
-                            self.batch_episode_lengths[j][i],
-                            self.batch_episode_times[j][i]
-                        ])
-                    writer.writerow(row)
-            # clear batch stats after saving            
-            self.batch_episode_returns = [[] for _ in self.game_ids]
-            self.batch_episode_lengths = [[] for _ in self.game_ids]
-            self.batch_episode_times = [[] for _ in self.game_ids]
-                
-
     def reset(self, seed=None):
             # return self.envs.reset(seed=seed)
         for i, env in enumerate(self.envs):
@@ -165,12 +105,8 @@ class Multi_Atari_Environment:
             self.return_truncations[i] = truncation
             self.return_infos[i] = info
             if termination or truncation:
-                # record episode return and length
-                self.__record_episode_statistics(i, info)
                 obs, _ = env.reset() # You must manually reset!
             self.return_obs[i] = obs
-        self.steps += 1
-        self.__save_episode_statistics()       
         return self.return_obs, self.return_rewards, self.return_terminations, self.return_truncations, self.return_infos
 
 
@@ -196,8 +132,6 @@ class Multi_Atari_Environment:
     def close(self):
         for env in self.envs:
             env.close()
-
-        self.steps = 0
 
         self.return_obs = None
         self.return_rewards = None

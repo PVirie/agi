@@ -22,6 +22,7 @@ install("gymnasium[other]")
 
 from utilities.minigrid.environments import Multi_Environment
 from utilities.tokenizer import Text_Tokenizer
+from utilities.compact_csv import Episode_Recorder
 from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -60,7 +61,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
         elapsed_time = time.perf_counter() - start_time
         should_stop = elapsed_time > max_running_time  # run for the specified max time
 
-        actions = agent.choose_action(
+        actions, positions = agent.choose_action(
             last_idles=last_idle,
             last_dones=last_done,
             last_truncates=last_truncated,
@@ -79,6 +80,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
         last_truncated = [truncations[i] for i in range(len(observations))]
         last_reset = [False for _ in observations]
 
+        stat_row = []
         for i in range(len(observations)):
             if terminations[i] or truncations[i]:
                 total_score = infos[i]["episode"]["r"]
@@ -86,6 +88,11 @@ async def run(env, agent, rollout_length=16, verbose=False):
                     session_return_update_alpha * total_returns[i]
                     + (1 - session_return_update_alpha) * total_score
                 )
+            if infos[i] is None:
+                stat_row.extend([None, positions[i, 0].item(), None])
+            else:
+                stat_row.extend([infos[i]["episode"]["r"], positions[i, 0].item(), infos[i]["episode"]["t"]])
+        stat_recorder.record(stat_row)
 
         steps += 1
         if any([r != 0 for r in rewards]) and verbose:
@@ -109,6 +116,9 @@ async def run(env, agent, rollout_length=16, verbose=False):
             logging.info(f"Completed {steps} steps.")
             logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
             logging.info(f"Expected time left: {max_running_time - elapsed_time:.2f} seconds.")
+
+        if steps % 1000 == 0:
+            stat_recorder.write()
 
         if should_stop:
             logging.info("Max running time reached, stopping the experiment.")
@@ -169,9 +179,10 @@ if __name__ == "__main__":
         full_mdp=True,
         full_mdp_width=10,
         full_mdp_height=10,
-        record_statistic_dir=f"{experiment_path}/statistics"
     )
 
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "nu", "time"]])
+    
     random_agent = random_agent.Random_Agent("01")
     mission_size = env.mission_max_len
     inventory_size = 2
