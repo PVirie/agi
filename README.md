@@ -122,6 +122,6 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] Model 71: $\nu$
     - [x] Success factor $\nu$
     - [x] Record $\nu$ in each step for analysis
+    - [x] Carry on states
     - [ ] Separate model for high level and low level policy
-    - [ ] Carry on states
 - [ ] A real world environment (required for pretigious conference publication, but not necessary for the project itself)

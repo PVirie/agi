@@ -190,6 +190,7 @@ if __name__ == "__main__":
     content_size = mission_size + inventory_size + env.full_mdp_width * env.full_mdp_height * 3 # mission + inv + image
     if args.scale == "small":
         history_steps = 0
+        state_size = 2
         hidden_size = 128
         layers = 2
         rollout_length = 128
@@ -197,6 +198,7 @@ if __name__ == "__main__":
         embedding_dim = 16
     elif args.scale == "medium":
         history_steps = 0
+        state_size = 4
         hidden_size = 256
         layers = 4
         rollout_length = 256
@@ -204,6 +206,7 @@ if __name__ == "__main__":
         embedding_dim = 32
     else:  # large
         history_steps = 0
+        state_size = 8
         hidden_size = 512
         layers = 4
         rollout_length = 256
@@ -217,13 +220,14 @@ if __name__ == "__main__":
         goal_size=mission_size, inventory_size=inventory_size,
         dict_size=vocab_size, embedding_dim=embedding_dim,
         width=env.full_mdp_width, height=env.full_mdp_height, channel=3,
+        state_size=state_size,
         hidden_size=hidden_size, layers=layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
         int_action_size=6, ext_action_size=7, 
-        position_size=1 + content_size - mission_size, # just nu + inv + image
+        position_size=1 + content_size - mission_size + state_size*2, # just nu + state + inv + image + state
         # position_size=mission_size,
         output_dims=1,
         token_part_size=mission_size + inventory_size,  # mission tokens + inventory tokens
@@ -234,9 +238,9 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [1, 2]), value_model=value_core,
+        policy_model=Projector(policy_core, [1, 2, 3, 4]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=0.5 if args.with_auxiliary else None
+        aux_coef=1.0 if args.with_auxiliary else None
     )
     agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,

@@ -19,6 +19,7 @@ class Policy_Core(Base_Policy_Core):
                  goal_size, inventory_size,
                  dict_size, embedding_dim,
                  width, height, channel,
+                 state_size,
                  hidden_size, layers, 
                  history_steps=0, max_temporal_len=32, 
                  device=None, 
@@ -34,14 +35,24 @@ class Policy_Core(Base_Policy_Core):
         self.goal_size = goal_size
         self.inventory_size = inventory_size
         self.obs_size = width * height * channel
+        self.state_size = state_size
         self.hidden_size = hidden_size
 
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
-        self.position_size = 1 + self.inventory_size + self.obs_size # position part includes nu, inventory, image features for last high-level 
-        self.content_size = self.goal_size + self.inventory_size + self.obs_size
+        self.position_size = 1 + state_size + inventory_size + self.obs_size + state_size # position part includes nu, (state, inventory, image) for last high-level, and state for current low-level 
+        self.content_size = goal_size + inventory_size + self.obs_size
         self.packed_action_size = 1 + 1 + self.position_size + self.content_size
         self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
+
+        self.nu_pos = 1 + 1 + 1
+        self.last_hlv_state_pos = self.nu_pos + 1
+        self.last_hlv_inv_pos = self.last_hlv_state_pos + state_size
+        self.last_hlv_obs_pos = self.last_hlv_inv_pos + inventory_size
+        self.state_pos = self.last_hlv_obs_pos + self.obs_size
+        self.goal_pos = self.state_pos + state_size
+        self.inv_pos = self.goal_pos + goal_size
+        self.obs_pos = self.inv_pos + inventory_size
 
         self.goal_embedding = nn.Embedding(dict_size, embedding_dim)  # for goal token
         self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
@@ -52,8 +63,8 @@ class Policy_Core(Base_Policy_Core):
             depths=[16, 32, 32]
         )
 
-        # goal, inv, obs -> hidden
-        predict_input_dim = goal_size * embedding_dim + inventory_size * embedding_dim + hidden_size
+        # goal, state, inv, obs -> hidden
+        predict_input_dim = goal_size * embedding_dim + state_size + inventory_size * embedding_dim + hidden_size
         self.backbone = ResNet(
             output_dims=hidden_size, 
             input_dims=predict_input_dim, 
@@ -68,7 +79,7 @@ class Policy_Core(Base_Policy_Core):
             hidden_dims=hidden_size, layers=layers
         )
 
-        # nu: goal, inv, obs -> [-inf, inf]
+        # nu: goal, state, inv, obs -> [-inf, inf]
         self.nu_predictor = ResNet(
             output_dims=1, 
             input_dims=predict_input_dim, 
@@ -85,6 +96,13 @@ class Policy_Core(Base_Policy_Core):
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, ext_action_size)   # ext_action_size classes
+        )
+
+        # hidden -> state
+        self.head_state = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, state_size)
         )
 
         # hidden -> sub goal
@@ -123,6 +141,7 @@ class Policy_Core(Base_Policy_Core):
 
         self.head_int.apply(init_actor_weights)
         self.head_ext.apply(init_actor_weights)
+        self.head_state.apply(init_actor_weights)
         self.head_subgoal.apply(init_actor_weights)
 
 
@@ -134,12 +153,14 @@ class Policy_Core(Base_Policy_Core):
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
-        last_nu = context[:, :, (1 + 1 + 1): (1 + 1 + 1 + 1)]  # (batch_size, context_size, 1)
-        last_hlv_inv = context[:, :, (1 + 1 + 1 + 1): (1 + 1 + 1 + 1 + self.inventory_size)]  # (batch_size, context_size, goal_size)
-        last_hlv_obs = context[:, :, (1 + 1 + 1 + 1 + self.inventory_size): (1 + 1 + 1 + self.position_size)]  # (batch_size, context_size, goal_size)
-        goal = context[:, :, (1 + 1 + 1 + self.position_size): (1 + 1 + 1 + self.position_size + self.goal_size)]  # (batch_size, context_size, goal_size)
-        inv = context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size): (1 + 1 + 1 + self.position_size + self.goal_size + self.inventory_size)]  # (batch_size, context_size, inventory_size)
-        obs = context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size + self.inventory_size): ]  # (batch_size, context_size, obs_size)
+        last_nu = context[:, :, self.nu_pos: (self.nu_pos + 1)]  # (batch_size, context_size, 1)
+        last_hlv_state = context[:, :, self.last_hlv_state_pos: (self.last_hlv_state_pos + self.state_size)]  # (batch_size, context_size, state_size)
+        last_hlv_inv = context[:, :, self.last_hlv_inv_pos: (self.last_hlv_inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
+        last_hlv_obs = context[:, :, self.last_hlv_obs_pos: (self.last_hlv_obs_pos + self.obs_size)]  # (batch_size, context_size, obs_size)
+        state = context[:, :, self.state_pos: (self.state_pos + self.state_size)]  # (batch_size, context_size, state_size)
+        goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
+        inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
+        obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
 
         last_hlv_embedded = self.goal_embedding(last_hlv_inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
         last_hlv_embedded = last_hlv_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, inventory_size * embedding_dim)
@@ -163,22 +184,23 @@ class Policy_Core(Base_Policy_Core):
 
         # Base flow
 
-        base_input = torch.concat([goal_embedded, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        base_input = torch.concat([goal_embedded, state, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
         ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
+        state_logits = self.head_state(base_output)  # (batch_size, context_size, state_size)
         
         # Cultivate flow
         last_hlv = torch.concat([last_hlv_embedded, last_hlv_obs_features], dim=-1)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
         last_lw_abstraction = self.abstractor(last_hlv)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
-
-        sub_input = torch.concat([goal_embedded, last_lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
+        sub_input = torch.concat([goal_embedded, last_hlv_state, last_lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
         sub_output = self.backbone(sub_input)  # (batch_size, context_size, hidden_size)
 
+        hlv_state_logits = self.head_state(sub_output)  # (batch_size, context_size, state_size)
         subgoal_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, goal_size * embedding_dim)
 
-        lwlv_input = torch.concat([subgoal_logits, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        lwlv_input = torch.concat([subgoal_logits, state, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         lwlv_output = self.backbone(lwlv_input)  # (batch_size, context_size, hidden_size)
 
         aux_int_logits = self.head_int(lwlv_output)  # (batch_size, context_size, int_action_size)
@@ -187,15 +209,16 @@ class Policy_Core(Base_Policy_Core):
         # nu (subgoal is satisfied or not) predictor
         lw_eval_input = torch.concat([inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
         lw_abstraction = self.abstractor(lw_eval_input)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
-        nu_input = torch.concat([subgoal_logits, lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
+        nu_input = torch.concat([subgoal_logits, last_hlv_state, lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
         nu_logit = self.nu_predictor(nu_input)  # (batch_size, context_size, 1)
         nu_logit = torch.squeeze(nu_logit, dim=-1)  # (batch_size, context_size)
 
-        # Calculate aux loss
-        action_loss = torch.mean((int_logits - aux_int_logits)**2, dim=-1) + torch.mean((ext_logits - aux_ext_logits)**2, dim=-1)
-        aux_loss = action_loss
+        # Calculate aux action loss
+        aux_loss = \
+            torch.mean((int_logits - aux_int_logits)**2, dim=-1) + \
+            torch.mean((ext_logits - aux_ext_logits)**2, dim=-1) # (batch_size, context_size)
         
-        return int_logits, ext_logits, nu_logit, aux_loss
+        return int_logits, ext_logits, state_logits, hlv_state_logits, nu_logit, aux_loss
     
 
     def get_action(self, context, valid_actions=None):
@@ -212,24 +235,29 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, nu_logit, aux_loss = self.compute(context)
+        logits_int, logits_ext, state_logits, hlv_state_logits, nu_logit, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
         probs_nu = Bernoulli(logits=nu_logit)
+        probs_hlv_state = Bernoulli(logits=hlv_state_logits)
+        probs_state = Bernoulli(logits=state_logits)
 
         batch_size = context.size(0)
         context_size = context.size(1)
 
+        next_hlv_state = probs_hlv_state.sample()  # (batch_size, context_size, state_size)
+        next_state = probs_state.sample()  # (batch_size, context_size, state_size)
+
         # Choose next position based on nu
         next_nu = probs_nu.sample().unsqueeze(-1)  # (batch_size, context_size)
-        next_last_obs = torch.where(next_nu > 0.5, 
-                                 context[:, :, (1 + 1 + 1 + self.position_size + self.goal_size):], 
-                                 context[:, :, (1 + 1 + 1 + 1): (1 + 1 + 1 + self.position_size)])
-        next_position = torch.concat([next_nu, next_last_obs], dim=-1)  # (batch_size, context_size, position_size)
+        next_last_inv_obs = torch.where(next_nu > 0.5, 
+                                 context[:, :, self.inv_pos:], 
+                                 context[:, :, self.last_hlv_inv_pos: (self.last_hlv_inv_pos + self.inventory_size + self.obs_size)])  # (batch_size, context_size, inventory_size + obs_size)
 
         action_int = probs_int.sample()
         action_ext = probs_ext.sample()
+        next_position = torch.concat([next_nu, next_hlv_state, next_last_inv_obs, next_state], dim=-1)  # (batch_size, context_size, position_size)
         action_content = np.zeros((batch_size, context_size, self.content_size), dtype=np.float32)
 
         action = np.concatenate([
@@ -257,28 +285,36 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, nu_logit, aux_loss = self.compute(context)
+        logits_int, logits_ext, state_logits, hlv_state_logits, nu_logit, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
         probs_nu = Bernoulli(logits=nu_logit)
+        probs_hlv_state = Bernoulli(logits=hlv_state_logits)
+        probs_state = Bernoulli(logits=state_logits)
 
         action_int = selected_action[:, :, 0]
         action_ext = selected_action[:, :, 1]
         action_nu = selected_action[:, :, 2]
+        action_hlv_state = selected_action[:, :, (1 + 1 + 1): (1 + 1 + 1 + self.state_size)]
+        action_state = selected_action[:, :, (1 + 1 + 1 + self.state_size + self.inventory_size + self.obs_size): (1 + 1 + 1 + self.state_size + self.inventory_size + self.obs_size + self.state_size)]
 
         log_prob_int = probs_int.log_prob(action_int)
         log_prob_ext = probs_ext.log_prob(action_ext)
         log_prob_nu = probs_nu.log_prob(action_nu)
+        log_prob_hlv_state = probs_hlv_state.log_prob(action_hlv_state).mean(dim=-1)
+        log_prob_state = probs_state.log_prob(action_state).mean(-1)
         
         entropy_int = probs_int.entropy()
         entropy_ext = probs_ext.entropy()
         entropy_nu = probs_nu.entropy()
+        entropy_hlv_state = probs_hlv_state.entropy().mean(dim=-1)
+        entropy_state = probs_state.entropy().mean(dim=-1)
 
         return torch.stack([
-            log_prob_int, log_prob_ext, log_prob_nu
+            log_prob_int, log_prob_ext, log_prob_nu, log_prob_hlv_state, log_prob_state
         ], dim=-1), torch.stack([
-            entropy_int, entropy_ext, entropy_nu
+            entropy_int, entropy_ext, entropy_nu, entropy_hlv_state, entropy_state
         ], dim=-1)
     
 
@@ -300,28 +336,36 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, nu_logit, aux_loss = self.compute(context)
+        logits_int, logits_ext, state_logits, hlv_state_logits, nu_logit, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
         probs_nu = Bernoulli(logits=nu_logit)
+        probs_hlv_state = Bernoulli(logits=hlv_state_logits)
+        probs_state = Bernoulli(logits=state_logits)
 
         action_int = selected_action[:, :, 0]
         action_ext = selected_action[:, :, 1]
         action_nu = selected_action[:, :, 2]
+        action_hlv_state = selected_action[:, :, (1 + 1 + 1): (1 + 1 + 1 + self.state_size)]
+        action_state = selected_action[:, :, (1 + 1 + 1 + self.state_size + self.inventory_size + self.obs_size): (1 + 1 + 1 + self.state_size + self.inventory_size + self.obs_size + self.state_size)]
 
         log_prob_int = probs_int.log_prob(action_int)
         log_prob_ext = probs_ext.log_prob(action_ext)
         log_prob_nu = probs_nu.log_prob(action_nu)
+        log_prob_hlv_state = probs_hlv_state.log_prob(action_hlv_state).mean(dim=-1)
+        log_prob_state = probs_state.log_prob(action_state).mean(dim=-1)
         
         entropy_int = probs_int.entropy()
         entropy_ext = probs_ext.entropy()
         entropy_nu = probs_nu.entropy()
+        entropy_hlv_state = probs_hlv_state.entropy().mean(dim=-1)
+        entropy_state = probs_state.entropy().mean(dim=-1)
 
         return torch.stack([
-            log_prob_int, log_prob_ext, log_prob_nu
+            log_prob_int, log_prob_ext, log_prob_nu, log_prob_hlv_state, log_prob_state
         ], dim=-1), torch.stack([
-            entropy_int, entropy_ext, entropy_nu
+            entropy_int, entropy_ext, entropy_nu, entropy_hlv_state, entropy_state
         ], dim=-1), aux_loss
 
 
