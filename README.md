@@ -119,7 +119,9 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] minigrid environment
     - [x] full MDP
 - [x] MAMBA
-- [ ] Model 71: $\nu$
+- [x] Model 71: $\nu$
     - [x] Success factor $\nu$
-    - [ ] Record $\nu$ in each step for analysis
+    - [x] Record $\nu$ in each step for analysis
+    - [ ] Separate model for high level and low level policy
+    - [ ] Carry on states
 - [ ] A real world environment (required for pretigious conference publication, but not necessary for the project itself)

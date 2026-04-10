@@ -108,7 +108,6 @@ class Policy_Core(Base_Policy_Core):
 
         self.backbone.reset_parameters()
         self.abstractor.reset_parameters()
-        self.nu_predictor.reset_parameters()
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -119,6 +118,8 @@ class Policy_Core(Base_Policy_Core):
                 nn.init.orthogonal_(m.weight, gain=0.01)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
+
+        self.nu_predictor.apply(init_actor_weights)
 
         self.head_int.apply(init_actor_weights)
         self.head_ext.apply(init_actor_weights)

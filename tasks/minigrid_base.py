@@ -171,14 +171,15 @@ if __name__ == "__main__":
     tokenizer.load(f"{experiment_path}/parameters")
 
     # game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
-    game_ids=["BabyAI-GoToLocalS8N7-v0"]*16 + ["BabyAI-PickupDistDebug-v0"]*16 + ["BabyAI-PutNextLocalS6N4-v0"]*16 + ["BabyAI-MiniBossLevel-v0"]*16
+    game_ids=["BabyAI-GoToObjMazeS7-v0"]*16 + ["BabyAI-GoToSeqS5R2-v0"]*16
+    # game_ids=["BabyAI-GoToLocalS8N7-v0"]*16 + ["BabyAI-PickupDistDebug-v0"]*16 + ["BabyAI-PutNextLocalS6N4-v0"]*16 + ["BabyAI-MiniBossLevel-v0"]*16
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
         mission_max_len=16,
         full_mdp=True,
-        full_mdp_width=10,
-        full_mdp_height=10,
+        full_mdp_width=22,
+        full_mdp_height=22,
     )
 
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "nu", "time"]])
