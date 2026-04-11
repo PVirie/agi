@@ -134,7 +134,7 @@ if __name__ == "__main__":
     parser.add_argument("--reset",                  "-r",   action="store_true")
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
-    parser.add_argument("--with-auxiliary",         "-aux", action="store_true", help="Enable auxiliary loss along with PPO.")
+    parser.add_argument("--aux-coef",               "-af",  type=float, default=0.1, help="Coefficient for the auxiliary loss. Default is 0.1.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     args = parser.parse_args()
 
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     ppo_learner = PPO(
         policy_model=Projector(policy_core, [1, 2, 3, 4]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=1.0 if args.with_auxiliary else None
+        aux_coef=args.aux_coef
     )
     agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,
@@ -248,7 +248,7 @@ if __name__ == "__main__":
         context_collector=Collector(max_history=history_steps),
         action_collector=Collector(max_history=history_steps),
         valid_action_collector=Collector(max_history=history_steps),
-        do_supervision=args.with_auxiliary
+        do_supervision=True
     )
 
     asyncio.run(run(env, agent, rollout_length, verbose=not args.silent))

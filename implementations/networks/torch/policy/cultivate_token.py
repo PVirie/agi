@@ -25,7 +25,7 @@ class Policy_Core(Base_Policy_Core):
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="base_token_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="cultivate_token_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.width = width

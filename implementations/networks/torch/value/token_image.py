@@ -24,7 +24,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="token_value_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="token_image_value_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.token_part_size = token_part_size
