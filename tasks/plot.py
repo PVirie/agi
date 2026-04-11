@@ -37,8 +37,8 @@ def open_files_dialog():
     root.withdraw()
 
     file_paths = filedialog.askopenfilenames(
-        title="Select Rollout files",
-        filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+        title="Select Statistic files",
+        filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
     )
 
     if file_paths:
@@ -64,13 +64,13 @@ def save_file_dialog(default_path = None):
         return None
 
 
-def parse_statistic_file(file_path, aggregate_steps=1000):
+def parse_statistic_file(file_path_generator, aggregate_steps=1000):
     """
     The input is a csv file with columns: namespace/game_id/metric_name, ...
     Return dict of game_id: where is game_id is also a dict of metric: that contains a list of mean and variance for each step. 
     For example:
     {
-        "game_1": {
+        "file_1/game_1": {
             "return": {
                 "mean": [0, 1, 2, ...],
                 "var": [0, 0.5, 1.0, ...],
@@ -88,95 +88,98 @@ def parse_statistic_file(file_path, aggregate_steps=1000):
     """
 
     game_data = {}
-    with open(file_path, 'rb') as f:
-        reader = csv.reader(f)
-        header = next(reader)
+    for file_path in file_path_generator:
+        file_basename_no_ext = os.path.splitext(os.path.basename(file_path))[0]
+        logging.info(f"Parsing file: {file_basename_no_ext}")
+        with open(file_path, 'rb') as f:
+            reader = csv.reader(f)
+            header = next(reader)
 
-        # parse header to get metric names and game ids
-        info = []
-        for col in header:
-            parts = col.split('/')
-            if len(parts) < 2:
-                logging.warning(f"Unexpected column name format: {col}")
-                continue
-            metric_name = parts[-1]
-            game_id = "/".join(parts[:-1])
-            info.append((metric_name, game_id))
+            # parse header to get metric names and game ids
+            info = []
+            for col in header:
+                parts = col.split('/')
+                if len(parts) < 2:
+                    logging.warning(f"Unexpected column name format: {col}")
+                    continue
+                metric_name = parts[-1]
+                game_id = f"{file_basename_no_ext}/" + "/".join(parts[:-1])
+                info.append((metric_name, game_id))
 
-        stats = {}
-        for metric_name, game_id in info:
-            if game_id not in game_data:
-                game_data[game_id] = {}
-                stats[game_id] = {}
-            if metric_name not in game_data[game_id]:
-                game_data[game_id][metric_name] = {
-                    "mean": [],
-                    "var": []
-                }
-                stats[game_id][metric_name] = {
-                    "sum_x": 0,
-                    "sum_x2": 0,
-                    "count": 0
-                }
+            stats = {}
+            for metric_name, game_id in info:
+                if game_id not in game_data:
+                    game_data[game_id] = {}
+                    stats[game_id] = {}
+                if metric_name not in game_data[game_id]:
+                    game_data[game_id][metric_name] = {
+                        "mean": [],
+                        "var": []
+                    }
+                    stats[game_id][metric_name] = {
+                        "sum_x": 0,
+                        "sum_x2": 0,
+                        "count": 0
+                    }
 
-        for j, row in enumerate(reader):
-            # first append 0 for each row
-            if j % aggregate_steps == 0:
-                if j > 0:
-                    # compute mean and variance for the previous batch
+            for j, row in enumerate(reader):
+                # first append 0 for each row
+                if j % aggregate_steps == 0:
+                    if j > 0:
+                        # compute mean and variance for the previous batch
+                        for metric_name, game_id in info:
+                            stat = stats[game_id][metric_name]
+                            count = stat["count"]
+                            if count > 0:
+                                mean = stat["sum_x"] / count
+                                var = (stat["sum_x2"] / count) - (mean * mean)
+                                game_data[game_id][metric_name]["mean"].append(mean)
+                                game_data[game_id][metric_name]["var"].append(var)
+                            else:
+                                logging.warning(f"No valid data for metric '{metric_name}' and game '{game_id}' in batch ending at row {j}")
+                                game_data[game_id][metric_name]["mean"].append(0)
+                                game_data[game_id][metric_name]["var"].append(0)
+
                     for metric_name, game_id in info:
                         stat = stats[game_id][metric_name]
-                        count = stat["count"]
-                        if count > 0:
-                            mean = stat["sum_x"] / count
-                            var = (stat["sum_x2"] / count) - (mean * mean)
-                            game_data[game_id][metric_name]["mean"].append(mean)
-                            game_data[game_id][metric_name]["var"].append(var)
+                        stat["sum_x"] = 0
+                        stat["sum_x2"] = 0
+                        stat["count"] = 0
+
+                for i, value in enumerate(row):
+                    if i >= len(info):
+                        logging.warning(f"More columns than expected in row: {row}")
+                        break
+                    metric_name, game_id = info[i]
+                    try:
+                        # check if value is numeric
+                        # if empty string, treat it as 0
+                        if value == "":
+                            x = 0.0
                         else:
-                            logging.warning(f"No valid data for metric '{metric_name}' and game '{game_id}' in batch ending at row {j}")
-                            game_data[game_id][metric_name]["mean"].append(0)
-                            game_data[game_id][metric_name]["var"].append(0)
+                            x = float(value)
+                    except ValueError:
+                        logging.warning(f"Non-numeric value '{value}' for metric '{metric_name}' and game '{game_id}' in row: {row}")
+                        continue
 
-                for metric_name, game_id in info:
                     stat = stats[game_id][metric_name]
-                    stat["sum_x"] = 0
-                    stat["sum_x2"] = 0
-                    stat["count"] = 0
+                    stat["sum_x"] += x
+                    stat["sum_x2"] += x * x
+                    stat["count"] += 1
 
-            for i, value in enumerate(row):
-                if i >= len(info):
-                    logging.warning(f"More columns than expected in row: {row}")
-                    break
-                metric_name, game_id = info[i]
-                try:
-                    # check if value is numeric
-                    # if empty string, treat it as 0
-                    if value == "":
-                        x = 0.0
-                    else:
-                        x = float(value)
-                except ValueError:
-                    logging.warning(f"Non-numeric value '{value}' for metric '{metric_name}' and game '{game_id}' in row: {row}")
-                    continue
-
+            # finalize the last batch if it is not complete
+            for metric_name, game_id in info:
                 stat = stats[game_id][metric_name]
-                stat["sum_x"] += x
-                stat["sum_x2"] += x * x
-                stat["count"] += 1
-
-        # finalize the last batch if it is not complete
-        for metric_name, game_id in info:
-            stat = stats[game_id][metric_name]
-            count = stat["count"]
-            if count > 0:
-                mean = stat["sum_x"] / count
-                var = (stat["sum_x2"] / count) - (mean * mean)
-                game_data[game_id][metric_name]["mean"].append(mean)
-                game_data[game_id][metric_name]["var"].append(var)
-            else:
-                logging.warning(f"No valid data for metric '{metric_name}' and game '{game_id}' in the last batch")
-                game_data[game_id][metric_name]["mean"].append(0)
-                game_data[game_id][metric_name]["var"].append(0)
+                count = stat["count"]
+                if count > 0:
+                    mean = stat["sum_x"] / count
+                    var = (stat["sum_x2"] / count) - (mean * mean)
+                    game_data[game_id][metric_name]["mean"].append(mean)
+                    game_data[game_id][metric_name]["var"].append(var)
+                else:
+                    logging.warning(f"No valid data for metric '{metric_name}' and game '{game_id}' in the last batch")
+                    game_data[game_id][metric_name]["mean"].append(0)
+                    game_data[game_id][metric_name]["var"].append(0)
 
     return game_data
 
@@ -198,7 +201,7 @@ if __name__ == "__main__":
             logging.info(f"  --{arg}: {value} (default: {default})")
 
     aggregate_steps = 1000
-    data = parse_statistic_file(open_file_dialog(), aggregate_steps=aggregate_steps)
+    data = parse_statistic_file(open_files_dialog(), aggregate_steps=aggregate_steps)
 
     # Plotting the data with error bar
     style_cycler = cycler(
