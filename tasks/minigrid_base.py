@@ -194,7 +194,7 @@ if __name__ == "__main__":
         hidden_size = 128
         layers = 2
         rollout_length = 128
-        minibatch_size = 32
+        minibatch_size = 8
         embedding_dim = 16
     elif args.scale == "medium":
         history_steps = 0
@@ -202,7 +202,7 @@ if __name__ == "__main__":
         hidden_size = 256
         layers = 4
         rollout_length = 256
-        minibatch_size = 32
+        minibatch_size = 8
         embedding_dim = 32
     else:  # large
         history_steps = 0
@@ -210,7 +210,7 @@ if __name__ == "__main__":
         hidden_size = 512
         layers = 4
         rollout_length = 256
-        minibatch_size = 32
+        minibatch_size = 8
         embedding_dim = 32
 
     parameters_path = f"{experiment_path}/parameters"

@@ -119,6 +119,8 @@ class Model_Base(Agent):
                 reward[i] = 0
             if d or t:
                 self.thought_steps[i] = 0
+                # reset position
+                position = np.zeros_like(position)
             self.last_idles[-1][i] = idle
             self.last_dones[-1][i] = d
             self.last_truncates[-1][i] = t
