@@ -7,7 +7,7 @@ from implementations.networks.torch.components.base import init_weights
 class ResBlock(nn.Module):
     
     def __init__(self, channels):
-        super(ResBlock, self).__init__()
+        super().__init__()
         self.block = nn.Sequential(
             nn.ReLU(),
             nn.Linear(channels, channels),
@@ -22,7 +22,7 @@ class ResBlock(nn.Module):
 class ResNet(nn.Module):
 
     def __init__(self, output_dims, input_dims, hidden_dims, layers):
-        super(ResNet, self).__init__()
+        super().__init__()
         self.output_dims = output_dims
         self.input_dims = input_dims
         self.hidden_dims = hidden_dims

@@ -143,7 +143,7 @@ class Multi_Environment:
         if self.full_mdp:
             # obs is a dict with keys: 'image', 'mission', 'direction', 'inventory'
             # output (mission, inventory, direction, image) as a flat array
-            # where image is padded to the top left corner of a full_mdp_width x full_mdp_height x 3 array, 
+            # where image is padded to the top left corner of a full_mdp_height x full_mdp_width x 3 array, 
             # and the rest is 0, then flattened and concatenated with mission tokens
             direction = obs['direction']  # scalar in [0, 3]
             image = obs['image']  # shape (h, w, 3)
@@ -156,11 +156,11 @@ class Multi_Environment:
                 inventory_tokens = np.pad(inventory_tokens, (0, 2 - len(inventory_tokens)), constant_values=self.tokenizer.pad_token_id)
             
             # pad image to top left corner of a full_mdp_width x full_mdp_height x 3 array, and the rest is 0, then flatten it and concatenate with mission tokens
-            image_padded = np.zeros((self.full_mdp_width, self.full_mdp_height, 3), dtype=np.uint8)
+            image_padded = np.zeros((self.full_mdp_height, self.full_mdp_width, 3), dtype=np.uint8)
             h, w, _ = image.shape
             image_padded[:h, :w, :] = image
 
-            output = np.zeros((self.mission_max_len + 2 + 1 + (self.full_mdp_width * self.full_mdp_height * 3),), dtype=np.int32)
+            output = np.zeros((self.mission_max_len + 2 + 1 + (self.full_mdp_height * self.full_mdp_width * 3),), dtype=np.int32)
             output[:self.mission_max_len] = mission_tokens
             output[self.mission_max_len:self.mission_max_len + 2] = inventory_tokens
             output[self.mission_max_len + 2] = direction

@@ -7,7 +7,7 @@ from datetime import datetime
 class Safe_nn_Module:
 
     def __init__(self, name=None, device=None, persistence_path=None, modules=None, **kwargs):
-        super(Safe_nn_Module, self).__init__()
+        super().__init__()
         self.name = name if name is not None else self.__class__.__name__
         self.device = device
         self.persistence_path = persistence_path

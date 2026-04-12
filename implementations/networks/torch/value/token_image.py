@@ -50,7 +50,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.conv_layers = ImpalaCNN(
             output_dims=hidden_size, 
             input_channels=self.feature_channel, width=width, height=height,
-            depths=[16, 32, 32]
+            depths=[64, 64, 128]
         )
 
         vec_dim = token_part_size * embedding_dim + hidden_size

@@ -60,7 +60,7 @@ class Policy_Core(Base_Policy_Core):
         self.conv_layers = ImpalaCNN(
             output_dims=hidden_size, 
             input_channels=self.feature_channel, width=width, height=height,
-            depths=[16, 32, 32]
+            depths=[64, 64, 128]
         )
 
         # goal, state, inv, obs -> hidden

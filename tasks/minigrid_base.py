@@ -195,7 +195,7 @@ if __name__ == "__main__":
         layers = 2
         rollout_length = 128
         minibatch_size = 8
-        embedding_dim = 16
+        embedding_dim = 4
     elif args.scale == "medium":
         history_steps = 0
         state_size = 4
@@ -203,7 +203,7 @@ if __name__ == "__main__":
         layers = 4
         rollout_length = 256
         minibatch_size = 8
-        embedding_dim = 32
+        embedding_dim = 8
     else:  # large
         history_steps = 0
         state_size = 8
@@ -211,7 +211,7 @@ if __name__ == "__main__":
         layers = 4
         rollout_length = 256
         minibatch_size = 8
-        embedding_dim = 32
+        embedding_dim = 8
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 class ResidualBlock(nn.Module):
     def __init__(self, d_model, kernel_size, dilation):
-        super(ResidualBlock, self).__init__()
+        super().__init__()
         self.pad = dilation * (kernel_size - 1)
         self.conv1 = nn.Conv1d(d_model, d_model, kernel_size=kernel_size, dilation=dilation, padding=0)
         self.conv2 = nn.Conv1d(d_model, d_model, kernel_size=1)
@@ -22,7 +22,7 @@ class ResidualBlock(nn.Module):
 
 class Wavenet(nn.Module):
     def __init__(self, d_model=64, num_layers=10, history_steps=None):
-        super(Wavenet, self).__init__()
+        super().__init__()
         self.d_model = d_model
         self.num_layers = num_layers
         if history_steps is None:

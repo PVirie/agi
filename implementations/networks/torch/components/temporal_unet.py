@@ -9,7 +9,7 @@ from implementations.networks.torch.components.base import init_weights
 
 class UpConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
-        super(UpConvBlock, self).__init__()
+        super().__init__()
         self.up_sample = nn.Upsample(scale_factor=2, mode='nearest')
         self.pre_conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
@@ -34,7 +34,7 @@ class TemporalUNet(nn.Module):
             width=64, height=64, vec_dim=128, 
             hidden_dim=32, depths=[16, 32, 32], 
             history_steps=1, max_temporal_len=32):
-        super(TemporalUNet, self).__init__()
+        super().__init__()
 
         self.output_dims = output_dims
         self.n_channels = input_channels

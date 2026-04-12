@@ -10,7 +10,7 @@ from utilities.safe_torch_module import Safe_nn_Module
 
 class ParametricImpalaQNetwork(nn.Module):
     def __init__(self, input_channels, width, height, action_feature_dim, hidden_dim, layers):
-        super(ParametricImpalaQNetwork, self).__init__()
+        super().__init__()
         
         # A. State Encoder (IMPALA)
         self.state_encoder = ImpalaCNN(output_dims=hidden_dim, input_channels=input_channels, width=width, height=height, depths=layers)
@@ -79,7 +79,7 @@ class ParametricImpalaQNetwork(nn.Module):
 
 class Q_Core(Q_Network, nn.Module, Safe_nn_Module):
     def __init__(self, input_channels, width, height, action_feature_dim, hidden_dim, layers):
-        super(Q_Core, self).__init__()
+        super().__init__()
 
         # Online Networks
         self.q1 = ParametricImpalaQNetwork(input_channels, width, height, action_feature_dim, hidden_dim, layers)

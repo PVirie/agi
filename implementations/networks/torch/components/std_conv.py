@@ -10,7 +10,7 @@ class ImpalaBlock(nn.Module):
     Structure: Conv -> MaxPool -> ResBlock -> ResBlock
     """
     def __init__(self, in_channels, out_channels):
-        super(ImpalaBlock, self).__init__()
+        super().__init__()
         
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -41,7 +41,7 @@ class ImpalaCNN(nn.Module):
     Standard configuration for Atari: Channels [16, 32, 32]
     """
     def __init__(self, output_dims, input_channels, width, height, depths=[16, 32, 32]):
-        super(ImpalaCNN, self).__init__()
+        super().__init__()
         
         self.output_dims = output_dims
         self.input_channels = input_channels
@@ -88,6 +88,89 @@ class ImpalaCNN(nn.Module):
         return x
     
 
+class ImpalaBlock1D(nn.Module):
+    """
+    A 1D version of the IMPALA block for processing sequences.
+    Structure: Conv1D -> MaxPool1D -> ResBlock1D -> ResBlock1D
+    """
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.max_pool = nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
+        
+        self.res1 = self._build_res_pair(out_channels)
+        self.res2 = self._build_res_pair(out_channels)
+
+
+    def _build_res_pair(self, channels):
+        return nn.Sequential(
+            nn.ReLU(),
+            nn.Conv1d(channels, channels, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(channels, channels, kernel_size=3, stride=1, padding=1)
+        )
+    
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.max_pool(x)
+        x = x + self.res1(x)
+        x = x + self.res2(x)
+        return x
+    
+
+class ImpalaCNN1D(nn.Module):
+    """
+    A 1D version of the IMPALA CNN for processing sequences.
+    """
+    def __init__(self, output_dims, input_channels, seq_length, depths=[16, 32, 32]):
+        super().__init__()
+        
+        self.output_dims = output_dims
+        self.input_channels = input_channels
+        self.seq_length = seq_length
+        
+        self.layers = nn.ModuleList()
+        
+        # Build the 3 main blocks
+        current_channels = input_channels
+        for depth in depths:
+            self.layers.append(ImpalaBlock1D(current_channels, depth))
+            current_channels = depth
+            
+        self.activation = nn.ReLU()
+        
+        # Calculate Flatten Dim dynamically
+        with torch.no_grad():
+            dummy = torch.zeros(1, input_channels, seq_length)
+            for layer in self.layers:
+                dummy = layer(dummy)
+            dummy = self.activation(dummy)
+            self.flatten_dim = dummy.reshape(1, -1).size(1)
+            
+        # Final fully connected layer to output_dims
+        self.fc = nn.Sequential(
+            nn.Linear(self.flatten_dim, output_dims),
+            nn.ReLU()
+        )
+
+
+    def reset_parameters(self):
+        self.apply(init_weights)
+
+
+    def forward(self, x):
+        # x shape: (B, C, L)
+        for layer in self.layers:
+            x = layer(x)
+        
+        x = self.activation(x)
+        x = torch.flatten(x, start_dim=1)
+        x = self.fc(x)
+        return x
+
+
 if __name__ == "__main__":
     model = ImpalaCNN(output_dims=256, input_channels=3, width=32, height=64)
     model.reset_parameters()
@@ -103,3 +186,9 @@ if __name__ == "__main__":
     optimizer.step()
 
     print("Optimizer step successful.")
+
+    model = ImpalaCNN1D(output_dims=256, input_channels=3, seq_length=10)
+    model.reset_parameters()
+    x = torch.randn(2, 3, 10)
+    out = model(x)
+    assert out.shape == (2, 256)
