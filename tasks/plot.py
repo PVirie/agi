@@ -190,6 +190,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--normalize",              "-n",   action="store_true")
+    parser.add_argument("--ma-window-size",         "-m",   type=int, default=100, help="Moving average window size for smoothing the curves")
     args = parser.parse_args()
 
     # print summary of arguments that are not default
@@ -205,8 +206,9 @@ if __name__ == "__main__":
 
     # Plotting the data with error bar
     style_cycler = cycler(
-        color=plt.cm.tab10.colors[: 4],  # use first 4 colors from tab10
-        linestyle=['-', '-.', ':', '--'],
+        color=plt.cm.tab10.colors,
+        # line start start from solid and change frequency of dot and dash to make it more distinguishable
+        linestyle=['-', (0, (5, 1)), (0, (3, 1)), (0, (1, 1)), (0, (5, 1, 3, 1)), (0, (3, 1, 1, 1)), (0, (1, 1, 1, 1)), (0, (5, 1, 1, 1, 1, 1)), (0, (3, 1, 3, 1, 1, 1)), (0, (3, 1, 1, 1, 3, 1))],
     )
     fig, axs = plt.subplots(3, 1, figsize=(9, 16))
     for ax in axs:
@@ -215,8 +217,20 @@ if __name__ == "__main__":
         for j, (metric_name, stats) in enumerate(game_data.items()):
             ax = axs[j]
             X = [i * aggregate_steps for i in range(len(stats["mean"]))]
-            Y = stats["mean"]
-            STD = [var ** 0.5 for var in stats["var"]]
+            if args.ma_window_size > 1:
+                # apply moving average to Y and STD
+                Y = []
+                STD = []
+                for i in range(len(stats["mean"])):
+                    start = max(0, i - args.ma_window_size + 1)
+                    end = i + 1
+                    mean_window = stats["mean"][start:end]
+                    var_window = stats["var"][start:end]
+                    Y.append(sum(mean_window) / len(mean_window))
+                    STD.append((sum(var_window) / len(var_window)) ** 0.5)
+            else:
+                Y = stats["mean"]
+                STD = [var ** 0.5 for var in stats["var"]]
             if args.normalize:
                 # normalize Y and STD by their max value for better visualization
                 max_Y = max(abs(y) for y in Y) if Y else 1

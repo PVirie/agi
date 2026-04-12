@@ -31,7 +31,7 @@ from implementations.agents import random_agent, model_base
 from implementations.networks.torch.policy.cultivate_token import Policy_Core
 from implementations.networks.torch.policy.base_xy import Projector
 from implementations.networks.torch.value.token_image import Value_Core
-from implementations.learning_algorithms.torch.ppo_nu import PPO_Nu as PPO
+from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.collectors.states import State_Sequence as Collector
 
 torch.autograd.set_detect_anomaly(True)
@@ -186,7 +186,7 @@ if __name__ == "__main__":
     
     random_agent = random_agent.Random_Agent("01")
     mission_size = env.mission_max_len
-    inventory_size = 2
+    inventory_size = 3 # inventory include 2 slots for items and 1 for current direction
     content_size = mission_size + inventory_size + env.full_mdp_width * env.full_mdp_height * 3 # mission + inv + image
     if args.scale == "small":
         history_steps = 0
