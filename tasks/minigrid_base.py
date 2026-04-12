@@ -91,7 +91,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
             if infos[i] is None:
                 stat_row.extend([None, positions[i, 0].item(), None])
             else:
-                stat_row.extend([infos[i]["episode"]["r"], positions[i, 0].item(), infos[i]["episode"]["t"]])
+                stat_row.extend([infos[i]["episode"]["r"], positions[i, 0].item(), infos[i]["episode"]["l"]])
         stat_recorder.record(stat_row)
 
         steps += 1
@@ -182,7 +182,7 @@ if __name__ == "__main__":
         full_mdp_height=22,
     )
 
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "nu", "time"]])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "nu", "length"]])
     
     random_agent = random_agent.Random_Agent("01")
     mission_size = env.mission_max_len
@@ -199,7 +199,7 @@ if __name__ == "__main__":
     elif args.scale == "medium":
         history_steps = 0
         state_size = 4
-        hidden_size = 256
+        hidden_size = 128
         layers = 4
         rollout_length = 256
         minibatch_size = 8
@@ -207,7 +207,7 @@ if __name__ == "__main__":
     else:  # large
         history_steps = 0
         state_size = 8
-        hidden_size = 512
+        hidden_size = 256
         layers = 4
         rollout_length = 256
         minibatch_size = 8
@@ -228,7 +228,6 @@ if __name__ == "__main__":
     value_core = Value_Core(
         int_action_size=6, ext_action_size=7, 
         position_size=1 + content_size - mission_size + state_size*2, # just nu + state + inv + image + state
-        # position_size=mission_size,
         output_dims=1,
         token_part_size=mission_size + inventory_size,  # mission tokens + inventory tokens
         dict_size=vocab_size, embedding_dim=embedding_dim,

@@ -6,7 +6,7 @@ import logging
 from implementations.networks.torch.components.base import init_weights
 from interfaces.network import Value_Network
 from implementations.networks.torch.components.std_resnet import ResNet
-from implementations.networks.torch.components.std_conv import ImpalaCNN
+from implementations.networks.torch.components.std_conv import ImpalaCNN, ImpalaCNN1D
 from utilities.safe_torch_module import Safe_nn_Module
 
 
@@ -28,6 +28,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.device = device
 
         self.token_part_size = token_part_size
+        self.embedding_dim = embedding_dim
 
         self.width = width
         self.height = height
@@ -49,11 +50,19 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.feature_channel = self.channel * 4
         self.conv_layers = ImpalaCNN(
             output_dims=hidden_size, 
-            input_channels=self.feature_channel, width=width, height=height,
+            input_channels=self.feature_channel, 
+            width=width, height=height,
             depths=[64, 64, 128]
         )
 
-        vec_dim = token_part_size * embedding_dim + hidden_size
+        self.conv1d_layers = ImpalaCNN1D(
+            output_dims=hidden_size,
+            input_channels=embedding_dim,
+            seq_length=token_part_size,
+            depths=[16, 32, 32]
+        )
+
+        vec_dim = hidden_size + hidden_size
         self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
 
         self.read_out_layers = nn.Sequential(
@@ -71,6 +80,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.embedding.reset_parameters()
         self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
+        self.conv1d_layers.reset_parameters()
         self.backbone.reset_parameters()
 
         def init_value_weights(m):
@@ -95,7 +105,10 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         image_content = context[:, :, (1 + 1 + 1 + self.position_size + self.token_part_size): ]  # (batch_size, context_size, image_part_size)
 
         embedded = self.embedding(tokens.long())  # (batch_size, context_size, packed_context_size, embedding_dim)
-        embedded = embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, token_size * embedding_dim)
+        token_features = torch.reshape(embedded, (batch_size * context_size, self.token_part_size, self.embedding_dim))  # (batch_size * context_size, token_part_size, embedding_dim)
+        token_features = token_features.permute(0, 2, 1)  # (batch_size * context_size, embedding_dim, token_part_size)
+        token_features = self.conv1d_layers(token_features)  # (batch_size * context_size, hidden_size)
+        token_features = token_features.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, hidden_size)
 
         # process image content through conv layers
         image_embedded = self.image_embedding(image_content.long())  # (batch_size, context_size, image_part_size, embedding_dim)
@@ -104,7 +117,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, hidden_size)
         
-        vec = torch.concat([embedded, obs_features], dim=-1)  # (batch_size, context_size, token_size * embedding_dim + hidden_size)
+        vec = torch.concat([token_features, obs_features], dim=-1)  # (batch_size, context_size, hidden_size + hidden_size)
         features = self.backbone(vec)  # (batch_size, context_size, hidden_size)
         
         values = self.read_out_layers(features)  # (batch_size, context_size, 1)

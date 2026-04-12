@@ -7,7 +7,7 @@ import logging
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
-from implementations.networks.torch.components.std_conv import ImpalaCNN
+from implementations.networks.torch.components.std_conv import ImpalaCNN, ImpalaCNN1D
 from implementations.networks.torch.policy.base_token import Policy_Core as Base_Policy_Core
 from utilities.safe_torch_module import Safe_nn_Module
 
@@ -37,6 +37,7 @@ class Policy_Core(Base_Policy_Core):
         self.obs_size = width * height * channel
         self.state_size = state_size
         self.hidden_size = hidden_size
+        self.embedding_dim = embedding_dim
 
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
@@ -59,12 +60,20 @@ class Policy_Core(Base_Policy_Core):
         self.feature_channel = self.channel * 4
         self.conv_layers = ImpalaCNN(
             output_dims=hidden_size, 
-            input_channels=self.feature_channel, width=width, height=height,
+            input_channels=self.feature_channel, 
+            width=width, height=height,
             depths=[64, 64, 128]
         )
 
+        self.conv1d_layers = ImpalaCNN1D(
+            output_dims=hidden_size,
+            input_channels=embedding_dim,
+            seq_length=goal_size,
+            depths=[16, 32, 32]
+        )
+
         # goal, state, inv, obs -> hidden
-        predict_input_dim = goal_size * embedding_dim + state_size + inventory_size * embedding_dim + hidden_size
+        predict_input_dim = hidden_size + state_size + inventory_size * embedding_dim + hidden_size
         self.backbone = ResNet(
             output_dims=hidden_size, 
             input_dims=predict_input_dim, 
@@ -109,7 +118,7 @@ class Policy_Core(Base_Policy_Core):
         self.head_subgoal = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, goal_size * embedding_dim)   # predict next subgoal in embedded space
+            nn.Linear(hidden_size, hidden_size)   # predict next subgoal in embedded space
         )
 
         self.reset_parameters()
@@ -123,6 +132,7 @@ class Policy_Core(Base_Policy_Core):
         self.goal_embedding.reset_parameters()
         self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
+        self.conv1d_layers.reset_parameters()
 
         self.backbone.reset_parameters()
         self.abstractor.reset_parameters()
@@ -162,8 +172,8 @@ class Policy_Core(Base_Policy_Core):
         inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
         obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
 
-        last_hlv_embedded = self.goal_embedding(last_hlv_inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
-        last_hlv_embedded = last_hlv_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, inventory_size * embedding_dim)
+        last_hlv_inv_embedded = self.goal_embedding(last_hlv_inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
+        last_hlv_inv_embedded = last_hlv_inv_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, inventory_size * embedding_dim)
 
         last_hlv_obs_embedded = self.image_embedding(last_hlv_obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
         last_hlv_obs_features = torch.reshape(last_hlv_obs_embedded, (batch_size * context_size, self.height, self.width, self.feature_channel))  # (batch_size * context_size, height, width, channel * embedding_dim)
@@ -172,7 +182,11 @@ class Policy_Core(Base_Policy_Core):
         last_hlv_obs_features = last_hlv_obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
-        goal_embedded = goal_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, goal_size * embedding_dim)
+        goal_features = torch.reshape(goal_embedded, (batch_size * context_size, self.goal_size, self.embedding_dim))  # (batch_size * context_size, goal_size, embedding_dim)
+        goal_features = goal_features.permute(0, 2, 1)  # (batch_size * context_size, embedding_dim, goal_size)
+        goal_features = self.conv1d_layers(goal_features)  # (batch_size * context_size, hidden_size)
+        goal_features = goal_features.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, hidden_size)
+
         inv_embedded = self.goal_embedding(inv.long())  # (batch_size, context_size, inventory_size, inv_size * embedding_dim)
         inv_embedded = inv_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, inventory_size * embedding_dim)
         
@@ -184,7 +198,7 @@ class Policy_Core(Base_Policy_Core):
 
         # Base flow
 
-        base_input = torch.concat([goal_embedded, state, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        base_input = torch.concat([goal_features, state, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
@@ -192,13 +206,13 @@ class Policy_Core(Base_Policy_Core):
         state_logits = self.head_state(base_output)  # (batch_size, context_size, state_size)
         
         # Cultivate flow
-        last_hlv = torch.concat([last_hlv_embedded, last_hlv_obs_features], dim=-1)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
+        last_hlv = torch.concat([last_hlv_inv_embedded, last_hlv_obs_features], dim=-1)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
         last_lw_abstraction = self.abstractor(last_hlv)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
-        sub_input = torch.concat([goal_embedded, last_hlv_state, last_lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
+        sub_input = torch.concat([goal_features, last_hlv_state, last_lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
         sub_output = self.backbone(sub_input)  # (batch_size, context_size, hidden_size)
 
         hlv_state_logits = self.head_state(sub_output)  # (batch_size, context_size, state_size)
-        subgoal_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, goal_size * embedding_dim)
+        subgoal_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, hidden_size)
 
         lwlv_input = torch.concat([subgoal_logits, state, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         lwlv_output = self.backbone(lwlv_input)  # (batch_size, context_size, hidden_size)
@@ -251,13 +265,13 @@ class Policy_Core(Base_Policy_Core):
 
         # Choose next position based on nu
         next_nu = probs_nu.sample().unsqueeze(-1)  # (batch_size, context_size)
-        next_last_inv_obs = torch.where(next_nu > 0.5, 
-                                 context[:, :, self.inv_pos:], 
-                                 context[:, :, self.last_hlv_inv_pos: (self.last_hlv_inv_pos + self.inventory_size + self.obs_size)])  # (batch_size, context_size, inventory_size + obs_size)
+        selected_hlv_state = torch.where(next_nu > 0.5, 
+                                 torch.concat([next_hlv_state, context[:, :, self.inv_pos:]], dim=-1),
+                                 context[:, :, self.last_hlv_state_pos: self.state_pos])  # (batch_size, context_size, state_size + inventory_size + obs_size)
 
         action_int = probs_int.sample()
         action_ext = probs_ext.sample()
-        next_position = torch.concat([next_nu, next_hlv_state, next_last_inv_obs, next_state], dim=-1)  # (batch_size, context_size, position_size)
+        next_position = torch.concat([next_nu, selected_hlv_state, next_state], dim=-1)  # (batch_size, context_size, position_size)
         action_content = np.zeros((batch_size, context_size, self.content_size), dtype=np.float32)
 
         action = np.concatenate([
