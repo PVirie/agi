@@ -24,7 +24,7 @@ install("colorama")
 
 import ale_py
 from utilities.atari.environments import Multi_Atari_Environment
-from utilities.compact_csv import Episode_Recorder
+from utilities.episode_recorder import Episode_Recorder
 from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

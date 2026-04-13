@@ -11,7 +11,7 @@ import tkinter as tk
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from utilities import compact_csv as csv
+from utilities import episode_recorder as csv
 
 
 def open_file_dialog():

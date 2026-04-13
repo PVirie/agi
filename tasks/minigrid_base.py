@@ -20,9 +20,10 @@ from utilities.package_install import install
 install("minigrid")
 install("gymnasium[other]")
 
+from utilities import scatter
 from utilities.minigrid.environments import Multi_Environment
 from utilities.tokenizer import Text_Tokenizer
-from utilities.compact_csv import Episode_Recorder
+from utilities.episode_recorder import Episode_Recorder
 from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -96,14 +97,17 @@ async def run(env, agent, rollout_length=16, verbose=False):
 
         steps += 1
         if any([r != 0 for r in rewards]) and verbose:
-            logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in rewards])}")
+            for g_id, stat in scatter(rewards, game_ids, ops='list').items():
+                logging.info(f"{steps}| Game: {g_id}, Rewards: {', '.join([format_float(r) for r in stat])}")
 
         if steps % rollout_length == 0:
             ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
 
         if steps % (rollout_length * 2) == 0 or should_stop:
-            logging.info(f"{steps}| Returns: {', '.join([format_float(s) for s in total_returns])}")
-            logging.info(f"{steps}| Selected actions: {actions}")
+            g_actions = scatter(actions, game_ids, ops='list')
+            for g_id, stat in scatter(total_returns, game_ids, ops='mean').items():
+                logging.info(f"{steps}| Game: {g_id}, Average Return: {format_float(stat)}")
+                logging.info(f"{steps}| Selected actions: {', '.join(g_actions[g_id])}")
 
             # save 
             policy_core.save()
@@ -171,7 +175,7 @@ if __name__ == "__main__":
     tokenizer.load(f"{experiment_path}/parameters")
 
     # game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
-    game_ids=["BabyAI-GoToObjMazeS7-v0"]*16 + ["BabyAI-GoToSeqS5R2-v0"]*16
+    game_ids=["BabyAI-OpenDoorsOrderN4Debug-v0"]*64
     # game_ids=["BabyAI-GoToLocalS8N7-v0"]*16 + ["BabyAI-PickupDistDebug-v0"]*16 + ["BabyAI-PutNextLocalS6N4-v0"]*16 + ["BabyAI-MiniBossLevel-v0"]*16
     env = Multi_Environment(
         game_ids=game_ids,
@@ -193,7 +197,7 @@ if __name__ == "__main__":
         state_size = 2
         hidden_size = 128
         layers = 2
-        rollout_length = 128
+        rollout_length = 256
         minibatch_size = 8
         embedding_dim = 4
     elif args.scale == "medium":
@@ -201,7 +205,7 @@ if __name__ == "__main__":
         state_size = 4
         hidden_size = 128
         layers = 4
-        rollout_length = 256
+        rollout_length = 512
         minibatch_size = 8
         embedding_dim = 8
     else:  # large
@@ -209,7 +213,7 @@ if __name__ == "__main__":
         state_size = 8
         hidden_size = 256
         layers = 4
-        rollout_length = 256
+        rollout_length = 512
         minibatch_size = 8
         embedding_dim = 8
 
@@ -237,7 +241,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [1, 2, 3, 4]), value_model=value_core,
+        policy_model=Projector(policy_core, [1, 2]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
         aux_coef=args.aux_coef
     )
