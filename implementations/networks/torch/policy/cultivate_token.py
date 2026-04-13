@@ -221,9 +221,7 @@ class Policy_Core(Base_Policy_Core):
         aux_ext_logits = self.head_ext(lwlv_output)  # (batch_size, context_size, ext_action_size)
 
         # nu (subgoal is satisfied or not) predictor
-        lw_eval_input = torch.concat([inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
-        lw_abstraction = self.abstractor(lw_eval_input)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
-        nu_input = torch.concat([subgoal_logits, last_hlv_state, lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
+        nu_input = torch.concat([subgoal_logits, state, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         nu_logit = self.nu_predictor(nu_input)  # (batch_size, context_size, 1)
         nu_logit = torch.squeeze(nu_logit, dim=-1)  # (batch_size, context_size)
 
@@ -265,13 +263,13 @@ class Policy_Core(Base_Policy_Core):
 
         # Choose next position based on nu
         next_nu = probs_nu.sample().unsqueeze(-1)  # (batch_size, context_size)
-        selected_hlv_state = torch.where(next_nu > 0.5, 
-                                 torch.concat([next_hlv_state, context[:, :, self.inv_pos:]], dim=-1),
-                                 context[:, :, self.last_hlv_state_pos: self.state_pos])  # (batch_size, context_size, state_size + inventory_size + obs_size)
+        selected_hlv = torch.where(next_nu > 0.5, 
+                                 context[:, :, self.inv_pos:],
+                                 context[:, :, self.last_hlv_inv_pos: self.state_pos])  # (batch_size, context_size, inventory_size + obs_size)
 
         action_int = probs_int.sample()
         action_ext = probs_ext.sample()
-        next_position = torch.concat([next_nu, selected_hlv_state, next_state], dim=-1)  # (batch_size, context_size, position_size)
+        next_position = torch.concat([next_nu, next_hlv_state, selected_hlv, next_state], dim=-1)  # (batch_size, context_size, position_size)
         action_content = np.zeros((batch_size, context_size, self.content_size), dtype=np.float32)
 
         action = np.concatenate([

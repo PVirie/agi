@@ -45,13 +45,13 @@ class Episode_Recorder:
         if record_statistic_dir is not None:
             os.makedirs(record_statistic_dir, exist_ok=True)
 
+        self.headers = headers
         stat_file_name = os.path.join(self.record_statistic_dir, f"episode_statistics.csv")
         if not os.path.exists(stat_file_name):
             with open(stat_file_name, mode='wb') as stat_file:
                 w = writer(stat_file)
                 w.writerow(headers)
 
-        self.last_row_values = ["" for _ in headers] # List to store the last row values, initialized to None
         self.rows = []
     
 
@@ -59,11 +59,13 @@ class Episode_Recorder:
         if self.record_statistic_dir is None:
             return
         # Update last row values with the new row values, then append a copy of the last row values to rows
+        last_row_values = []
         for i in range(len(row)):
             if row[i] is not None:
-                self.last_row_values[i] = row[i]
-        # Append a copy of the last row values to rows. We use copy to ensure that we are appending the current state of last_row_values, not a reference to it.
-        self.rows.append(self.last_row_values.copy())
+                last_row_values.append(row[i])
+            else:
+                last_row_values.append("")
+        self.rows.append(last_row_values)
 
         
     def write(self):

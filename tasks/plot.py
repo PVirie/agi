@@ -64,7 +64,7 @@ def save_file_dialog(default_path = None):
         return None
 
 
-def parse_statistic_file(file_path_generator, aggregate_steps=1000):
+def parse_statistic_file(file_path_generator, aggregate_steps=1000, N=50):
     """
     The input is a csv file with columns: namespace/game_id/metric_name, ...
     Return dict of game_id: where is game_id is also a dict of metric: that contains a list of mean and variance for each step. 
@@ -85,6 +85,8 @@ def parse_statistic_file(file_path_generator, aggregate_steps=1000):
     aggregate_steps: we will aggregate the data into steps of this size. 
     For example, if aggregate_steps=1000, then we will compute the mean and variance for steps 0-999, 1000-1999, etc. 
     This is useful for smoothing the curves when plotting.
+
+    N: averaging window size for computing mean and variance. For example, if N=50, then we will compute the mean and variance for the last 50 steps in each batch. 
     """
 
     game_data = {}
@@ -116,35 +118,31 @@ def parse_statistic_file(file_path_generator, aggregate_steps=1000):
                         "mean": [],
                         "var": []
                     }
-                    stats[game_id][metric_name] = {
-                        "sum_x": 0,
-                        "sum_x2": 0,
-                        "count": 0
-                    }
+                    stats[game_id][metric_name] = []
+
+
+            def add_datapoint():
+                # compute mean and variance for the previous batch
+                for metric_name, game_id in info:
+                    stat = stats[game_id][metric_name]
+                    count = len(stat)
+                    if count > 0:
+                        sum_stat = sum(stat)
+                        sum_stat2 = sum(x ** 2 for x in stat)
+                        mean = sum_stat / count
+                        var = (sum_stat2 / count) - (mean * mean)
+                        game_data[game_id][metric_name]["mean"].append(mean)
+                        game_data[game_id][metric_name]["var"].append(var)
+                    else:
+                        logging.warning(f"No valid data for metric '{metric_name}' and game '{game_id}' in batch ending at row {j}")
+                        game_data[game_id][metric_name]["mean"].append(0)
+                        game_data[game_id][metric_name]["var"].append(0)
+
 
             for j, row in enumerate(reader):
                 # first append 0 for each row
-                if j % aggregate_steps == 0:
-                    if j > 0:
-                        # compute mean and variance for the previous batch
-                        for metric_name, game_id in info:
-                            stat = stats[game_id][metric_name]
-                            count = stat["count"]
-                            if count > 0:
-                                mean = stat["sum_x"] / count
-                                var = (stat["sum_x2"] / count) - (mean * mean)
-                                game_data[game_id][metric_name]["mean"].append(mean)
-                                game_data[game_id][metric_name]["var"].append(var)
-                            else:
-                                logging.warning(f"No valid data for metric '{metric_name}' and game '{game_id}' in batch ending at row {j}")
-                                game_data[game_id][metric_name]["mean"].append(0)
-                                game_data[game_id][metric_name]["var"].append(0)
-
-                    for metric_name, game_id in info:
-                        stat = stats[game_id][metric_name]
-                        stat["sum_x"] = 0
-                        stat["sum_x2"] = 0
-                        stat["count"] = 0
+                if j % aggregate_steps == 0 and j > 0:
+                    add_datapoint()
 
                 for i, value in enumerate(row):
                     if i >= len(info):
@@ -152,34 +150,17 @@ def parse_statistic_file(file_path_generator, aggregate_steps=1000):
                         break
                     metric_name, game_id = info[i]
                     try:
-                        # check if value is numeric
-                        # if empty string, treat it as 0
-                        if value == "":
-                            x = 0.0
-                        else:
-                            x = float(value)
+                        x = float(value)
                     except ValueError:
-                        logging.warning(f"Non-numeric value '{value}' for metric '{metric_name}' and game '{game_id}' in row: {row}")
+                        # logging.warning(f"Non-numeric value '{value}' for metric '{metric_name}' and game '{game_id}' in row: {row}")
                         continue
 
-                    stat = stats[game_id][metric_name]
-                    stat["sum_x"] += x
-                    stat["sum_x2"] += x * x
-                    stat["count"] += 1
-
-            # finalize the last batch if it is not complete
-            for metric_name, game_id in info:
-                stat = stats[game_id][metric_name]
-                count = stat["count"]
-                if count > 0:
-                    mean = stat["sum_x"] / count
-                    var = (stat["sum_x2"] / count) - (mean * mean)
-                    game_data[game_id][metric_name]["mean"].append(mean)
-                    game_data[game_id][metric_name]["var"].append(var)
-                else:
-                    logging.warning(f"No valid data for metric '{metric_name}' and game '{game_id}' in the last batch")
-                    game_data[game_id][metric_name]["mean"].append(0)
-                    game_data[game_id][metric_name]["var"].append(0)
+                    stats[game_id][metric_name].append(x)
+                    while len(stats[game_id][metric_name]) > N:
+                        stats[game_id][metric_name].pop(0)
+            else:
+                # finalize the last batch if it is not complete
+                add_datapoint()
 
     return game_data
 
@@ -190,7 +171,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--normalize",              "-n",   action="store_true")
-    parser.add_argument("--ma-window-size",         "-m",   type=int, default=100, help="Moving average window size for smoothing the curves")
+    parser.add_argument("--ma-window-size",         "-m",   type=int, default=1, help="Moving average window size for smoothing the curves")
     args = parser.parse_args()
 
     # print summary of arguments that are not default

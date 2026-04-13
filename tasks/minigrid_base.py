@@ -54,7 +54,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
     last_reset = [False for _ in observations]
 
     total_returns = [0 for _ in observations]
-    session_return_update_alpha = 0.9
+    session_return_update_alpha = 0.95
     start_time = time.perf_counter()
     steps = 0
     while True:
