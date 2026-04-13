@@ -107,7 +107,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
             g_actions = scatter(actions, game_ids, ops='list')
             for g_id, stat in scatter(total_returns, game_ids, ops='mean').items():
                 logging.info(f"{steps}| Game: {g_id}, Average Return: {format_float(stat)}")
-                logging.info(f"{steps}| Selected actions: {', '.join(g_actions[g_id])}")
+                logging.info(f"{steps}| Selected actions: {', '.join([str(a) for a in g_actions[g_id]])}")
 
             # save 
             policy_core.save()
