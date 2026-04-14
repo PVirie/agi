@@ -190,7 +190,7 @@ if __name__ == "__main__":
     
     random_agent = random_agent.Random_Agent("01")
     mission_size = env.mission_max_len
-    inventory_size = 3 # inventory include 2 slots for items and 1 for current direction
+    inventory_size = 3 # inventory include 1 slot for current direction and 2 slots for items
     content_size = mission_size + inventory_size + env.full_mdp_width * env.full_mdp_height * 3 # mission + inv + image
     if args.scale == "small":
         history_steps = 0
@@ -203,9 +203,9 @@ if __name__ == "__main__":
     elif args.scale == "medium":
         history_steps = 0
         state_size = 4
-        hidden_size = 128
-        layers = 4
-        rollout_length = 512
+        hidden_size = 256
+        layers = 2
+        rollout_length = 256
         minibatch_size = 8
         embedding_dim = 8
     else:  # large
@@ -222,7 +222,7 @@ if __name__ == "__main__":
     policy_core = Policy_Core(
         int_action_size=6, ext_action_size=7, 
         goal_size=mission_size, inventory_size=inventory_size,
-        dict_size=vocab_size, embedding_dim=embedding_dim,
+        dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=tokenizer.pad_token_id,
         width=env.full_mdp_width, height=env.full_mdp_height, channel=3,
         state_size=state_size,
         hidden_size=hidden_size, layers=layers,
@@ -234,7 +234,7 @@ if __name__ == "__main__":
         position_size=1 + content_size - mission_size + state_size*2, # just nu + state + inv + image + state
         output_dims=1,
         token_part_size=mission_size + inventory_size,  # mission tokens + inventory tokens
-        dict_size=vocab_size, embedding_dim=embedding_dim,
+        dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=tokenizer.pad_token_id,
         width=env.full_mdp_width, height=env.full_mdp_height, channel=3,
         hidden_size=hidden_size, layers=layers,
         history_steps=history_steps, max_temporal_len=rollout_length,

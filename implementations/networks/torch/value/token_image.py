@@ -6,7 +6,8 @@ import logging
 from implementations.networks.torch.components.base import init_weights
 from interfaces.network import Value_Network
 from implementations.networks.torch.components.std_resnet import ResNet
-from implementations.networks.torch.components.std_conv import ImpalaCNN, ImpalaCNN1D
+from implementations.networks.torch.components.std_conv import ImpalaCNN
+from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from utilities.safe_torch_module import Safe_nn_Module
 
 
@@ -17,7 +18,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
                  position_size,
                  output_dims,
                  token_part_size,
-                 dict_size, embedding_dim,
+                 dict_size, embedding_dim, pad_token_id,
                  width, height, channel,
                  hidden_size, layers, 
                  history_steps=0, max_temporal_len=32, 
@@ -45,7 +46,8 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.hidden_size = hidden_size
         self.output_dims = output_dims
 
-        self.embedding = nn.Embedding(dict_size, embedding_dim)  # for tokens
+        self.pad_token_id = pad_token_id
+        self.embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for tokens
         self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
         self.feature_channel = self.channel * 4
         self.conv_layers = ImpalaCNN(
@@ -55,11 +57,12 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
             depths=[64, 64, 128]
         )
 
-        self.conv1d_layers = ImpalaCNN1D(
-            output_dims=hidden_size,
-            input_channels=embedding_dim,
-            seq_length=token_part_size,
-            depths=[16, 32, 32]
+        self.token_feature_extraction = InstructionTransformer(
+            input_dim=embedding_dim,
+            d_model=hidden_size, 
+            nhead=8, 
+            num_layers=2, 
+            max_len=token_part_size
         )
 
         vec_dim = hidden_size + hidden_size
@@ -80,7 +83,7 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.embedding.reset_parameters()
         self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
-        self.conv1d_layers.reset_parameters()
+        self.token_feature_extraction.reset_parameters()
         self.backbone.reset_parameters()
 
         def init_value_weights(m):
@@ -104,11 +107,9 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         tokens = context[:, :, (1 + 1 + 1 + self.position_size): (1 + 1 + 1 + self.position_size + self.token_part_size)]  # (batch_size, context_size, token_part_size)
         image_content = context[:, :, (1 + 1 + 1 + self.position_size + self.token_part_size): ]  # (batch_size, context_size, image_part_size)
 
+        token_mask = get_padding_mask(tokens, self.pad_token_id)  # (batch_size, context_size, token_part_size)
         embedded = self.embedding(tokens.long())  # (batch_size, context_size, packed_context_size, embedding_dim)
-        token_features = torch.reshape(embedded, (batch_size * context_size, self.token_part_size, self.embedding_dim))  # (batch_size * context_size, token_part_size, embedding_dim)
-        token_features = token_features.permute(0, 2, 1)  # (batch_size * context_size, embedding_dim, token_part_size)
-        token_features = self.conv1d_layers(token_features)  # (batch_size * context_size, hidden_size)
-        token_features = token_features.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, hidden_size)
+        token_features = self.token_feature_extraction(embedded, token_mask)  # (batch_size, context_size, hidden_size)
 
         # process image content through conv layers
         image_embedded = self.image_embedding(image_content.long())  # (batch_size, context_size, image_part_size, embedding_dim)

@@ -7,7 +7,8 @@ import logging
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
-from implementations.networks.torch.components.std_conv import ImpalaCNN, ImpalaCNN1D
+from implementations.networks.torch.components.std_conv import ImpalaCNN
+from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.policy.base_token import Policy_Core as Base_Policy_Core
 from utilities.safe_torch_module import Safe_nn_Module
 
@@ -17,7 +18,7 @@ class Policy_Core(Base_Policy_Core):
     def __init__(self, 
                  int_action_size, ext_action_size, 
                  goal_size, inventory_size,
-                 dict_size, embedding_dim,
+                 dict_size, embedding_dim, pad_token_id,
                  width, height, channel,
                  state_size,
                  hidden_size, layers, 
@@ -55,7 +56,8 @@ class Policy_Core(Base_Policy_Core):
         self.inv_pos = self.goal_pos + goal_size
         self.obs_pos = self.inv_pos + inventory_size
 
-        self.goal_embedding = nn.Embedding(dict_size, embedding_dim)  # for goal token
+        self.pad_token_id = pad_token_id
+        self.goal_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
         self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
         self.feature_channel = self.channel * 4
         self.conv_layers = ImpalaCNN(
@@ -65,11 +67,12 @@ class Policy_Core(Base_Policy_Core):
             depths=[64, 64, 128]
         )
 
-        self.conv1d_layers = ImpalaCNN1D(
-            output_dims=hidden_size,
-            input_channels=embedding_dim,
-            seq_length=goal_size,
-            depths=[16, 32, 32]
+        self.goal_feature_extraction = InstructionTransformer(
+            input_dim=embedding_dim,
+            d_model=hidden_size,
+            nhead=8, 
+            num_layers=2, 
+            max_len=goal_size
         )
 
         # goal, state, inv, obs -> hidden
@@ -132,7 +135,7 @@ class Policy_Core(Base_Policy_Core):
         self.goal_embedding.reset_parameters()
         self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
-        self.conv1d_layers.reset_parameters()
+        self.goal_feature_extraction.reset_parameters()
 
         self.backbone.reset_parameters()
         self.abstractor.reset_parameters()
@@ -181,12 +184,10 @@ class Policy_Core(Base_Policy_Core):
         last_hlv_obs_features = self.conv_layers(last_hlv_obs_features)  # (batch_size * context_size, hidden_size)
         last_hlv_obs_features = last_hlv_obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
+        goal_padding_mask = get_padding_mask(goal, self.pad_token_id)  # (batch_size, context_size, goal_size)
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
-        goal_features = torch.reshape(goal_embedded, (batch_size * context_size, self.goal_size, self.embedding_dim))  # (batch_size * context_size, goal_size, embedding_dim)
-        goal_features = goal_features.permute(0, 2, 1)  # (batch_size * context_size, embedding_dim, goal_size)
-        goal_features = self.conv1d_layers(goal_features)  # (batch_size * context_size, hidden_size)
-        goal_features = goal_features.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, hidden_size)
-
+        goal_features = self.goal_feature_extraction(goal_embedded, goal_padding_mask)  # (batch_size, context_size, hidden_size)
+        
         inv_embedded = self.goal_embedding(inv.long())  # (batch_size, context_size, inventory_size, inv_size * embedding_dim)
         inv_embedded = inv_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, inventory_size * embedding_dim)
         
