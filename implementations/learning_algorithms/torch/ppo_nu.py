@@ -131,7 +131,7 @@ class PPO_Nu(RL_Learner, Safe_nn_Module):
             for t in reversed(range(sequence_size)):
                 nextnonterminal = 1.0 - b_next_dones[:, t]
                 nextvalues = values_with_last[:, t + 1]
-                reduction_factor = torch.where(b_nu[:, t + 1] > 0.5, self.gamma, 0.995)
+                reduction_factor = torch.where(b_nu[:, t + 1] > 0.5, self.gamma, 1.0)
                 delta = b_rewards[:, t] + reduction_factor * nextvalues * nextnonterminal - values_with_last[:, t]
                 lastgaelam = delta + reduction_factor * self.gae_lambda * nextnonterminal * lastgaelam
                 advantages.append(lastgaelam)

@@ -204,7 +204,7 @@ if __name__ == "__main__":
         history_steps = 0
         state_size = 4
         hidden_size = 256
-        layers = 2
+        layers = 4
         rollout_length = 256
         minibatch_size = 8
         embedding_dim = 8

@@ -156,8 +156,9 @@ class Multi_Environment:
         
         if self.full_mdp:
             image = obs['image']  # shape (h, w, 3)
-            # pad image to top left corner of a full_mdp_width x full_mdp_height x 3 array, and the rest is 0, then flatten it and concatenate with mission tokens
-            image_padded = np.zeros((self.full_mdp_height, self.full_mdp_width, 3), dtype=np.uint8)
+            # pad image to top left corner of a full_mdp_width x full_mdp_height x 3 array, the rest is 255,
+            # then flatten it and concatenate with mission tokens
+            image_padded = np.full((self.full_mdp_height, self.full_mdp_width, 3), 255, dtype=np.uint8)
             h, w, _ = image.shape
             image_padded[:h, :w, :] = image
 

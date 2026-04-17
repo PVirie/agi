@@ -7,7 +7,7 @@ from implementations.networks.torch.components.base import init_weights
 
 
 class InstructionTransformer(nn.Module):
-    def __init__(self, input_dim, d_model, nhead, num_layers, max_len, mlp_ratio=2, dropout=0.1):
+    def __init__(self, input_dim, d_model, nhead, num_layers, max_len, mlp_ratio=2, dropout=0.01):
         super().__init__()
         self.d_model = d_model
         
