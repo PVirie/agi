@@ -48,6 +48,14 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
 
         self.pad_token_id = pad_token_id
         self.embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for tokens
+        self.token_feature_extraction = InstructionTransformer(
+            input_dim=embedding_dim,
+            d_model=hidden_size, 
+            nhead=8, 
+            num_layers=2, 
+            max_len=token_part_size
+        )
+
         self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
         self.feature_channel = self.channel * 4
         self.conv_layers = ImpalaCNN(
@@ -55,14 +63,6 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
             input_channels=self.feature_channel, 
             width=width, height=height,
             depths=[64, 64, 128]
-        )
-
-        self.token_feature_extraction = InstructionTransformer(
-            input_dim=embedding_dim,
-            d_model=hidden_size, 
-            nhead=8, 
-            num_layers=2, 
-            max_len=token_part_size
         )
 
         vec_dim = hidden_size + hidden_size

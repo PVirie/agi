@@ -124,5 +124,5 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [x] Record $\nu$ in each step for analysis
     - [x] Carry on states
     - [x] Fixed base model to clear position on done, truncated
-    - [ ] Separate model for high level and low level policy
+    - [x] Separate model for high level and low level policy
 - [ ] A real world environment (required for pretigious conference publication, but not necessary for the project itself)
