@@ -29,7 +29,7 @@ from colorama import Fore, Back, Style
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_base
-from implementations.networks.torch.policy.cultivate_token import Policy_Core
+from implementations.networks.torch.policy.base_token import Policy_Core
 from implementations.networks.torch.policy.base_xy import Projector
 from implementations.networks.torch.value.token_image import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
@@ -198,7 +198,7 @@ if __name__ == "__main__":
         hidden_size = 128
         layers = 2
         rollout_length = 256
-        minibatch_size = 8
+        minibatch_size = 16
         embedding_dim = 4
     elif args.scale == "medium":
         history_steps = 0
@@ -206,7 +206,7 @@ if __name__ == "__main__":
         hidden_size = 256
         layers = 4
         rollout_length = 256
-        minibatch_size = 8
+        minibatch_size = 16
         embedding_dim = 8
     else:  # large
         history_steps = 0
@@ -214,13 +214,13 @@ if __name__ == "__main__":
         hidden_size = 256
         layers = 4
         rollout_length = 512
-        minibatch_size = 8
+        minibatch_size = 16
         embedding_dim = 8
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=6, ext_action_size=7, 
+        int_action_size=2, ext_action_size=7, 
         goal_size=mission_size, inventory_size=inventory_size,
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=tokenizer.pad_token_id,
         width=env.full_mdp_width, height=env.full_mdp_height, channel=3,
@@ -230,8 +230,8 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        int_action_size=6, ext_action_size=7, 
-        position_size=1 + content_size - mission_size + state_size*2, # just nu + state + inv + image + state
+        int_action_size=2, ext_action_size=7, 
+        position_size=state_size,
         output_dims=1,
         token_part_size=mission_size + inventory_size,  # mission tokens + inventory tokens
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=tokenizer.pad_token_id,
@@ -241,9 +241,8 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [1, 2]), value_model=value_core,
-        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=args.aux_coef
+        policy_model=Projector(policy_core, [1]), value_model=value_core,
+        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,
@@ -251,7 +250,7 @@ if __name__ == "__main__":
         context_collector=Collector(max_history=history_steps),
         action_collector=Collector(max_history=history_steps),
         valid_action_collector=Collector(max_history=history_steps),
-        do_supervision=True
+        do_supervision=False
     )
 
     asyncio.run(run(env, agent, rollout_length, verbose=not args.silent))
