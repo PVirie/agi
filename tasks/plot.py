@@ -36,10 +36,19 @@ def open_files_dialog():
     root = tk.Tk()
     root.withdraw()
 
-    file_paths = filedialog.askopenfilenames(
-        title="Select Statistic files",
-        filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
-    )
+    file_paths = []
+    more = True
+    
+    while more:
+        files = filedialog.askopenfilenames(
+            title="Select Statistic files",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
+        )
+        if files:
+            file_paths.extend(files)
+            more = tk.messagebox.askyesno("Select More Files", "Do you want to select more files?")
+        else:
+            more = False
 
     if file_paths:
         for file_path in file_paths:
@@ -62,6 +71,23 @@ def save_file_dialog(default_path = None):
     else:
         logging.warning("No file selected for saving.")
         return None
+    
+
+def compute_common_part(file_paths, separator=os.sep, suffix=False):
+    parts = [file_path.split(os.sep) for file_path in file_paths]
+    if suffix:
+        # reverse the parts for common suffix
+        parts = [list(reversed(part)) for part in parts]
+    common_part = []
+    for i in range(min(len(part) for part in parts)):
+        current_part = parts[0][i]
+        if all(part[i] == current_part for part in parts):
+            common_part.append(current_part)
+        else:
+            break
+    if suffix:
+        common_part = list(reversed(common_part))
+    return separator.join(common_part)
 
 
 def parse_statistic_file(file_path_generator, aggregate_steps=1000, N=50):
@@ -89,10 +115,32 @@ def parse_statistic_file(file_path_generator, aggregate_steps=1000, N=50):
     N: averaging window size for computing mean and variance. For example, if N=50, then we will compute the mean and variance for the last 50 steps in each batch. 
     """
 
+    # first get all file paths to compute shortest unique path (sup) for better visualization
+    file_paths = set()
+    for file_index, file_path in enumerate(file_path_generator):
+        file_paths.add(file_path)
+
+    # compute common prefix (quantize by /, to prevent cutting off part)
+    cp = compute_common_part(file_paths, separator=os.sep, suffix=False)
+
+    # compute common suffix (quantize by /, to prevent cutting off part)
+    cs = compute_common_part(file_paths, separator=os.sep, suffix=True)
+        
+    # subtract common prefix up to the common suffix, to get the unique part of the file path for better visualization
+    unique_file_paths = []
+    for file_path in file_paths:
+        sup = file_path[len(cp):len(file_path)-len(cs)] if len(cs) > 0 else file_path[len(cp):]
+        # trim
+        if sup.startswith(os.sep):
+            sup = sup[len(os.sep):]
+        if sup.endswith(os.sep):
+            sup = sup[:-len(os.sep)]
+        unique_file_paths.append((sup, file_path))
+
+
     game_data = {}
-    for file_path in file_path_generator:
-        file_basename_no_ext = os.path.splitext(os.path.basename(file_path))[0]
-        logging.info(f"Parsing file: {file_basename_no_ext}")
+    for (sup, file_path) in unique_file_paths:
+        logging.info(f"Parsing file: {sup}")
         with open(file_path, 'rb') as f:
             reader = csv.reader(f)
             header = next(reader)
@@ -105,7 +153,7 @@ def parse_statistic_file(file_path_generator, aggregate_steps=1000, N=50):
                     logging.warning(f"Unexpected column name format: {col}")
                     continue
                 metric_name = parts[-1]
-                game_id = f"{file_basename_no_ext}/" + "/".join(parts[:-1])
+                game_id = f"{sup}/" + "/".join(parts[:-1])
                 info.append((metric_name, game_id))
 
             stats = {}
