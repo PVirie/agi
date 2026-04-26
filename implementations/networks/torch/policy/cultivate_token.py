@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Bernoulli
 import numpy as np
 import logging
@@ -228,9 +229,18 @@ class Policy_Core(Base_Policy_Core):
         nu_logit = torch.squeeze(nu_logit, dim=-1)  # (batch_size, context_size)
 
         # Calculate aux action loss
-        aux_loss = \
-            torch.mean((int_logits - aux_int_logits)**2, dim=-1) + \
-            torch.mean((ext_logits - aux_ext_logits)**2, dim=-1) # (batch_size, context_size)
+        # use compute cross entropy of logits against its aux counter part
+        # use symmetric KL divergence as aux loss
+        aux_int_loss = (
+            - torch.sum(F.softmax(int_logits, dim=-1).detach() * F.log_softmax(aux_int_logits, dim=-1), dim=-1).mean() 
+            - torch.sum(F.softmax(aux_int_logits, dim=-1).detach() * F.log_softmax(int_logits, dim=-1), dim=-1).mean()
+        )
+        aux_ext_loss = (
+            - torch.sum(F.softmax(ext_logits, dim=-1).detach() * F.log_softmax(aux_ext_logits, dim=-1), dim=-1).mean() 
+            - torch.sum(F.softmax(aux_ext_logits, dim=-1).detach() * F.log_softmax(ext_logits, dim=-1), dim=-1).mean()
+        )
+        # aux_loss = aux_int_loss + aux_ext_loss
+        aux_loss = aux_ext_loss
         
         return int_logits, ext_logits, hlv_state_logits, nu_logit, aux_loss
     
