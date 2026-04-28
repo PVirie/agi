@@ -240,8 +240,7 @@ if __name__ == "__main__":
     ).to(device)
     ppo_learner = PPO(
         policy_model=Projector(policy_core, [1, 2, 3]), value_model=value_core,
-        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=args.aux_coef
+        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,
@@ -249,7 +248,7 @@ if __name__ == "__main__":
         context_collector=Collector(max_history=history_steps),
         action_collector=Collector(max_history=history_steps),
         valid_action_collector=Collector(max_history=history_steps),
-        do_supervision=True
+        do_supervision=False
     )
 
     asyncio.run(run(env, agent, rollout_length, verbose=not args.silent))

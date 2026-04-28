@@ -124,6 +124,14 @@ class Policy_Core(Base_Policy_Core):
             nn.Linear(hidden_size, hidden_size)   # predict next subgoal in embedded space
         )
 
+        # alpha: hidden -> [0, 1]
+        self.head_alpha = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, 1),
+            nn.Sigmoid() 
+        )
+
         # nu: hidden -> [-inf, inf]
         self.head_nu = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
@@ -158,11 +166,12 @@ class Policy_Core(Base_Policy_Core):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-        self.head_nu.apply(init_actor_weights)
         self.head_int.apply(init_actor_weights)
         self.head_ext.apply(init_actor_weights)
         self.head_state.apply(init_actor_weights)
         self.head_subgoal.apply(init_actor_weights)
+        self.head_nu.apply(init_actor_weights)
+        self.head_alpha.apply(init_actor_weights)
 
 
     def compute(self, context):
@@ -203,14 +212,6 @@ class Policy_Core(Base_Policy_Core):
         obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
-        # Base flow
-
-        base_input = torch.concat([goal_features, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
-        base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
-
-        int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
-        ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
-        
         # Cultivate flow
         last_hlv = torch.concat([last_hlv_inv_embedded, last_hlv_obs_features], dim=-1)  # (batch_size, context_size, inventory_size * embedding_dim + hidden_size)
         last_lw_abstraction = self.abstractor(last_hlv)  # (batch_size, context_size, hidden)
@@ -219,30 +220,19 @@ class Policy_Core(Base_Policy_Core):
 
         hlv_state_logits = self.head_state(sub_output)  # (batch_size, context_size, state_size)
         subgoal_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, hidden_size)
+        alpha = self.head_alpha(sub_output)  # (batch_size, context_size, 1)
 
-        lwlv_input = torch.concat([subgoal_logits, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        selected_goal_features = alpha * subgoal_logits + (1 - alpha) * goal_features  # (batch_size, context_size, hidden_size)
+
+        lwlv_input = torch.concat([selected_goal_features, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         lwlv_output = self.backbone(lwlv_input)  # (batch_size, context_size, hidden_size)
 
-        aux_int_logits = self.head_int(lwlv_output)  # (batch_size, context_size, int_action_size)
-        aux_ext_logits = self.head_ext(lwlv_output)  # (batch_size, context_size, ext_action_size)
+        int_logits = self.head_int(lwlv_output)  # (batch_size, context_size, int_action_size)
+        ext_logits = self.head_ext(lwlv_output)  # (batch_size, context_size, ext_action_size)
         nu_logit = self.head_nu(lwlv_output)  # (batch_size, context_size, 1)
         nu_logit = torch.squeeze(nu_logit, dim=-1)  # (batch_size, context_size)
-
-        # Calculate aux action loss
-        # use compute cross entropy of logits against its aux counter part
-        # use symmetric KL divergence as aux loss
-        aux_int_loss = (
-            - torch.sum(F.softmax(int_logits, dim=-1).detach() * F.log_softmax(aux_int_logits, dim=-1), dim=-1).mean() 
-            - torch.sum(F.softmax(aux_int_logits, dim=-1).detach() * F.log_softmax(int_logits, dim=-1), dim=-1).mean()
-        )
-        aux_ext_loss = (
-            - torch.sum(F.softmax(ext_logits, dim=-1).detach() * F.log_softmax(aux_ext_logits, dim=-1), dim=-1).mean() 
-            - torch.sum(F.softmax(aux_ext_logits, dim=-1).detach() * F.log_softmax(ext_logits, dim=-1), dim=-1).mean()
-        )
-        # aux_loss = aux_int_loss + aux_ext_loss
-        aux_loss = aux_ext_loss
         
-        return int_logits, ext_logits, hlv_state_logits, nu_logit, aux_loss
+        return int_logits, ext_logits, hlv_state_logits, nu_logit
     
 
     def get_action(self, context, valid_actions=None):
@@ -259,7 +249,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, hlv_state_logits, nu_logit, aux_loss = self.compute(context)
+        logits_int, logits_ext, hlv_state_logits, nu_logit = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -307,7 +297,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, hlv_state_logits, nu_logit, aux_loss = self.compute(context)
+        logits_int, logits_ext, hlv_state_logits, nu_logit = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -354,7 +344,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, hlv_state_logits, nu_logit, aux_loss = self.compute(context)
+        logits_int, logits_ext, hlv_state_logits, nu_logit = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -380,7 +370,7 @@ class Policy_Core(Base_Policy_Core):
             log_prob_int, log_prob_ext, log_prob_nu, log_prob_hlv_state
         ], dim=-1), torch.stack([
             entropy_int, entropy_ext, entropy_nu, entropy_hlv_state
-        ], dim=-1), aux_loss
+        ], dim=-1), None
 
 
 
