@@ -160,7 +160,7 @@ if __name__ == "__main__":
     np.random.seed(20260417)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/minigrid_cultivate"
+    experiment_path = f"{APP_ROOT}/experiments/cultivate/minigrid_cultivate_{args.scale}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):

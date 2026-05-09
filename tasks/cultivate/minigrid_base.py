@@ -155,12 +155,12 @@ if __name__ == "__main__":
     logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(202603129)  
+    random.seed(20260329)  
     torch.manual_seed(20260329)
     np.random.seed(20260329)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/minigrid_base"
+    experiment_path = f"{APP_ROOT}/experiments/cultivate/minigrid_base_{args.scale}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):

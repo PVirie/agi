@@ -9,26 +9,31 @@ import asyncio
 import time
 import torch
 
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 APP_ROOT = os.getenv("APP_ROOT", "/app")
 
 from utilities.package_install import install
 
+install("opencv-python-headless") 
 install("ale-py")
+install("gymnasium[atari, other]")
 install("colorama")
 
-from ale_py.vector_env import AtariVectorEnv
+import ale_py
+from utilities import scatter
+from utilities.atari.environments import Multi_Atari_Environment
+from utilities.episode_recorder import Episode_Recorder
 from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from implementations.agents import random_agent, model_53
-from implementations.networks.torch.policy.base_xy import Policy_Core, Projector
+from implementations.agents import random_agent, model_base
+from implementations.networks.torch.policy.base_xy import Policy_Core
+from implementations.networks.torch.policy.base_xy import Projector
 from implementations.networks.torch.value.conv import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.collectors.states import State_Sequence as Collector
-from implementations.memories.energy_memory import Energy_Memory as Memory
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -39,8 +44,8 @@ def format_float(f):
         return Fore.RED + "{: .1f}".format(f) + Style.RESET_ALL
     else:
         return "{: .1f}".format(f)
-    
-async def run(env, agent, rollout_length=16):
+
+async def run(env, agent, rollout_length=16, verbose=False):
 
     observations, info = env.reset()
     rewards = [np.float32(0) for _ in observations]
@@ -50,7 +55,6 @@ async def run(env, agent, rollout_length=16):
     last_reset = [False for _ in observations]
 
     total_returns = [0 for _ in observations]
-    session_return_stat = 0
     session_return_update_alpha = 0.95
     start_time = time.perf_counter()
     steps = 0
@@ -58,43 +62,51 @@ async def run(env, agent, rollout_length=16):
         elapsed_time = time.perf_counter() - start_time
         should_stop = elapsed_time > max_running_time  # run for the specified max time
 
-        actions, _ = agent.choose_action(
+        actions, positions = agent.choose_action(
             last_idles=last_idle,
             last_dones=last_done,
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=[obs.astype(np.float32) / 255.0 for obs in observations],
-            rewards=[r.item() for r in rewards],
-            next_available_actions=[
-                list(range(action_space_size)) for _ in observations
-            ],
+            rewards=[r for r in rewards],
+            next_available_actions=env.get_available_actions(),
             force_train=steps % rollout_length == 0 or should_stop,
         )
         actions = [int(a[0].item()) if a is not None else None for a in actions]
 
-        observations, rewards, terminations, truncations, infos = env.step(np.array(actions, dtype=np.int32))
+        observations, rewards, terminations, truncations, infos = env.step(actions)
 
         last_idle = [False for _ in observations]
         last_done = [terminations[i] or truncations[i] for i in range(len(observations))]
         last_truncated = [truncations[i] for i in range(len(observations))]
         last_reset = [False for _ in observations]
 
+        stat_row = []
         for i in range(len(observations)):
-            total_returns[i] += rewards[i].item()
             if terminations[i] or truncations[i]:
-                session_return_stat = session_return_update_alpha * total_returns[i] + (1 - session_return_update_alpha) * session_return_stat
-                total_returns[i] = 0
+                total_score = infos[i]["episode"]["r"]
+                total_returns[i] = (
+                    session_return_update_alpha * total_returns[i]
+                    + (1 - session_return_update_alpha) * total_score
+                )
+                stat_row.extend([infos[i]["episode"]["r"], infos[i]["episode"]["l"], infos[i]["episode"]["t"]])
+            else:
+                stat_row.extend([None, None, None])
+        stat_recorder.record(stat_row)
 
         steps += 1
-        if any([r != 0 for r in rewards]):
-            logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in rewards])}")
+        if any([r != 0 for r in rewards]) and verbose:
+            for g_id, stat in scatter(rewards, game_ids, ops='list').items():
+                logging.info(f"{steps}| Game: {g_id}, Rewards: {', '.join([format_float(r) for r in stat])}")
 
         if steps % rollout_length == 0:
             ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
 
         if steps % (rollout_length * 2) == 0 or should_stop:
-            logging.info(f"{steps}| Session return stat: {session_return_stat}")
-            logging.info(f"{steps}| Selected actions: {actions}")
+            g_actions = scatter(actions, game_ids, ops='list')
+            for g_id, stat in scatter(total_returns, game_ids, ops='mean').items():
+                logging.info(f"{steps}| Game: {g_id}, Average Return: {format_float(stat)}")
+                logging.info(f"{steps}| Selected actions: {', '.join([str(a) for a in g_actions[g_id]])}")
 
             # save 
             policy_core.save()
@@ -106,6 +118,9 @@ async def run(env, agent, rollout_length=16):
             logging.info(f"Completed {steps} steps.")
             logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
             logging.info(f"Expected time left: {max_running_time - elapsed_time:.2f} seconds.")
+
+        if steps % 1000 == 0:
+            stat_recorder.write()
 
         if should_stop:
             logging.info("Max running time reached, stopping the experiment.")
@@ -121,9 +136,8 @@ if __name__ == "__main__":
     parser.add_argument("--reset",                  "-r",   action="store_true")
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
-    parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
-    parser.add_argument("--scheme",                 "-sch", type=str, default="reactive", help="The scheme to use for the agent's decision making. Default is 'reactive'.")
-    parser.add_argument("--with-auxiliary",         "-aux", action="store_true", help="Enable auxiliary loss along with PPO.")
+    parser.add_argument("--aux-coef",               "-af",  type=float, default=0.1, help="Coefficient for the auxiliary loss. Default is 0.1.")
+    parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     args = parser.parse_args()
 
     # print summary of arguments that are not default
@@ -141,12 +155,12 @@ if __name__ == "__main__":
     logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(20260111)  
-    torch.manual_seed(20260111)
-    np.random.seed(20260111)
+    random.seed(20260509)  
+    torch.manual_seed(20260509)
+    np.random.seed(20260509)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/atari"
+    experiment_path = f"{APP_ROOT}/experiments/transfer/atari_base_{args.scale}_aux{args.aux_coef}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -154,11 +168,35 @@ if __name__ == "__main__":
         exit()
     os.makedirs(experiment_path, exist_ok=True)
 
-    env = AtariVectorEnv(
-        game="pong",                # The ROM id not name, i.e., camel case compared to `gymnasium.make` name versions
-        num_envs=16,                # Number of parallel environments
-        img_height=64,              # Height to resize frames to
-        img_width=32,               # Width to resize frames to
+    """
+        These games are chosen based on their simplicity and mechanics similarity.
+        Reward clipping should be applied for all games.
+
+        Very simple games:
+            ALE/Freeway-v5: 21-24
+
+        Simple games:
+            ALE/Pong-v5: 21
+            ALE/Breakout-v5: 216
+
+        Shoot up games (harder):
+            ALE/SpaceInvaders-v5: 50
+            ALE/BeamRider-v5: 50
+            ALE/DemonAttack-v5: 100
+            ALE/Galaxian-v5: 50
+            ALE/Assault-v5: 50
+
+        City block games (harder):
+            ALE/MsPacman-v5: 60-80
+            ALE/Pacman-v5: 60-80
+            ALE/Amidar-v5: 20-30
+    """
+
+    game_ids=["ALE/Pong-v5"] * 32 + ["ALE/SpaceInvaders-v5"] * 32
+    env = Multi_Atari_Environment(
+        game_ids=game_ids,   
+        img_height=64,           # Height to resize frames to
+        img_width=32,            # Width to resize frames to
         maxpool=True,               # 1. Solves "Invisibility" (Flickering)
         stack_num=4,                # 2. Solves "Motion" (Velocity)
         frameskip=4,                # 3. Standard time resolution
@@ -166,36 +204,35 @@ if __name__ == "__main__":
         episodic_life=True,         # Recommended for harder games (Breakout/Montezuma)
         reward_clipping=True,
     )
-    action_space_size = env.single_action_space.n.item()
 
-    random_agent = random_agent.Random_Agent("01")
-
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "length", "time"]])
+    
     if args.scale == "small":
-        history_steps = 1
+        history_steps = 0
         hidden_size = 64
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
         position_size = 2
     elif args.scale == "medium":
-        history_steps = 8
+        history_steps = 0
         hidden_size = 128
-        conv_layers = [16, 32, 64, 128, 256] # medium impala
-        rollout_length = 128
+        conv_layers = [16, 32, 64, 64] # medium impala
+        rollout_length = 256
         minibatch_size = 8
-        position_size = 16
+        position_size = 2
     else:  # large
-        history_steps = 16
+        history_steps = 0
         hidden_size = 256
-        conv_layers = [32, 64, 128, 128, 256, 256] # large impala
-        rollout_length = 128
+        conv_layers = [16, 32, 64, 128, 128] # large impala
+        rollout_length = 256
         minibatch_size = 8
-        position_size = 64
+        position_size = 2
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=6, ext_action_size=action_space_size, position_size=position_size,
+        int_action_size=2, ext_action_size=18, position_size=position_size,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=conv_layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
@@ -209,24 +246,17 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1]), value_model=value_core,
+        policy_model=Projector(policy_core, [1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=0.1 if args.with_auxiliary else None
+        aux_coef=args.aux_coef
     )
-    memory = Memory(
-        sizes=(1, position_size, policy_core.content_size),
-        max_slot_size=256
-    )
-    agent = model_53.Model_53(
+    agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,
         trainer=ppo_learner,
         context_collector=Collector(max_history=history_steps),
         action_collector=Collector(max_history=history_steps),
         valid_action_collector=Collector(max_history=history_steps),
-        memory=memory,
-        max_num_thought_steps=args.max_thought_steps,
-        do_supervision=args.with_auxiliary,
-        scheme=model_53.Scheme(args.scheme)
+        do_supervision=True,
     )
 
-    asyncio.run(run(env, agent, rollout_length))
+    asyncio.run(run(env, agent, rollout_length, verbose=not args.silent))
