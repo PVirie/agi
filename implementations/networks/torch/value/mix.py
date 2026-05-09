@@ -37,7 +37,13 @@ class Value_Core(Base_Value_Core):
         self.hidden_size = hidden_size
         self.output_dims = output_dims
 
-        self.conv_layers = ImpalaCNN(output_dims=hidden_size, input_channels=channel, width=width, height=height, depths=layers)
+        self.conv_layers = ImpalaCNN(
+            output_dims=hidden_size, 
+            input_channels=channel, 
+            width=width, 
+            height=height, 
+            depths=layers
+        )
 
         vec_dim = 1 + ext_action_size + self.position_size  # reward + action_onehot + position
         self.vec_embedding = nn.Sequential(

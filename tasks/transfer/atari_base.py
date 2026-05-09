@@ -241,7 +241,7 @@ if __name__ == "__main__":
     value_core = Value_Core(
         position_size=position_size,
         width=32, height=64, channel=4,
-        output_dims=3,
+        output_dims=1,
         layers=conv_layers,
         device=device, persistence_path=parameters_path
     ).to(device)

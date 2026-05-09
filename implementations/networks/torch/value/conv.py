@@ -29,7 +29,14 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
         self.channel = channel
         self.output_dims = output_dims
 
-        self.conv_layers = ImpalaCNN(output_dims=32, input_channels=channel, width=width, height=height, depths=layers)
+        self.conv_layers = ImpalaCNN(
+            output_dims=32, 
+            input_channels=channel, 
+            width=width, 
+            height=height, 
+            depths=layers
+        )
+        
         self.read_out_layers = nn.Sequential(
             nn.Linear(32, 256),
             nn.ReLU(),
