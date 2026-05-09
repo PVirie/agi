@@ -1,6 +1,5 @@
 import os
 import sys
-import subprocess
 import logging
 import random
 import argparse
@@ -8,10 +7,9 @@ import numpy as np
 import shutil
 import asyncio
 import time
-
 import torch
 
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 APP_ROOT = os.getenv("APP_ROOT", "/app")
 
@@ -29,7 +27,7 @@ from colorama import Fore, Back, Style
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_base
-from implementations.networks.torch.policy.cultivate_token import Policy_Core
+from implementations.networks.torch.policy.base_token import Policy_Core
 from implementations.networks.torch.policy.base_xy import Projector
 from implementations.networks.torch.value.token_image import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
@@ -157,12 +155,12 @@ if __name__ == "__main__":
     logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(20260417)  
-    torch.manual_seed(20260417)
-    np.random.seed(20260417)
+    random.seed(202603129)  
+    torch.manual_seed(20260329)
+    np.random.seed(20260329)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/minigrid_cultivate"
+    experiment_path = f"{APP_ROOT}/experiments/minigrid_base"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -174,7 +172,9 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
+    # game_ids=["BabyAI-MiniBossLevel-v0"]*16 + ["BabyAI-BossLevel-v0"]*16 # harder environments 
     game_ids=["BabyAI-OpenDoorsOrderN4Debug-v0"]*64
+    # game_ids=["BabyAI-GoToLocalS8N7-v0"]*16 + ["BabyAI-PickupDistDebug-v0"]*16 + ["BabyAI-PutNextLocalS6N4-v0"]*16 + ["BabyAI-MiniBossLevel-v0"]*16
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -229,7 +229,7 @@ if __name__ == "__main__":
     ).to(device)
     value_core = Value_Core(
         int_action_size=2, ext_action_size=7, 
-        position_size=1 + content_size - mission_size + state_size, # just nu + state + inv + image
+        position_size=state_size,
         output_dims=1,
         token_part_size=mission_size + inventory_size,  # mission tokens + inventory tokens
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=tokenizer.pad_token_id,
@@ -239,7 +239,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [1, 2, 3]), value_model=value_core,
+        policy_model=Projector(policy_core, [1]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     agent = model_base.Model_Base(

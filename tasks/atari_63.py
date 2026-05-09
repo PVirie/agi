@@ -1,6 +1,5 @@
 import os
 import sys
-import subprocess
 import logging
 import random
 import argparse
@@ -8,7 +7,6 @@ import numpy as np
 import shutil
 import asyncio
 import time
-
 import torch
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))

@@ -3,7 +3,7 @@ import sys
 import time
 import numpy as np
 
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 APP_ROOT = os.getenv("APP_ROOT", "/app")
 
@@ -57,7 +57,7 @@ for i, obs in enumerate(observations):
     mission_text = tokenizer.decode(mission)
     print(f"Environment {i} Mission: {mission_text}")
 
-    frame = obs[envs.mission_max_len:].reshape((envs.full_mdp_height, envs.full_mdp_width, 3)).astype(np.uint8)
+    frame = obs[envs.mission_max_len + 3:].reshape((envs.full_mdp_height, envs.full_mdp_width, 3)).astype(np.uint8)
     # convert frame to color using IDX_TO_COLOR and gather
     color_indices = frame[..., 1]
     # map color indices to RGB using constants.IDX_TO_COLOR

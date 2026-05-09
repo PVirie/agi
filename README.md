@@ -2,11 +2,9 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name        | Description                                                        |
-| ---------- | ----------------- | ------------------------------------------------------------------ |
-| LIII       | Cognitive algebra | A learnable computationally universal model                        |
-| LXIII      | Mem Ops           | Mk. 53 with full memory operations                                 |
-| LXXI       | $\nu$             | Mk. 71 Cultivate On-policy Hindsight Abstraction for Path planning |
+| Generation | Model Name | Description                              |
+| ---------- | ---------- | ---------------------------------------- |
+| LXXII      | ATAT       | Assisting Training with Algebra Transfer |
 
 ## Prerequisites
 

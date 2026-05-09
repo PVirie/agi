@@ -3,7 +3,7 @@ import sys
 import time
 from PIL import Image
 
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 APP_ROOT = os.getenv("APP_ROOT", "/app")
 
