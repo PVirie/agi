@@ -72,7 +72,7 @@ class Policy_Core(Base_Policy_Core):
             output_dims=hidden_size, 
             input_channels=self.feature_channel, 
             width=width, height=height,
-            depths=[64, 64, 128]
+            depths=layers
         )
 
         # goal, inv, obs -> hidden
@@ -80,7 +80,7 @@ class Policy_Core(Base_Policy_Core):
             output_dims=hidden_size, 
             input_dims=hidden_size + inventory_size * embedding_dim + hidden_size, 
             hidden_dims=hidden_size, 
-            layers=layers
+            layers=[hidden_size for _ in layers]
         )
 
         # subgoal, state, abstract(inv, obs) -> hidden
@@ -88,14 +88,15 @@ class Policy_Core(Base_Policy_Core):
             output_dims=hidden_size,
             input_dims=hidden_size + state_size + hidden_size,
             hidden_dims=hidden_size,
-            layers=layers
+            layers=[hidden_size for _ in layers]
         )
 
         # inv, obs -> hidden_size
         self.abstractor = ResNet(
             output_dims=hidden_size, 
             input_dims=inventory_size * embedding_dim + hidden_size, 
-            hidden_dims=hidden_size, layers=layers
+            hidden_dims=hidden_size, 
+            layers=[hidden_size for _ in layers]
         )
 
         # hidden -> action

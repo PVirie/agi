@@ -10,10 +10,11 @@ from interfaces.network import Policy_Network
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.temporal_unet import TemporalUNet
+from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
+class Policy_Core(Base_Policy_Core):
 
     def __init__(self, 
                  int_action_size, ext_action_size, position_size, 
@@ -324,31 +325,3 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         ], axis=-1).astype(float)
 
         return packed_context
-
-
-# return only selected statistics
-class Projector:
-    def __init__(self, master_core, selected_indices=[0, 1, 2, 3]):
-        self.master_core = master_core
-        self.selected_indices = selected_indices
-
-    def parameters(self):
-        return self.master_core.parameters()
-    
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy = self.master_core.get_log_probability(context, selected_action, valid_actions)
-        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
-        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
-        return log_probs, entropy
-    
-    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy, svl_unsum_loss = self.master_core.get_log_probability_with_aux_loss(context, selected_action, valid_actions)
-        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
-        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
-        return log_probs, entropy, svl_unsum_loss
-    
-    def train(self):
-        self.master_core.train()
-
-    def eval(self):
-        self.master_core.eval()

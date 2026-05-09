@@ -62,11 +62,16 @@ class Value_Core(Value_Network, nn.Module, Safe_nn_Module):
             output_dims=hidden_size, 
             input_channels=self.feature_channel, 
             width=width, height=height,
-            depths=[64, 64, 128]
+            depths=layers
         )
 
         vec_dim = hidden_size + hidden_size
-        self.backbone = ResNet(output_dims=hidden_size, input_dims=vec_dim, hidden_dims=hidden_size, layers=layers)
+        self.backbone = ResNet(
+            output_dims=hidden_size, 
+            input_dims=vec_dim, 
+            hidden_dims=hidden_size, 
+            layers=[hidden_size for _ in layers]
+        )
 
         self.read_out_layers = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),

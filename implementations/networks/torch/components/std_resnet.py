@@ -6,13 +6,15 @@ from implementations.networks.torch.components.base import init_weights
 # non-convolutional ResNet components, reflect impala structure but without conv layers, to be used in non-image-based models
 class ResBlock(nn.Module):
     
-    def __init__(self, channels):
+    def __init__(self, channels, hidden_channels=None):
         super().__init__()
+        if hidden_channels is None:
+            hidden_channels = channels
         self.block = nn.Sequential(
             nn.ReLU(),
-            nn.Linear(channels, channels),
+            nn.Linear(channels, hidden_channels),
             nn.ReLU(),
-            nn.Linear(channels, channels)
+            nn.Linear(hidden_channels, channels)
         )
 
     def forward(self, x):
@@ -29,7 +31,7 @@ class ResNet(nn.Module):
         self.layers = layers
 
         self.input_layer = nn.Linear(input_dims, hidden_dims)
-        self.res_blocks = nn.Sequential(*[ResBlock(hidden_dims) for _ in range(layers)])
+        self.res_blocks = nn.Sequential(*[ResBlock(hidden_dims, layer_dim) for layer_dim in layers])
         self.output_layer = nn.Linear(hidden_dims, output_dims)
 
 

@@ -27,8 +27,8 @@ from colorama import Fore, Back, Style
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_base
+from implementations.networks.torch.policy.base import Projector
 from implementations.networks.torch.policy.cultivate_token import Policy_Core
-from implementations.networks.torch.policy.base_xy import Projector
 from implementations.networks.torch.value.token_image import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.collectors.states import State_Sequence as Collector
@@ -192,7 +192,7 @@ if __name__ == "__main__":
         history_steps = 0
         state_size = 2
         hidden_size = 128
-        layers = 2
+        layers = [64, 128]
         rollout_length = 256
         minibatch_size = 16
         embedding_dim = 4
@@ -200,7 +200,7 @@ if __name__ == "__main__":
         history_steps = 0
         state_size = 4
         hidden_size = 256
-        layers = 4
+        layers = [64, 64, 128, 128]
         rollout_length = 256
         minibatch_size = 16
         embedding_dim = 8
@@ -208,7 +208,7 @@ if __name__ == "__main__":
         history_steps = 0
         state_size = 8
         hidden_size = 256
-        layers = 4
+        layers = [64, 128, 128, 256]
         rollout_length = 512
         minibatch_size = 16
         embedding_dim = 8

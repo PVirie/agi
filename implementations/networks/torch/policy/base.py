@@ -6,86 +6,73 @@ from torch.distributions import Bernoulli
 import numpy as np
 import logging
 
+from interfaces.network import Policy_Network
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
 from implementations.networks.torch.components.std_conv import ImpalaCNN
-from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
-from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Policy_Core(Base_Policy_Core):
+class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, 
-                 int_action_size, ext_action_size, 
-                 goal_size, inventory_size,
-                 dict_size, embedding_dim, pad_token_id,
-                 width, height, channel,
-                 state_size,
+                 int_action_size, ext_action_size, position_size, 
+                 width, height, channel, 
                  hidden_size, layers, 
                  history_steps=0, max_temporal_len=32, 
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="base_token_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="base_core", device=device, persistence_path=persistence_path)
         self.device = device
+
+        self.int_action_size = int_action_size  # num classes for flag
+        self.ext_action_size = ext_action_size
+        self.position_size = position_size
+        self.content_size = channel * width * height
+        self.packed_action_size = 1 + 1 + position_size + self.content_size  # int_action_size + ext_action_size + position + content
+        self.packed_context_size = 1 + 1 + 1 + position_size + self.content_size  # reward + packed_action_size
 
         self.width = width
         self.height = height
         self.channel = channel
-
-        self.goal_size = goal_size
-        self.inventory_size = inventory_size
-        self.obs_size = width * height * channel
-        self.state_size = state_size
         self.hidden_size = hidden_size
-        self.embedding_dim = embedding_dim
 
-        self.int_action_size = int_action_size  # num classes for flag
-        self.ext_action_size = ext_action_size
-        self.position_size = state_size
-        self.content_size = goal_size + inventory_size + self.obs_size
-        self.packed_action_size = 1 + 1 + self.position_size + self.content_size
-        self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
-
-        self.goal_pos = 1 + 1 + 1 + state_size
-        self.inv_pos = self.goal_pos + goal_size
-        self.obs_pos = self.inv_pos + inventory_size
-
-        self.pad_token_id = pad_token_id
-        self.goal_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
-        self.goal_feature_extraction = InstructionTransformer(
-            input_dim=embedding_dim,
-            d_model=hidden_size,
-            nhead=8, 
-            num_layers=2, 
-            max_len=goal_size
-        )
-
-        self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
-        self.feature_channel = self.channel * 4
         self.conv_layers = ImpalaCNN(
             output_dims=hidden_size, 
-            input_channels=self.feature_channel, 
+            input_channels=channel, 
             width=width, height=height,
             depths=layers
         )
 
-        # goal, inv, obs -> hidden
-        self.backbone = ResNet(
-            output_dims=hidden_size, 
-            input_dims=hidden_size + inventory_size * embedding_dim + hidden_size, 
+        self.mapping_core = ResNet(
+            output_dims=position_size, 
+            input_dims=hidden_size + ext_action_size, # map from (obs, act) to position
             hidden_dims=hidden_size, 
             layers=[hidden_size for _ in layers]
         )
 
-        self.head_int = nn.Sequential(
+        self.rl_core = ResNet(
+            output_dims=hidden_size, 
+            input_dims=position_size, 
+            hidden_dims=hidden_size, 
+            layers=[hidden_size for _ in layers]
+        )
+
+        self.algebra_core = ResNet(
+            output_dims=position_size, 
+            input_dims=position_size, 
+            hidden_dims=hidden_size, 
+            layers=[hidden_size for _ in layers]
+        )
+
+        self.head_flag = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, int_action_size)   # int_action_size classes
+            nn.Linear(hidden_size, self.int_action_size)   # int_action_size classes
         )
-        self.head_ext = nn.Sequential(
+        self.head_action = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, ext_action_size)   # ext_action_size classes
@@ -98,12 +85,10 @@ class Policy_Core(Base_Policy_Core):
 
     def reset_parameters(self):
         # Reset parameters of all layers
-        self.goal_embedding.reset_parameters()
-        self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
-        self.goal_feature_extraction.reset_parameters()
-
-        self.backbone.reset_parameters()
+        self.mapping_core.reset_parameters()
+        self.rl_core.reset_parameters()
+        self.algebra_core.reset_parameters()
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -115,8 +100,8 @@ class Policy_Core(Base_Policy_Core):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-        self.head_int.apply(init_actor_weights)
-        self.head_ext.apply(init_actor_weights)
+        self.head_flag.apply(init_actor_weights)
+        self.head_action.apply(init_actor_weights)
 
 
     def compute(self, context):
@@ -127,38 +112,33 @@ class Policy_Core(Base_Policy_Core):
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
-        goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
-        inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
-        obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
+        last_position = context[:, :, (1 + 1 + 1): (1 + 1 + 1 + self.position_size)]  # (batch_size, context_size, position_size)
+        content = context[:, :, (1 + 1 + 1 + self.position_size): ]  # (batch_size, context_size, content_size)
 
-        goal_padding_mask = get_padding_mask(goal, self.pad_token_id)  # (batch_size, context_size, goal_size)
-        goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
-        goal_features = self.goal_feature_extraction(goal_embedded, goal_padding_mask)  # (batch_size, context_size, hidden_size)
+        image_part = torch.reshape(content, (batch_size * context_size, self.channel, self.height, self.width))
+        image_features = self.conv_layers(image_part)  # (batch_size * context_size, hidden_size)
+        image_features = torch.reshape(image_features, (batch_size, context_size, self.hidden_size))  # (batch_size, context_size, hidden_size)
+
+        features = torch.concat([image_features, action_onehot], dim=-1)  # (batch_size, context_size, hidden_size + ext_action_size)
+        position = self.mapping_core(features)  # (batch_size * context_size, position_size)
         
-        inv_embedded = self.goal_embedding(inv.long())  # (batch_size, context_size, inventory_size, inv_size * embedding_dim)
-        inv_embedded = inv_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, inventory_size * embedding_dim)
+        base_logits = self.rl_core(position)  # (batch_size, context_size, hidden_size)
+
+        logits_flag = self.head_flag(base_logits)    # (B, T, int_action_size)
+        logits_action = self.head_action(base_logits) # (B, T, ext_action_size)
+
+        predicted_position = self.algebra_core(last_position)  # (batch_size, context_size, position_size)
+
+        # auxiliary loss: mean squared error between predicted_position and position
+        aux_loss = torch.mean((predicted_position - position) ** 2, dim=-1)  # (batch_size, context_size)
         
-        obs_embedded = self.image_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
-        obs_features = torch.reshape(obs_embedded, (batch_size * context_size, self.height, self.width, self.feature_channel))  # (batch_size * context_size, height, width, channel * embedding_dim)
-        obs_features = obs_features.permute(0, 3, 1, 2)  # (batch_size * context_size, channel * embedding_dim, height, width)
-        obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
-        obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
-
-        # Base flow
-
-        base_input = torch.concat([goal_features, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
-        base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
-
-        int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
-        ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
-
-        return int_logits, ext_logits
+        return logits_flag, logits_action, aux_loss
     
 
     def get_action(self, context, valid_actions=None):
 
         if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.long).to(self.device)
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
         available_flags = None
         available_actions = None
@@ -169,7 +149,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext = self.compute(context)
+        logits_int, logits_ext, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -196,7 +176,7 @@ class Policy_Core(Base_Policy_Core):
         # context has shape (batch, context_size, self.packed_context_size)
 
         if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.long).to(self.device)
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
         available_flags = None
         available_actions = None
@@ -207,7 +187,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext = self.compute(context)
+        logits_int, logits_ext, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -246,7 +226,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext = self.compute(context)
+        logits_int, logits_ext, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -264,7 +244,7 @@ class Policy_Core(Base_Policy_Core):
             log_prob_int, log_prob_ext
         ], dim=-1), torch.stack([
             entropy_int, entropy_ext
-        ], dim=-1), None  # no aux loss for now
+        ], dim=-1), aux_loss
 
 
     def unpack_action(self, packed_action):
@@ -319,3 +299,30 @@ class Policy_Core(Base_Policy_Core):
 
         return packed_context
 
+
+# return only selected statistics
+class Projector:
+    def __init__(self, master_core, selected_indices=[0, 1]):
+        self.master_core = master_core
+        self.selected_indices = selected_indices
+
+    def parameters(self):
+        return self.master_core.parameters()
+    
+    def get_log_probability(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy = self.master_core.get_log_probability(context, selected_action, valid_actions)
+        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
+        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
+        return log_probs, entropy
+    
+    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy, svl_unsum_loss = self.master_core.get_log_probability_with_aux_loss(context, selected_action, valid_actions)
+        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
+        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
+        return log_probs, entropy, svl_unsum_loss
+    
+    def train(self):
+        self.master_core.train()
+
+    def eval(self):
+        self.master_core.eval()
