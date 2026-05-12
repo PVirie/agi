@@ -48,3 +48,12 @@ class ResNet(nn.Module):
         x = self.output_layer(x)
         return x
     
+    
+    def freeze(self):
+        for param in self.parameters():
+            param.requires_grad = False
+
+
+    def unfreeze(self):
+        for param in self.parameters():
+            param.requires_grad = True

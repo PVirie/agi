@@ -218,7 +218,7 @@ if __name__ == "__main__":
     logging.info("Starting Plot Task")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--normalize",              "-n",   action="store_true")
+    parser.add_argument("--normalize",              "-n",   action="store_false")
     parser.add_argument("--ma-window-size",         "-m",   type=int, default=10000, help="Moving average window size for smoothing the curves")
     args = parser.parse_args()
 
@@ -261,11 +261,11 @@ if __name__ == "__main__":
                 Y = stats["mean"]
                 STD = [var ** 0.5 for var in stats["var"]]
             if args.normalize:
-                # normalize Y and STD by their max value for better visualization
-                max_Y = max(abs(y) for y in Y) if Y else 1
-                max_Y = 1 if max_Y == 0 else max_Y
-                Y = [y / max_Y for y in Y]
-                STD = [s / max_Y for s in STD]
+                # normalize Y and STD by their ranges for better visualization
+                min_Y = min(Y)
+                max_Y = max(Y)
+                Y = [(y - min_Y) / (max_Y - min_Y) for y in Y]
+                STD = [std / (max_Y - min_Y) for std in STD]
             label = f"{game_id}"
             # ax.errorbar(X, Y, yerr=STD, markersize=3, capsize=3, label=label, elinewidth=1, markeredgewidth=1, linewidth=2)
             ax.plot(X, Y, markersize=3, label=label, linewidth=2)
