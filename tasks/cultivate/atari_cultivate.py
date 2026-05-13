@@ -30,9 +30,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import random_agent, model_base
 from implementations.networks.torch.policy.base import Projector
-from implementations.networks.torch.policy.base import Policy_Core
+from implementations.networks.torch.policy.cultivate import Policy_Core
 from implementations.networks.torch.value.conv import Value_Core
-from implementations.learning_algorithms.torch.ppo import PPO
+from implementations.learning_algorithms.torch.ppo_nu import PPO_Nu
 from implementations.collectors.states import State_Sequence as Collector
 
 torch.autograd.set_detect_anomaly(True)
@@ -136,7 +136,6 @@ if __name__ == "__main__":
     parser.add_argument("--reset",                  "-r",   action="store_true")
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
-    parser.add_argument("--aux-coef",               "-af",  type=float, default=0.1, help="Coefficient for the auxiliary loss. Default is 0.1.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     args = parser.parse_args()
 
@@ -155,12 +154,12 @@ if __name__ == "__main__":
     logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(20260509)  
-    torch.manual_seed(20260509)
-    np.random.seed(20260509)
+    random.seed(20260513)  
+    torch.manual_seed(20260513)
+    np.random.seed(20260513)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/transfer/atari_base_{args.scale}_aux{args.aux_coef}"
+    experiment_path = f"{APP_ROOT}/experiments/cultivate/atari_cultivate_{args.scale}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -203,6 +202,7 @@ if __name__ == "__main__":
         grayscale=True,             # 4. Removes noise (Color is usually irrelevant in Atari)
         episodic_life=True,         # Recommended for harder games (Breakout/Montezuma)
         reward_clipping=True,
+        prepend_objective=True
     )
 
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "length", "time"]])
@@ -213,42 +213,39 @@ if __name__ == "__main__":
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 2
     elif args.scale == "medium":
         history_steps = 0
         hidden_size = 128
         conv_layers = [16, 32, 64, 64] # medium impala
         rollout_length = 256
         minibatch_size = 8
-        position_size = 2
     else:  # large
         history_steps = 0
         hidden_size = 256
         conv_layers = [16, 32, 64, 128, 128] # large impala
         rollout_length = 256
         minibatch_size = 8
-        position_size = 2
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=2, ext_action_size=18, position_size=position_size,
+        int_action_size=2, ext_action_size=18,
+        goal_size=env.objective_size,
         width=32, height=64, channel=4,
         hidden_size=hidden_size, layers=conv_layers,
         history_steps=history_steps, max_temporal_len=rollout_length,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        position_size=position_size,
+        position_size=1 + 32*64*4 + env.objective_size,
         width=32, height=64, channel=4,
         output_dims=1,
         layers=conv_layers,
         device=device, persistence_path=parameters_path
     ).to(device)
-    ppo_learner = PPO(
-        policy_model=Projector(policy_core, [1]), value_model=value_core,
-        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=args.aux_coef
+    ppo_learner = PPO_Nu(
+        policy_model=Projector(policy_core, [1, 2]), value_model=value_core,
+        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,
@@ -256,7 +253,7 @@ if __name__ == "__main__":
         context_collector=Collector(max_history=history_steps),
         action_collector=Collector(max_history=history_steps),
         valid_action_collector=Collector(max_history=history_steps),
-        do_supervision=True,
+        do_supervision=False,
     )
 
     asyncio.run(run(env, agent, rollout_length, verbose=not args.silent))

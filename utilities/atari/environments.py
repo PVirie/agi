@@ -29,10 +29,24 @@ class Multi_Atari_Environment:
         grayscale=True,
         episodic_life=True,
         reward_clipping=True,
+        prepend_objective=False,
         render_mode=None,
         ):
 
         self.game_ids = game_ids
+        self.prepend_objective = prepend_objective
+
+        # get num unique game_ids
+        unique_game_ids = set(game_ids)
+        self.objective_size = len(unique_game_ids)
+
+        # now get one-hot encoding for each game_id in the order they appear in game_ids
+        self.game_id_to_objective = {}
+        for i, gid in enumerate(game_ids):
+            if gid not in self.game_id_to_objective:
+                objective = np.zeros(self.objective_size, dtype=np.float32)
+                objective[len(self.game_id_to_objective)] = 1
+                self.game_id_to_objective[gid] = objective
 
         # 1. Generate Available Actions List
         # Structure: List[List[int]] -> [[0, 2, 3], [0, 1, 4, 5], ...]
@@ -83,11 +97,21 @@ class Multi_Atari_Environment:
         self.return_infos = [None] * total
 
 
+    def prepare_observation(self, obs, env_index):
+        normalized = obs.astype(np.float32) / 255.0
+        flattened = normalized.flatten()
+        if self.prepend_objective:
+            objective = self.game_id_to_objective[self.game_ids[env_index]]
+            return np.concatenate([objective, flattened])
+        else:
+            return normalized
+
+
     def reset(self, seed=None):
             # return self.envs.reset(seed=seed)
         for i, env in enumerate(self.envs):
             obs, info = env.reset(seed=seed)
-            self.return_obs[i] = obs
+            self.return_obs[i] = self.prepare_observation(obs, i)
             self.return_infos[i] = info
         return self.return_obs, self.return_infos
 
@@ -106,7 +130,7 @@ class Multi_Atari_Environment:
             self.return_infos[i] = info
             if termination or truncation:
                 obs, _ = env.reset() # You must manually reset!
-            self.return_obs[i] = obs
+            self.return_obs[i] = self.prepare_observation(obs, i)
         return self.return_obs, self.return_rewards, self.return_terminations, self.return_truncations, self.return_infos
 
 

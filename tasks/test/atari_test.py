@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import numpy as np
 from PIL import Image
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -51,7 +52,8 @@ artifacts_path = f"{APP_ROOT}/log"
 os.makedirs(artifacts_path, exist_ok=True)
 for i, frame in enumerate(observations):
     for j in range(frame.shape[0]):
-        img = Image.fromarray(frame[j, ...], mode='L')  # 'L' mode for grayscale
+        f = frame[j, ...] * 255.0
+        img = Image.fromarray(f.astype(np.uint8), mode='L')  # 'L' mode for grayscale
         img.save(f"{artifacts_path}/env_{i}_{j}.png")
 
 # Close the environment when done

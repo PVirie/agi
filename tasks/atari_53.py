@@ -67,7 +67,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
             last_dones=last_done,
             last_truncates=last_truncated,
             last_resets=last_reset,
-            latest_frames=[obs.astype(np.float32) / 255.0 for obs in observations],
+            latest_frames=observations,
             rewards=[r for r in rewards],
             next_available_actions=env.get_available_actions(),
             force_train=steps % rollout_length == 0 or should_stop,

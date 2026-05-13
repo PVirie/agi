@@ -61,16 +61,16 @@ class Policy_Core(Base_Policy_Core):
         self.goal_feature_extraction = InstructionTransformer(
             input_dim=embedding_dim,
             d_model=hidden_size,
-            nhead=8, 
-            num_layers=2, 
+            nhead=8,
+            num_layers=2,
             max_len=goal_size
         )
 
         self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
         self.feature_channel = self.channel * 4
         self.conv_layers = ImpalaCNN(
-            output_dims=hidden_size, 
-            input_channels=self.feature_channel, 
+            output_dims=hidden_size,
+            input_channels=self.feature_channel,
             width=width, height=height,
             depths=layers
         )
@@ -83,7 +83,7 @@ class Policy_Core(Base_Policy_Core):
             layers=[hidden_size for _ in layers]
         )
 
-        # subgoal, state, abstract(inv, obs) -> hidden
+        # goal, state, abstract(inv, obs) -> hidden
         self.frontal_lobe = ResNet(
             output_dims=hidden_size,
             input_dims=hidden_size + state_size + hidden_size,
@@ -331,7 +331,7 @@ class Policy_Core(Base_Policy_Core):
         # now context has shape (batch, context_size + 1, self.packed_context_size)
 
         if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
+            context = torch.tensor(context, dtype=torch.long).to(self.device)
 
         context_full = context
         context = context_full[:, :-1, :]  # remove last context for computing logprob
