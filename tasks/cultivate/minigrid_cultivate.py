@@ -88,9 +88,9 @@ async def run(env, agent, rollout_length=16, verbose=False):
                     + (1 - session_return_update_alpha) * total_score
                 )
             if infos[i] is None:
-                stat_row.extend([None, positions[i, 0].item(), None])
+                stat_row.extend([None, positions[i, 0].item(), positions[i, 1].item()])
             else:
-                stat_row.extend([infos[i]["episode"]["r"], positions[i, 0].item(), infos[i]["episode"]["l"]])
+                stat_row.extend([infos[i]["episode"]["r"], positions[i, 0].item(), positions[i, 1].item()])
         stat_recorder.record(stat_row)
 
         steps += 1
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     ).to(device)
     value_core = Value_Core(
         int_action_size=2, ext_action_size=7, 
-        position_size=1 + content_size - mission_size + state_size, # just nu + state + inv + image
+        position_size=1 + 1 + content_size - mission_size + state_size, # just nu + state + inv + image
         output_dims=1,
         token_part_size=mission_size + inventory_size,  # mission tokens + inventory tokens
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=tokenizer.pad_token_id,

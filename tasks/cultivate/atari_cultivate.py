@@ -89,9 +89,9 @@ async def run(env, agent, rollout_length=16, verbose=False):
                     session_return_update_alpha * total_returns[i]
                     + (1 - session_return_update_alpha) * total_score
                 )
-                stat_row.extend([infos[i]["episode"]["r"], infos[i]["episode"]["l"], infos[i]["episode"]["t"]])
+                stat_row.extend([infos[i]["episode"]["r"], positions[i, 0].item(), positions[i, 1].item()])
             else:
-                stat_row.extend([None, None, None])
+                stat_row.extend([None, positions[i, 0].item(), positions[i, 1].item()])
         stat_recorder.record(stat_row)
 
         steps += 1
@@ -205,7 +205,7 @@ if __name__ == "__main__":
         prepend_objective=True
     )
 
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "length", "time"]])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "nu", "alpha"]])
     
     if args.scale == "small":
         history_steps = 0
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        position_size=1 + 32*64*4 + env.objective_size,
+        position_size=1 + 1 + 32*64*4 + env.objective_size,
         width=32, height=64, channel=4,
         output_dims=1,
         layers=conv_layers,
@@ -253,7 +253,7 @@ if __name__ == "__main__":
         context_collector=Collector(max_history=history_steps),
         action_collector=Collector(max_history=history_steps),
         valid_action_collector=Collector(max_history=history_steps),
-        do_supervision=False,
+        do_supervision=False
     )
 
     asyncio.run(run(env, agent, rollout_length, verbose=not args.silent))

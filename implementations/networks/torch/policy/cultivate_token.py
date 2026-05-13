@@ -43,13 +43,14 @@ class Policy_Core(Base_Policy_Core):
 
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
-        self.position_size = 1 + state_size + inventory_size + self.obs_size # position part includes nu, (state, inventory, image) for last high-level
+        self.position_size = 1 + 1 + state_size + inventory_size + self.obs_size # position part includes nu, (state, inventory, image) for last high-level
         self.content_size = goal_size + inventory_size + self.obs_size
         self.packed_action_size = 1 + 1 + self.position_size + self.content_size
         self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
 
         self.nu_pos = 1 + 1 + 1
-        self.last_hlv_state_pos = self.nu_pos + 1
+        self.alpha_pos = self.nu_pos + 1
+        self.last_hlv_state_pos = self.alpha_pos + 1
         self.last_hlv_inv_pos = self.last_hlv_state_pos + state_size
         self.last_hlv_obs_pos = self.last_hlv_inv_pos + inventory_size
         self.goal_pos = self.last_hlv_obs_pos + self.obs_size
@@ -184,6 +185,7 @@ class Policy_Core(Base_Policy_Core):
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         last_nu = context[:, :, self.nu_pos: (self.nu_pos + 1)]  # (batch_size, context_size, 1)
+        last_alpha = context[:, :, self.alpha_pos: (self.alpha_pos + 1)]  # (batch_size, context_size, 1)
         last_hlv_state = context[:, :, self.last_hlv_state_pos: (self.last_hlv_state_pos + self.state_size)]  # (batch_size, context_size, state_size)
         last_hlv_inv = context[:, :, self.last_hlv_inv_pos: (self.last_hlv_inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
         last_hlv_obs = context[:, :, self.last_hlv_obs_pos: (self.last_hlv_obs_pos + self.obs_size)]  # (batch_size, context_size, obs_size)
@@ -233,7 +235,7 @@ class Policy_Core(Base_Policy_Core):
         nu_logit = self.head_nu(lwlv_output)  # (batch_size, context_size, 1)
         nu_logit = torch.squeeze(nu_logit, dim=-1)  # (batch_size, context_size)
         
-        return int_logits, ext_logits, hlv_state_logits, nu_logit
+        return int_logits, ext_logits, hlv_state_logits, nu_logit, alpha
     
 
     def get_action(self, context, valid_actions=None):
@@ -250,7 +252,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, hlv_state_logits, nu_logit = self.compute(context)
+        logits_int, logits_ext, hlv_state_logits, nu_logit, alpha = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -270,7 +272,7 @@ class Policy_Core(Base_Policy_Core):
 
         action_int = probs_int.sample()
         action_ext = probs_ext.sample()
-        next_position = torch.concat([next_nu, next_hlv_state, selected_hlv], dim=-1)  # (batch_size, context_size, position_size)
+        next_position = torch.concat([next_nu, alpha, next_hlv_state, selected_hlv], dim=-1)  # (batch_size, context_size, position_size)
         action_content = np.zeros((batch_size, context_size, self.content_size), dtype=np.float32)
 
         action = np.concatenate([
@@ -298,7 +300,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, hlv_state_logits, nu_logit = self.compute(context)
+        logits_int, logits_ext, hlv_state_logits, nu_logit, alpha = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -345,7 +347,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, hlv_state_logits, nu_logit = self.compute(context)
+        logits_int, logits_ext, hlv_state_logits, nu_logit, alpha = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -372,6 +374,4 @@ class Policy_Core(Base_Policy_Core):
         ], dim=-1), torch.stack([
             entropy_int, entropy_ext, entropy_nu, entropy_hlv_state
         ], dim=-1), None
-
-
 
