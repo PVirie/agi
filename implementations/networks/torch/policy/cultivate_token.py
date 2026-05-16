@@ -222,17 +222,17 @@ class Policy_Core(Base_Policy_Core):
         sub_output = self.frontal_lobe(sub_input)  # (batch_size, context_size, hidden_size)
 
         hlv_state_logits = self.head_state(sub_output)  # (batch_size, context_size, state_size)
-        subgoal_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, hidden_size)
+        midway_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, hidden_size)
         alpha = self.head_alpha(sub_output)  # (batch_size, context_size, 1)
 
-        selected_goal_features = alpha * subgoal_logits + (1 - alpha) * goal_features  # (batch_size, context_size, hidden_size)
-
-        lwlv_input = torch.concat([selected_goal_features, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        lwlv_input = torch.concat([midway_logits, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         lwlv_output = self.backbone(lwlv_input)  # (batch_size, context_size, hidden_size)
 
-        int_logits = self.head_int(lwlv_output)  # (batch_size, context_size, int_action_size)
-        ext_logits = self.head_ext(lwlv_output)  # (batch_size, context_size, ext_action_size)
-        nu_logit = self.head_nu(lwlv_output)  # (batch_size, context_size, 1)
+        selected_features = alpha * lwlv_output + (1 - alpha) * midway_logits  # (batch_size, context_size, hidden_size)
+
+        int_logits = self.head_int(selected_features)  # (batch_size, context_size, int_action_size)
+        ext_logits = self.head_ext(selected_features)  # (batch_size, context_size, ext_action_size)
+        nu_logit = self.head_nu(selected_features)  # (batch_size, context_size, 1)
         nu_logit = torch.squeeze(nu_logit, dim=-1)  # (batch_size, context_size)
         
         return int_logits, ext_logits, hlv_state_logits, nu_logit, alpha

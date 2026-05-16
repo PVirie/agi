@@ -70,7 +70,7 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         self.head_flag = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, self.int_action_size)   # int_action_size classes
+            nn.Linear(hidden_size, int_action_size)   # int_action_size classes
         )
         self.head_action = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),

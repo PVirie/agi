@@ -49,7 +49,6 @@ class Policy_Core(Base_Policy_Core):
         self.goal_pos = self.last_hlv_obs_pos + self.obs_size
         self.obs_pos = self.goal_pos + goal_size
 
-
         self.goal_feature_extraction = nn.Sequential(
             nn.Linear(goal_size, hidden_size),
             nn.GELU(),
@@ -58,20 +57,12 @@ class Policy_Core(Base_Policy_Core):
 
         self.conv_layers = ImpalaCNN(
             output_dims=hidden_size, 
-            input_channels=self.channel, 
+            input_channels=channel, 
             width=width, height=height,
             depths=layers
         )
 
         # goal, obs -> hidden
-        self.backbone = ResNet(
-            output_dims=hidden_size, 
-            input_dims=hidden_size + hidden_size, 
-            hidden_dims=hidden_size, 
-            layers=[hidden_size for _ in layers]
-        )
-
-        # goal, abstract(obs) -> hidden
         self.frontal_lobe = ResNet(
             output_dims=hidden_size,
             input_dims=hidden_size + hidden_size,
@@ -79,10 +70,10 @@ class Policy_Core(Base_Policy_Core):
             layers=[hidden_size for _ in layers]
         )
 
-        # obs -> hidden_size
-        self.abstractor = ResNet(
+        # goal, obs -> hidden
+        self.backbone = ResNet(
             output_dims=hidden_size, 
-            input_dims=hidden_size, 
+            input_dims=hidden_size + hidden_size, 
             hidden_dims=hidden_size, 
             layers=[hidden_size for _ in layers]
         )
@@ -134,7 +125,6 @@ class Policy_Core(Base_Policy_Core):
 
         self.frontal_lobe.reset_parameters()
         self.backbone.reset_parameters()
-        self.abstractor.reset_parameters()
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -178,21 +168,20 @@ class Policy_Core(Base_Policy_Core):
         obs_features = torch.reshape(obs_features, (batch_size, context_size, self.hidden_size))  # (batch_size, context_size, hidden_size)
 
         # Cultivate flow
-        last_lw_abstraction = self.abstractor(last_hlv_obs_features)  # (batch_size, context_size, hidden)
-        sub_input = torch.concat([goal_features, last_lw_abstraction], dim=-1)  # (batch_size, context_size, vec_dim)
+        sub_input = torch.concat([goal_features, last_hlv_obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         sub_output = self.frontal_lobe(sub_input)  # (batch_size, context_size, hidden_size)
 
-        subgoal_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, hidden_size)
+        midway_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, hidden_size)
         alpha = self.head_alpha(sub_output)  # (batch_size, context_size, 1)
 
-        selected_goal_features = alpha * subgoal_logits + (1 - alpha) * goal_features  # (batch_size, context_size, hidden_size)
-
-        lwlv_input = torch.concat([selected_goal_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        lwlv_input = torch.concat([midway_logits, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         lwlv_output = self.backbone(lwlv_input)  # (batch_size, context_size, hidden_size)
 
-        int_logits = self.head_int(lwlv_output)  # (batch_size, context_size, int_action_size)
-        ext_logits = self.head_ext(lwlv_output)  # (batch_size, context_size, ext_action_size)
-        nu_logit = self.head_nu(lwlv_output)  # (batch_size, context_size, 1)
+        selected_features = alpha * lwlv_output + (1 - alpha) * midway_logits  # (batch_size, context_size, hidden_size)
+
+        int_logits = self.head_int(selected_features)  # (batch_size, context_size, int_action_size)
+        ext_logits = self.head_ext(selected_features)  # (batch_size, context_size, ext_action_size)
+        nu_logit = self.head_nu(selected_features)  # (batch_size, context_size, 1)
         nu_logit = torch.squeeze(nu_logit, dim=-1)  # (batch_size, context_size)
         
         return int_logits, ext_logits, nu_logit, alpha
