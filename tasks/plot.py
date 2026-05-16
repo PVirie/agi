@@ -218,7 +218,7 @@ if __name__ == "__main__":
     logging.info("Starting Plot Task")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--normalize",              "-n",   action="store_false")
+    parser.add_argument("--normalize",              "-n",   action="store_true")
     parser.add_argument("--ma-window-size",         "-m",   type=int, default=10000, help="Moving average window size for smoothing the curves")
     args = parser.parse_args()
 

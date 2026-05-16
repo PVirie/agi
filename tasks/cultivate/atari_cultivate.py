@@ -32,7 +32,7 @@ from implementations.agents import random_agent, model_base
 from implementations.networks.torch.policy.base import Projector
 from implementations.networks.torch.policy.cultivate import Policy_Core
 from implementations.networks.torch.value.conv import Value_Core
-from implementations.learning_algorithms.torch.ppo_nu import PPO_Nu
+from implementations.learning_algorithms.torch.ppo import PPO as PPO
 from implementations.collectors.states import State_Sequence as Collector
 
 torch.autograd.set_detect_anomaly(True)
@@ -243,7 +243,7 @@ if __name__ == "__main__":
         layers=conv_layers,
         device=device, persistence_path=parameters_path
     ).to(device)
-    ppo_learner = PPO_Nu(
+    ppo_learner = PPO(
         policy_model=Projector(policy_core, [1, 2]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )

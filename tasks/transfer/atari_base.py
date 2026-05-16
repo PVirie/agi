@@ -213,21 +213,21 @@ if __name__ == "__main__":
         conv_layers = [16, 32, 32] # basic impala
         rollout_length = 128
         minibatch_size = 8
-        position_size = 2
+        position_size = 16
     elif args.scale == "medium":
         history_steps = 0
         hidden_size = 128
         conv_layers = [16, 32, 64, 64] # medium impala
         rollout_length = 256
         minibatch_size = 8
-        position_size = 2
+        position_size = 32
     else:  # large
         history_steps = 0
         hidden_size = 256
         conv_layers = [16, 32, 64, 128, 128] # large impala
         rollout_length = 256
         minibatch_size = 8
-        position_size = 2
+        position_size = 64
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
