@@ -62,6 +62,14 @@ class Policy_Core(Base_Policy_Core):
             depths=layers
         )
 
+        # inv, obs -> hidden_size
+        self.abstractor = ResNet(
+            output_dims=hidden_size, 
+            input_dims=hidden_size, 
+            hidden_dims=hidden_size, 
+            layers=[hidden_size for _ in layers]
+        )
+
         # goal, obs -> hidden
         self.frontal_lobe = ResNet(
             output_dims=hidden_size,
@@ -122,6 +130,7 @@ class Policy_Core(Base_Policy_Core):
 
         self.goal_feature_extraction.apply(init_weights)
         self.conv_layers.reset_parameters()
+        self.abstractor.reset_parameters()
 
         self.frontal_lobe.reset_parameters()
         self.backbone.reset_parameters()
@@ -168,12 +177,14 @@ class Policy_Core(Base_Policy_Core):
         obs_features = torch.reshape(obs_features, (batch_size, context_size, self.hidden_size))  # (batch_size, context_size, hidden_size)
 
         # Cultivate flow
+        last_hlv_obs_features = self.abstractor(last_hlv_obs_features)  # (batch_size, context_size, hidden)
         sub_input = torch.concat([goal_features, last_hlv_obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         sub_output = self.frontal_lobe(sub_input)  # (batch_size, context_size, hidden_size)
 
         midway_logits = self.head_subgoal(sub_output)  # (batch_size, context_size, hidden_size)
         alpha = self.head_alpha(sub_output)  # (batch_size, context_size, 1)
 
+        obs_features = self.abstractor(obs_features)  # (batch_size, context_size, hidden)
         lwlv_input = torch.concat([midway_logits, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         lwlv_output = self.backbone(lwlv_input)  # (batch_size, context_size, hidden_size)
 

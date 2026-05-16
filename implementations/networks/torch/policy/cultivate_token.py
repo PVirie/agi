@@ -76,6 +76,14 @@ class Policy_Core(Base_Policy_Core):
             depths=layers
         )
 
+        # inv, obs -> hidden_size
+        self.abstractor = ResNet(
+            output_dims=hidden_size, 
+            input_dims=inventory_size * embedding_dim + hidden_size, 
+            hidden_dims=hidden_size, 
+            layers=[hidden_size for _ in layers]
+        )
+
         # goal, inv, obs -> hidden
         self.backbone = ResNet(
             output_dims=hidden_size, 
@@ -89,14 +97,6 @@ class Policy_Core(Base_Policy_Core):
             output_dims=hidden_size,
             input_dims=hidden_size + state_size + hidden_size,
             hidden_dims=hidden_size,
-            layers=[hidden_size for _ in layers]
-        )
-
-        # inv, obs -> hidden_size
-        self.abstractor = ResNet(
-            output_dims=hidden_size, 
-            input_dims=inventory_size * embedding_dim + hidden_size, 
-            hidden_dims=hidden_size, 
             layers=[hidden_size for _ in layers]
         )
 
@@ -153,10 +153,10 @@ class Policy_Core(Base_Policy_Core):
         self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
         self.goal_feature_extraction.reset_parameters()
+        self.abstractor.reset_parameters()
 
         self.frontal_lobe.reset_parameters()
         self.backbone.reset_parameters()
-        self.abstractor.reset_parameters()
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
