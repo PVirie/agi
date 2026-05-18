@@ -124,3 +124,4 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [x] Fixed base model to clear position on done, truncated
     - [x] Separate model for high level and low level policy
 - [ ] A real world environment (required for pretigious conference publication, but not necessary for the project itself)
+    - [ ] Audio transcription with LLM assist gradient

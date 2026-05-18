@@ -160,7 +160,7 @@ if __name__ == "__main__":
     np.random.seed(20260509)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/transfer/atari_base_{args.scale}_aux{args.aux_coef}"
+    experiment_path = f"{APP_ROOT}/experiments/transfer/atari_base_2_{args.scale}_aux{args.aux_coef}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -191,7 +191,7 @@ if __name__ == "__main__":
             ALE/Amidar-v5
     """
 
-    game_ids=["ALE/Pong-v5"] * 32 + ["ALE/SpaceInvaders-v5"] * 32
+    game_ids=["ALE/Freeway-v5"] * 32 + ["ALE/MsPacman-v5"] * 32
     env = Multi_Atari_Environment(
         game_ids=game_ids,   
         img_height=64,           # Height to resize frames to
