@@ -237,7 +237,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        position_size=1 + 32 * 64 * 4 + 18 + env.objective_size,
+        position_size=1 + 32 * 64 * 4 + env.objective_size,
         width=32, height=64, channel=4,
         output_dims=1,
         layers=conv_layers,

@@ -39,15 +39,14 @@ class Policy_Core(Base_Policy_Core):
 
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
-        self.position_size = 1 + self.obs_size + ext_action_size # position part includes step, image for last high-level
+        self.position_size = 1 + self.obs_size # position part includes step, image for last high-level
         self.content_size = goal_size + self.obs_size
         self.packed_action_size = 1 + 1 + self.position_size + self.content_size
         self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
 
         self.step_pos = 1 + 1 + 1
         self.last_hlv_obs_pos = self.step_pos + 1
-        self.last_ext_action_logit_pos = self.last_hlv_obs_pos + self.obs_size
-        self.goal_pos = self.last_ext_action_logit_pos + ext_action_size
+        self.goal_pos = self.last_hlv_obs_pos + self.obs_size
         self.obs_pos = self.goal_pos + goal_size
 
         self.goal_feature_extraction = nn.Sequential(
@@ -146,7 +145,6 @@ class Policy_Core(Base_Policy_Core):
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         last_step = context[:, :, self.step_pos: (self.step_pos + 1)].long()  # (batch_size, context_size, 1)
         last_hlv_obs = context[:, :, self.last_hlv_obs_pos: (self.last_hlv_obs_pos + self.obs_size)]  # (batch_size, context_size, obs_size)
-        last_ext_action_logit = context[:, :, self.last_ext_action_logit_pos: (self.last_ext_action_logit_pos + self.ext_action_size)]  # (batch_size, context_size, ext_action_size)
         goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
         obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
 
@@ -192,7 +190,7 @@ class Policy_Core(Base_Policy_Core):
         theoretical_lwlv_input = torch.concat([theoretical_midway_logits, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         theoretical_lwlv_output = self.backbone(theoretical_lwlv_input)  # (batch_size, context_size, hidden_size)
         theoretical_ext_logits = self.head_ext(theoretical_lwlv_output)  # (batch_size, context_size, ext_action_size)
-        lwlv_discrepancy = mask * torch.mean((theoretical_ext_logits - last_ext_action_logit) ** 2, dim=-1) # (batch_size, context_size)
+        lwlv_discrepancy = mask * torch.mean((theoretical_ext_logits - ext_logits) ** 2, dim=-1) # (batch_size, context_size)
 
         discrepancy = hlv_discrepancy + lwlv_discrepancy
 
@@ -228,7 +226,7 @@ class Policy_Core(Base_Policy_Core):
 
         action_int = probs_int.sample()
         action_ext = probs_ext.sample()
-        next_position = torch.concat([next_step, selected_hlv, logits_ext], dim=-1)  # (batch_size, context_size, position_size)
+        next_position = torch.concat([next_step, selected_hlv], dim=-1)  # (batch_size, context_size, position_size)
         action_content = np.zeros((batch_size, context_size, self.content_size), dtype=np.float32)
 
         action = np.concatenate([
