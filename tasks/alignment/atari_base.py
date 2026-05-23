@@ -160,7 +160,7 @@ if __name__ == "__main__":
     np.random.seed(20260523)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/alignment/atari_base_{args.scale}"
+    experiment_path = f"{APP_ROOT}/experiments/alignment/atari_base_{args.scale}_aux{args.aux_coef}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        position_size=1 + 32*64*4 + env.objective_size,
+        position_size=1 + 32 * 64 * 4 + 18 + env.objective_size,
         width=32, height=64, channel=4,
         output_dims=1,
         layers=conv_layers,
@@ -245,7 +245,8 @@ if __name__ == "__main__":
     ).to(device)
     ppo_learner = PPO(
         policy_model=Projector(policy_core, [1]), value_model=value_core,
-        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
+        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
+        aux_coef=args.aux_coef
     )
     agent = model_base.Model_Base(
         policy_model=policy_core, value_model=value_core,

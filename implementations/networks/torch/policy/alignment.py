@@ -7,6 +7,7 @@ import logging
 
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
+from implementations.networks.torch.components.base import batched_backward_fill_with_mask
 from implementations.networks.torch.components.std_resnet import ResNet
 from implementations.networks.torch.components.std_conv import ImpalaCNN
 from implementations.networks.torch.policy.base_token import Policy_Core as Base_Policy_Core
@@ -38,14 +39,15 @@ class Policy_Core(Base_Policy_Core):
 
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
-        self.position_size = 1 + self.obs_size # position part includes step, image for last high-level
+        self.position_size = 1 + self.obs_size + ext_action_size # position part includes step, image for last high-level
         self.content_size = goal_size + self.obs_size
         self.packed_action_size = 1 + 1 + self.position_size + self.content_size
         self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
 
         self.step_pos = 1 + 1 + 1
         self.last_hlv_obs_pos = self.step_pos + 1
-        self.goal_pos = self.last_hlv_obs_pos + self.obs_size
+        self.last_ext_action_logit_pos = self.last_hlv_obs_pos + self.obs_size
+        self.goal_pos = self.last_ext_action_logit_pos + ext_action_size
         self.obs_pos = self.goal_pos + goal_size
 
         self.goal_feature_extraction = nn.Sequential(
@@ -144,6 +146,7 @@ class Policy_Core(Base_Policy_Core):
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         last_step = context[:, :, self.step_pos: (self.step_pos + 1)].long()  # (batch_size, context_size, 1)
         last_hlv_obs = context[:, :, self.last_hlv_obs_pos: (self.last_hlv_obs_pos + self.obs_size)]  # (batch_size, context_size, obs_size)
+        last_ext_action_logit = context[:, :, self.last_ext_action_logit_pos: (self.last_ext_action_logit_pos + self.ext_action_size)]  # (batch_size, context_size, ext_action_size)
         goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
         obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
 
@@ -174,7 +177,26 @@ class Policy_Core(Base_Policy_Core):
         # now calculate next step, just + 1 last_step unless it's hlv_steps - 1, then next step is 0
         next_step = torch.where(last_step >= (self.hlv_steps - 1), torch.zeros_like(last_step).long(), last_step + 1)
 
-        return int_logits, ext_logits, next_step
+        # calculate alignment auxiliary loss
+        # Get observation where next_step is 0 and backward fill, 
+        # for example [0, 1, 0, 1, 0, 1] -> [1, 1, 3, 3, 5, 5] -> [obs1, obs1, obs3, obs3, obs5, obs5]
+        flags = (next_step == 0).squeeze(-1)  # (batch_size, context_size)
+        indices, mask = batched_backward_fill_with_mask(flags)
+        gather_idx = indices.unsqueeze(-1).expand(-1, -1, self.hidden_size)  # (batch_size, context_size, hidden_size)
+        theoretical_midway_logits = torch.gather(obs_features, dim=1, index=gather_idx)
+        mask = mask.float()  # (batch_size, context_size)
+
+        # only calculate aux loss when next step is 0, meaning it's the last step of hlv and should predict the next subgoal close to the obs
+        hlv_discrepancy = mask * torch.mean((theoretical_midway_logits - midway_logits) ** 2, dim=-1)  # (batch_size, context_size)
+
+        theoretical_lwlv_input = torch.concat([theoretical_midway_logits, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        theoretical_lwlv_output = self.backbone(theoretical_lwlv_input)  # (batch_size, context_size, hidden_size)
+        theoretical_ext_logits = self.head_ext(theoretical_lwlv_output)  # (batch_size, context_size, ext_action_size)
+        lwlv_discrepancy = mask * torch.mean((theoretical_ext_logits - last_ext_action_logit) ** 2, dim=-1) # (batch_size, context_size)
+
+        discrepancy = hlv_discrepancy + lwlv_discrepancy
+
+        return int_logits, ext_logits, next_step, discrepancy
     
 
     def get_action(self, context, valid_actions=None):
@@ -191,7 +213,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, next_step = self.compute(context)
+        logits_int, logits_ext, next_step, _ = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -206,7 +228,7 @@ class Policy_Core(Base_Policy_Core):
 
         action_int = probs_int.sample()
         action_ext = probs_ext.sample()
-        next_position = torch.concat([next_step, selected_hlv], dim=-1)  # (batch_size, context_size, position_size)
+        next_position = torch.concat([next_step, selected_hlv, logits_ext], dim=-1)  # (batch_size, context_size, position_size)
         action_content = np.zeros((batch_size, context_size, self.content_size), dtype=np.float32)
 
         action = np.concatenate([
@@ -234,7 +256,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, next_step = self.compute(context)
+        logits_int, logits_ext, next_step, _ = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -273,7 +295,7 @@ class Policy_Core(Base_Policy_Core):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, next_step = self.compute(context)
+        logits_int, logits_ext, next_step, aux_loss = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
@@ -291,5 +313,5 @@ class Policy_Core(Base_Policy_Core):
             log_prob_int, log_prob_ext
         ], dim=-1), torch.stack([
             entropy_int, entropy_ext
-        ], dim=-1), None
+        ], dim=-1), aux_loss
 

@@ -74,3 +74,41 @@ class Categorical_With_Mask(Categorical):
             except RuntimeError:
                 new.mask = self.mask
         return new
+    
+
+def batched_backward_fill_with_mask(flag: torch.Tensor):
+    """
+    Backward fills the array positions with the index of the next '1'.
+    For example [0, 1, 0, 1, 0, 1] -> [1, 1, 3, 3, 5, 5]
+    Supports arbitrary batch dimensions, e.g., (B, L) or (B, H, L).
+    
+    Args:
+        flag (torch.Tensor): Tensor of 0s and 1s with shape (*, L).
+        
+    Returns:
+        backward_filled (torch.Tensor): Tensor with backward filled indices, shape (*, L).
+        mask (torch.Tensor): Boolean mask that is True where no subsequent '1' was found.
+    """
+    # The sequence length is the size of the last dimension
+    L = flag.size(-1)
+    
+    # 1. Create 1D array of indices: [0, 1, ..., L-1]
+    # PyTorch will automatically broadcast this to match the batch dimensions of 'flag'
+    indices = torch.arange(L, device=flag.device)
+    
+    # 2. Replace positions where flag is 0 with L (acts as infinity)
+    vals = torch.where(flag == 1, indices, L)
+    
+    # 3. Flip, cummin, and flip back along the last dimension (dim=-1)
+    backward_filled = vals.flip(-1).cummin(-1).values.flip(-1)
+    
+    # 4. Create the mask for edge cases
+    mask = (backward_filled == L)
+    
+    # Replace the out-of-bounds placeholders with 0
+    backward_filled = torch.where(mask, torch.tensor(0, device=flag.device), backward_filled)
+
+    # revert mask to valid_mask
+    mask = ~mask
+    
+    return backward_filled, mask
