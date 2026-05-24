@@ -221,8 +221,8 @@ if __name__ == "__main__":
         minibatch_size = 8
     else:  # large
         history_steps = 0
-        hidden_size = 256
-        conv_layers = [16, 32, 64, 128, 128] # large impala
+        hidden_size = 128
+        conv_layers = [16, 32, 32, 64, 64, 128] # large impala
         rollout_length = 256
         minibatch_size = 8
 

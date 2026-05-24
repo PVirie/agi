@@ -62,7 +62,7 @@ class Policy_Core(Base_Policy_Core):
             depths=layers
         )
 
-        # inv, obs -> hidden_size
+        # obs -> hidden_size
         self.abstractor = ResNet(
             output_dims=hidden_size, 
             input_dims=hidden_size, 
