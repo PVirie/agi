@@ -15,7 +15,7 @@ from .base import convert_list_of_list_of_bool_to_float_tensor, convert_np_array
 from .base import masked_mean, masked_std
 
 
-class SAC(RL_Learner, Safe_nn_Module):
+class CrossQ(RL_Learner, Safe_nn_Module):
 
     def __init__(self, policy_model: Policy_Network, device, persistence_path=None, minibatch_size=8):
         self.policy_model = policy_model
@@ -28,7 +28,6 @@ class SAC(RL_Learner, Safe_nn_Module):
         self.policy_lr = 3e-4
         self.q_lr = 1e-3
         self.policy_frequency = 2
-        self.target_network_frequency = 1
         self.alpha = 0.2
         self.autotune = True
 
