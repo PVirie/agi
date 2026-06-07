@@ -3,7 +3,7 @@ from enum import Enum
 from interfaces.learning import RL_Learner
 from interfaces.agent import Agent
 from interfaces.network import Policy_Network, Value_Network
-from interfaces.memory import Memory, Memory_Operation_Type
+from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
 
 
@@ -44,12 +44,10 @@ def apply_cascading_masks(masks, *stop_conditions):
 
 
 class Scheme(str, Enum):
-    REACTIVE = "reactive"
-    COGNITIVE = "cognitive"
-    POINTER = "pointer"
+    FLIPFLOP = "flipflop"
 
 
-class Model_53(Agent):
+class Model_73(Agent):
     
     def __init__(self, 
                  policy_model: Policy_Network, value_model: Value_Network,
@@ -57,10 +55,10 @@ class Model_53(Agent):
                  context_collector: Context_Collector, 
                  action_collector: Context_Collector, 
                  valid_action_collector: Context_Collector,
-                 memory: Memory,
+                 graph_memory: Graph_Memory,
                  max_num_thought_steps: int = 2,
                  do_supervision: bool = False,
-                 scheme: Scheme = Scheme.REACTIVE
+                 scheme: Scheme = Scheme.FLIPFLOP
                  ):
         self.policy_model = policy_model
         self.value_model = value_model
@@ -68,20 +66,14 @@ class Model_53(Agent):
         self.obs = context_collector
         self.actions = action_collector
         self.valid_actions = valid_action_collector
-        self.memory = memory
+        self.graph_memory = graph_memory
 
         self.max_num_thought_steps = max_num_thought_steps
         self.do_supervision = do_supervision
 
-        if scheme == Scheme.REACTIVE:
-            self.valid_int_actions = [0]
-        elif scheme == Scheme.COGNITIVE:
-            self.valid_int_actions = [0, 1, 2, 3, 4, 5]
-        elif scheme == Scheme.POINTER:
-            self.valid_int_actions = [0, 1, 2, 3]
-
-        # set of external observation is a subset of valid_int_actions that triggers external observation override
-        self.observe_external_int_actions = list(set([0, 1]).intersection(set(self.valid_int_actions)))
+        if scheme == Scheme.FLIPFLOP:
+            self.valid_int_actions = [0, 1, 2] # 0 for create, 1 for write then move, 2 for link
+            self.observe_external_int_actions = [0, 1]
 
         self.reset()
 
@@ -133,54 +125,38 @@ class Model_53(Agent):
         last_action = self.actions.get_last()
         int_action, ext_action, position, last_content = self.policy_model.unpack_action(last_action)
 
-        memory_action = [Memory_Operation_Type.IDLE for _ in range(batch_size)]
-        memory_fetch_index = [-1 for _ in range(batch_size)]
-        memory_replace_all = [False for _ in range(batch_size)]
+        memory_action = [Graph_Memory_Operation_Type.IDLE for _ in range(batch_size)]
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
             flag = int_action[i].item()
             if r:
-                memory_action[i] |= Memory_Operation_Type.RESET
+                memory_action[i] |= Graph_Memory_Operation_Type.RESET
             if not idle:
-                # flag == 0 is normal content override with observation
-                # flag == 1 using the observation to fetch related position from memory
-                memory_action[i] |= Memory_Operation_Type.CACHE
+                if flag == 0:
+                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
                 if flag == 1:
-                    memory_action[i] |= Memory_Operation_Type.FETCH
-                    memory_fetch_index[i] = 2
-            else:
+                    memory_action[i] |= Graph_Memory_Operation_Type.WRITE_THEN_MOVE
+            if idle:
                 # if idle, use content and reward from last thought
                 content[i, :] = last_content[i, :]
                 reward[i] = 0
-                memory_replace_all[i] = True # allow replace fetched part unless it's the observation
-                # flag == 2 use memory content directly without memory operation
-                if flag == 3:
-                    # position based retrieve
-                    memory_action[i] |= Memory_Operation_Type.FETCH
-                    memory_fetch_index[i] = 1
-                elif flag == 4:
-                    # content based retrieve
-                    memory_action[i] |= Memory_Operation_Type.FETCH
-                    memory_fetch_index[i] = 2
-                elif flag == 5:
-                    # record node
-                    memory_action[i] |= Memory_Operation_Type.CACHE
+                if flag == 2:
+                    memory_action[i] |= Graph_Memory_Operation_Type.LINK
             if d or t:
                 self.thought_steps[i] = 0
+                # reset position
+                position = np.zeros_like(position)
             self.last_idles[-1][i] = idle
             self.last_dones[-1][i] = d
             self.last_truncates[-1][i] = t
 
         # update memory
-        _, position, content = self.memory.operate(
-            tuple_record=(
-                np.reshape(reward, (-1, 1)), 
-                position,
-                content
-            ), 
-            operation=memory_action,
-            index=memory_fetch_index,
-            replace_all_index=memory_replace_all
+        self.graph_memory.execute(
+            operations=memory_action,
+            write_value=content,
+            edge_1=position[:, 0],
+            edge_2=position[:, 1]
         )
+        context = self.graph_memory.get_node_context()
 
         # replace the reward and content
         self.obs.update_last(
@@ -189,7 +165,7 @@ class Model_53(Agent):
                 b_int=int_action,
                 b_ext=ext_action,
                 b_position=position,
-                b_content=content
+                b_content=context
             )
         )
         self.rewards[-1] = reward
