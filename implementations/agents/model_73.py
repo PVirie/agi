@@ -150,12 +150,15 @@ class Model_73(Agent):
             self.last_truncates[-1][i] = t
 
         # update memory
-        self.graph_memory.execute(
+        mem_op_results = self.graph_memory.execute(
             operations=memory_action,
             write_value=content,
             edge_1=position[:, 0],
             edge_2=position[:, 1]
         )
+        # update reward by mem_op_results (0 for True, -1 for False)
+        reward += np.array([0 if res else -1 for res in mem_op_results])
+
         context = self.graph_memory.get_node_context()
 
         # replace the reward and content

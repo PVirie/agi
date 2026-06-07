@@ -1,6 +1,30 @@
 import numpy as np
 
-from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
+try:
+    from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
+except ImportError:
+    # Define dummy classes for testing without the full interface
+    from enum import Flag, auto
+
+    class Graph_Memory_Operation_Type(Flag):
+        IDLE = 0
+        CREATE = auto()
+        WRITE_THEN_MOVE = auto()
+        LINK = auto()
+        RESET = auto()
+
+    class Graph_Memory:
+        def write_then_move(self, batch_indices, write_value, next_edge):
+            pass
+
+        def create(self, batch_indices, write_value):
+            pass
+
+        def link(self, batch_indices, edge_1, edge_2):
+            pass
+
+        def reset(self, batch_indices):
+            pass
 
 
 class NP_Graph_Memory(Graph_Memory):
@@ -49,10 +73,12 @@ class NP_Graph_Memory(Graph_Memory):
 
 
     def write_then_move(self, batch_indices, write_value, next_edge):
+        batch_indices = np.asarray(batch_indices)
         self.nodes[batch_indices, self.head[batch_indices], :] = write_value  # write to head node
         # move head to next node based on next_edge
         next_node = self.edges[batch_indices, self.head[batch_indices], next_edge]  # get next node index from edges
         self.head[batch_indices] = next_node  # move head to next node
+        return np.ones(len(batch_indices), dtype=bool)
 
 
     def create(self, batch_indices, write_value):
@@ -106,31 +132,36 @@ class NP_Graph_Memory(Graph_Memory):
     
 
     def reset(self, batch_indices):
+        batch_indices = np.asarray(batch_indices)
         self.nodes[batch_indices, :, :] = 0.0
         self.edges[batch_indices, :, :] = 0
         self.next_free_node[batch_indices] = 0
         self.next_free_edge[batch_indices, :] = 0
         self.head[batch_indices] = 0
+        return np.ones(len(batch_indices), dtype=bool)
 
 
     def execute(self, operations, write_value, edge_1, edge_2):
         # operations is a list of Graph_Memory_Operation_Type
-        # group together operations by type and execute in batches for efficiency
+        # group together operations by type and execute in batches for efficiency,
+        # then reassemble results in the original argument order
         ops_arr = np.array(operations)
         batch_indices = np.arange(len(operations))
+        success = np.zeros(len(operations), dtype=bool)
         for op in set(operations):
             op_indices = batch_indices[ops_arr == op]
             if op == Graph_Memory_Operation_Type.CREATE:
-                self.create(op_indices, write_value[op_indices])
+                op_success = self.create(op_indices, write_value[op_indices])
             elif op == Graph_Memory_Operation_Type.LINK:
-                self.link(op_indices, edge_1[op_indices], edge_2[op_indices])
+                op_success = self.link(op_indices, edge_1[op_indices], edge_2[op_indices])
             elif op == Graph_Memory_Operation_Type.WRITE_THEN_MOVE:
-                self.write_then_move(op_indices, write_value[op_indices], edge_1[op_indices])
+                op_success = self.write_then_move(op_indices, write_value[op_indices], edge_1[op_indices])
             elif op == Graph_Memory_Operation_Type.RESET:
-                self.reset(op_indices)
+                op_success = self.reset(op_indices)
             else:
-                # IDLE or unrecognized operation, do nothing
-                pass
+                op_success = np.ones(len(op_indices), dtype=bool)  # IDLE: always successful
+            success[op_indices] = op_success
+        return success
 
 
 
@@ -343,7 +374,8 @@ if __name__ == "__main__":
     edge_1 = np.array([0, 0, 0])
     edge_2 = np.array([0, 0, 0])
     OP = Graph_Memory_Operation_Type
-    m.execute([OP.CREATE, OP.WRITE_THEN_MOVE, OP.RESET], write_value, edge_1, edge_2)
+    ok = m.execute([OP.CREATE, OP.WRITE_THEN_MOVE, OP.RESET], write_value, edge_1, edge_2)
+    assert_equal("execute success order", ok, [True, True, True])
     # batch 0: create -> node 0 written, counter = 1, auto-link head(0)->node 0
     assert_allclose("execute create wrote node", m.nodes[0, 0], [5.0, 6.0])
     assert_equal("execute create counter", m.next_free_node[0], 1)
@@ -361,7 +393,8 @@ if __name__ == "__main__":
     m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=2, node_dim=2)
     write_value = np.array([[1.0, 2.0], [3.0, 4.0]])
     OP = Graph_Memory_Operation_Type
-    m.execute([OP.CREATE, OP.CREATE], write_value, np.zeros(2, dtype=int), np.zeros(2, dtype=int))
+    ok = m.execute([OP.CREATE, OP.CREATE], write_value, np.zeros(2, dtype=int), np.zeros(2, dtype=int))
+    assert_equal("all-create success", ok, [True, True])
     assert_equal("all-create counters", m.next_free_node, [1, 1])
     assert_allclose("all-create batch 0", m.nodes[0, 0], [1.0, 2.0])
     assert_allclose("all-create batch 1", m.nodes[1, 0], [3.0, 4.0])
@@ -379,8 +412,21 @@ if __name__ == "__main__":
     edge_1 = np.array([0])  # src = node 1
     edge_2 = np.array([1])  # dst = node 2
     OP = Graph_Memory_Operation_Type
-    m.execute([OP.LINK], write_value, edge_1, edge_2)
+    ok = m.execute([OP.LINK], write_value, edge_1, edge_2)
+    assert_equal("execute link success", ok, [True])
     assert_equal("execute link edge written", m.edges[0, 1, 0], 2)
     assert_equal("execute link counter incremented", m.next_free_edge[0, 1], 1)
+
+    # ================================================================== TEST 17
+    # execute: IDLE is a no-op but still returns True; mixed IDLE + CREATE preserves order
+    print("TEST 17: execute IDLE and order")
+    m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=2, node_dim=2)
+    write_value = np.array([[1.0, 0.0], [0.0, 0.0], [2.0, 0.0]])
+    OP = Graph_Memory_Operation_Type
+    ok = m.execute([OP.CREATE, OP.IDLE, OP.CREATE], write_value, np.zeros(3, dtype=int), np.zeros(3, dtype=int))
+    assert_equal("IDLE+CREATE order", ok, [True, True, True])
+    assert_allclose("batch 0 created", m.nodes[0, 0], [1.0, 0.0])
+    assert_equal("batch 1 idle untouched", m.next_free_node[1], 0)
+    assert_allclose("batch 2 created", m.nodes[2, 0], [2.0, 0.0])
 
     print("\nAll tests passed.")
