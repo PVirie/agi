@@ -17,7 +17,7 @@ from utilities.package_install import install
 
 install("datasets")
 
-from utilities.flipflop.environments import FlipFlop_Environment
+from utilities.flipflop.environments import FlipFlop_Environment, NUM_TOKENS
 from utilities.episode_recorder import Episode_Recorder
 from colorama import Fore, Back, Style
 
@@ -25,8 +25,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import model_73
 from implementations.networks.torch.policy.base import Projector
-from implementations.networks.torch.policy.base_xy import Policy_Core
-from implementations.networks.torch.value.base import Value_Core
+from implementations.networks.torch.policy.base_token import Policy_Core
+from implementations.networks.torch.value.token import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
@@ -169,60 +169,61 @@ if __name__ == "__main__":
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{i}/{stat}" for i in list(range(env.batch_size)) for stat in ["return"]])
     
     if args.scale == "small":
-        history_steps = 1
         hidden_size = 64
-        conv_layers = [16, 32, 32] # basic impala
+        embedding_dim = 4
+        C = 32
+        layers = [16, 32, 32] # basic impala
+        minibatch_size = 8
         rollout_length = 128
-        minibatch_size = 8
-        position_size = 32
     elif args.scale == "medium":
-        history_steps = 1
         hidden_size = 128
-        conv_layers = [16, 32, 64, 64] # medium impala
-        rollout_length = 256
+        embedding_dim = 4
+        C = 64
+        layers = [16, 32, 64, 64] # medium impala
         minibatch_size = 8
-        position_size = 32
+        rollout_length = 128
     else:  # large
-        history_steps = 1
         hidden_size = 256
-        conv_layers = [16, 32, 64, 128, 128] # large impala
-        rollout_length = 256
+        embedding_dim = 4
+        C = 64
+        layers = [16, 32, 64, 128, 128] # large impala
         minibatch_size = 8
-        position_size = 32
+        rollout_length = 128
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=6, ext_action_size=18, position_size=position_size,
-        width=32, height=64, channel=4,
-        hidden_size=hidden_size, layers=conv_layers,
-        history_steps=history_steps, max_temporal_len=rollout_length,
+        int_action_size=3, ext_action_size=2, position_size=2,
+        content_size=1 + C,
+        dict_size=NUM_TOKENS, embedding_dim=embedding_dim, pad_token_id=0,
+        hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        position_size=position_size,
-        width=32, height=64, channel=4,
-        output_dims=3,
-        layers=conv_layers,
+        int_action_size=3, ext_action_size=2,
+        position_size=2,
+        output_dims=1,
+        token_part_size=1 + C,
+        dict_size=NUM_TOKENS, embedding_dim=embedding_dim, pad_token_id=0,
+        hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
         policy_model=Projector(policy_core, [0, 1, 4]), value_model=value_core,
-        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
-        aux_coef=0.1 if args.with_auxiliary else None
+        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Graph_Memory(
         num_batches=env.batch_size,
         num_nodes=4096,
-        max_edges_per_node=64,
+        max_edges_per_node=C,
         node_dim=1
     )
     agent = model_73.Model_73(
         policy_model=policy_core, value_model=value_core,
         trainer=ppo_learner,
-        context_collector=Collector(max_history=history_steps),
-        action_collector=Collector(max_history=history_steps),
-        valid_action_collector=Collector(max_history=history_steps),
+        context_collector=Collector(max_history=0),
+        action_collector=Collector(max_history=0),
+        valid_action_collector=Collector(max_history=0),
         graph_memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=False,

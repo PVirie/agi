@@ -14,7 +14,7 @@ install("datasets")
 import torch
 import datasets
 
-dataset = datasets.load_dataset('synthseq/flipflop')
+dataset = datasets.load_dataset('synthseq/flipflop', cache_dir="/app/cache/datasets")
 
 def tokenize_batch(batch):
     mapping = {'w': 0, 'r': 1, 'i': 2, '0': 3, '1': 4}

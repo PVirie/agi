@@ -3,7 +3,7 @@ import numpy as np
 
 _MAPPING = {'w': 1, 'r': 2, 'i': 3, '0': 4, '1': 5}
 
-dataset = datasets.load_dataset('synthseq/flipflop')
+dataset = datasets.load_dataset('synthseq/flipflop', cache_dir="/app/cache/datasets")
 
 def tokenize_batch(batch):
     tokenized_batch = [[_MAPPING[char] for char in s] for s in batch['text']]

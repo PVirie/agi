@@ -13,7 +13,7 @@ class InstructionTransformer(nn.Module):
         
         # 1. Positional Encoding: A learned parameter for each position up to max_len
         # Shape: (1, max_len, d_model) for easy broadcasting
-        self.pos_embedding = nn.Parameter(torch.zeros(1, max_len, d_model))
+        # self.pos_embedding = nn.Parameter(torch.zeros(1, max_len, d_model))
 
         self.dropout = nn.Dropout(p=dropout)
 
@@ -34,7 +34,7 @@ class InstructionTransformer(nn.Module):
         self.apply(init_weights)
 
         # init positional encoding to small values to prevent early saturation
-        trunc_normal_(self.pos_embedding, std=0.02)
+        # trunc_normal_(self.pos_embedding, std=0.02)
 
 
     def forward(self, x, mask):
@@ -50,7 +50,8 @@ class InstructionTransformer(nn.Module):
         x_reshaped = x.view(B * S, L, E)
         x_reshaped = self.input_projection(x_reshaped)
         
-        x_reshaped = x_reshaped + self.pos_embedding[:, :L, :]
+        # remove positional encoding per latest knowledge
+        # x_reshaped = x_reshaped + self.pos_embedding[:, :L, :]
         x_reshaped = self.dropout(x_reshaped)
         
         # Prepare Mask (Convert 1/0 to True/False for PyTorch)

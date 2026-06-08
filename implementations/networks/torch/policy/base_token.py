@@ -19,63 +19,40 @@ class Policy_Core(Base_Policy_Core):
 
     def __init__(self, 
                  int_action_size, ext_action_size, 
-                 goal_size, inventory_size,
+                 position_size,
+                 content_size,
                  dict_size, embedding_dim, pad_token_id,
-                 width, height, channel,
-                 state_size,
                  hidden_size, layers, 
-                 history_steps=0, max_temporal_len=32, 
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="base_token_image_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="base_token_core", device=device, persistence_path=persistence_path)
         self.device = device
 
-        self.width = width
-        self.height = height
-        self.channel = channel
-
-        self.goal_size = goal_size
-        self.inventory_size = inventory_size
-        self.obs_size = width * height * channel
-        self.state_size = state_size
         self.hidden_size = hidden_size
         self.embedding_dim = embedding_dim
 
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
-        self.position_size = state_size
-        self.content_size = goal_size + inventory_size + self.obs_size
+        self.position_size = position_size
+        self.content_size = content_size
         self.packed_action_size = 1 + 1 + self.position_size + self.content_size
         self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
 
-        self.goal_pos = 1 + 1 + 1 + state_size
-        self.inv_pos = self.goal_pos + goal_size
-        self.obs_pos = self.inv_pos + inventory_size
-
         self.pad_token_id = pad_token_id
-        self.goal_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
-        self.goal_feature_extraction = InstructionTransformer(
+        self.embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
+        self.feature_extraction = InstructionTransformer(
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=8, 
             num_layers=2, 
-            max_len=goal_size
-        )
-
-        self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
-        self.feature_channel = self.channel * 4
-        self.conv_layers = ImpalaCNN(
-            output_dims=hidden_size, 
-            input_channels=self.feature_channel, 
-            width=width, height=height,
-            depths=layers
+            max_len=content_size
         )
 
         # goal, inv, obs -> hidden
         self.backbone = ResNet(
             output_dims=hidden_size, 
-            input_dims=hidden_size + inventory_size * embedding_dim + hidden_size, 
+            input_dims=hidden_size, 
             hidden_dims=hidden_size, 
             layers=[hidden_size for _ in layers]
         )
@@ -98,11 +75,8 @@ class Policy_Core(Base_Policy_Core):
 
     def reset_parameters(self):
         # Reset parameters of all layers
-        self.goal_embedding.reset_parameters()
-        self.image_embedding.reset_parameters()
-        self.conv_layers.reset_parameters()
-        self.goal_feature_extraction.reset_parameters()
-
+        self.embedding.reset_parameters()
+        self.feature_extraction.reset_parameters()
         self.backbone.reset_parameters()
 
         def init_actor_weights(m):
@@ -127,26 +101,15 @@ class Policy_Core(Base_Policy_Core):
         reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
-        goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
-        inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
-        obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
-
-        goal_padding_mask = get_padding_mask(goal, self.pad_token_id)  # (batch_size, context_size, goal_size)
-        goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
-        goal_features = self.goal_feature_extraction(goal_embedded, goal_padding_mask)  # (batch_size, context_size, hidden_size)
+        content = context[:, :, 1 + 1 + 1 + self.position_size: ]  # (batch_size, context_size, content_size)
+                          
+        padding_mask = get_padding_mask(content, self.pad_token_id)  # (batch_size, context_size, goal_size)
+        embedded = self.embedding(content.long())  # (batch_size, context_size, goal_size, embedding_dim)
+        features = self.feature_extraction(embedded, padding_mask)  # (batch_size, context_size, hidden_size)
         
-        inv_embedded = self.goal_embedding(inv.long())  # (batch_size, context_size, inventory_size, inv_size * embedding_dim)
-        inv_embedded = inv_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, inventory_size * embedding_dim)
-        
-        obs_embedded = self.image_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
-        obs_features = torch.reshape(obs_embedded, (batch_size * context_size, self.height, self.width, self.feature_channel))  # (batch_size * context_size, height, width, channel * embedding_dim)
-        obs_features = obs_features.permute(0, 3, 1, 2)  # (batch_size * context_size, channel * embedding_dim, height, width)
-        obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
-        obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
-
         # Base flow
 
-        base_input = torch.concat([goal_features, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        base_input = features  # (batch_size, context_size, hidden_size)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
