@@ -14,7 +14,7 @@ def convert_np_array_to_float_tensor(np_array: np.ndarray, device) -> torch.Tens
 
 
 def convert_np_array_to_bool_tensor(np_array: np.ndarray, device) -> torch.Tensor:
-    return torch.tensor(np_array.astype(np.bool), dtype=torch.bool).to(device)
+    return torch.tensor(np_array.astype(bool), dtype=torch.bool).to(device)
 
 
 def convert_list_of_np_array_to_float_tensor(np_array_list: List[np.ndarray], device) -> List[torch.Tensor]:
@@ -29,16 +29,11 @@ def convert_list_of_float_to_float_tensor(float_list: List[List[float]], device)
 
 def masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim=None, keepdim=False) -> torch.Tensor:
     masked_tensor = tensor * mask
-    if dim is None:
-        total_elements = mask.numel()
-    else:
-        total_elements = mask.sum(dim=dim, keepdim=keepdim)
-    
+    total_elements = mask.sum(dim=dim, keepdim=keepdim)
     return masked_tensor.sum(dim=dim, keepdim=keepdim) / (total_elements + 1e-8)
 
 
 def masked_std(tensor: torch.Tensor, mask: torch.Tensor, dim=None, keepdim=False) -> torch.Tensor:
-    masked_tensor = tensor * mask
     mean = masked_mean(tensor, mask, dim=dim, keepdim=True)
-    variance = masked_mean((masked_tensor - mean) ** 2, mask, dim=dim, keepdim=keepdim)
+    variance = masked_mean((tensor - mean) ** 2, mask, dim=dim, keepdim=keepdim)
     return torch.sqrt(variance + 1e-8)

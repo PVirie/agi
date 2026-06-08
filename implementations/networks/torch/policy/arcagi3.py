@@ -24,7 +24,7 @@ class Policy_Core(Base_Policy_Core):
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
-        Safe_nn_Module.__init__(self, name="base_xy_core", device=device, persistence_path=persistence_path)
+        Safe_nn_Module.__init__(self, name="arcagi3_core", device=device, persistence_path=persistence_path)
         self.device = device
 
         self.int_action_size = int_action_size  # num classes for flag

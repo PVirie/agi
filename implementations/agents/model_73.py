@@ -12,7 +12,7 @@ def make_valid_mask(valid_actions, action_size):
     valid_actions: a list (batch) of list of int
     action_size: int
     """
-    valid_mask = np.zeros((len(valid_actions), action_size), dtype=np.bool)
+    valid_mask = np.zeros((len(valid_actions), action_size), dtype=bool)
     for i, va in enumerate(valid_actions):
         valid_mask[i, va] = True
     return valid_mask
@@ -108,8 +108,8 @@ class Model_73(Agent):
                 np.zeros((batch_size, self.policy_model.packed_action_size), dtype=np.float32)
             )
             self.valid_actions.append(
-                np.ones((batch_size, self.policy_model.int_action_size), dtype=np.bool),
-                np.ones((batch_size, self.policy_model.ext_action_size), dtype=np.bool)
+                np.ones((batch_size, self.policy_model.int_action_size), dtype=bool),
+                np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
             )
             self.rewards.append(
                 np.zeros((batch_size,), dtype=np.float32)
@@ -144,7 +144,7 @@ class Model_73(Agent):
             if d or t:
                 self.thought_steps[i] = 0
                 # reset position
-                position = np.zeros_like(position)
+                position[i, :] = np.zeros_like(position[i, :])
             self.last_idles[-1][i] = idle
             self.last_dones[-1][i] = d
             self.last_truncates[-1][i] = t
@@ -160,6 +160,7 @@ class Model_73(Agent):
         reward += np.array([0 if res else -1 for res in mem_op_results])
 
         context = self.graph_memory.get_node_context()
+        context = context.reshape(batch_size, -1) # reshape to (batch_size, context_size)
 
         # replace the reward and content
         self.obs.update_last(
@@ -248,10 +249,10 @@ class Model_73(Agent):
         )
         self.actions.append(packed_action)
         self.valid_actions.append(
-            np.ones((batch_size, self.policy_model.int_action_size), dtype=np.bool),
-            np.ones((batch_size, self.policy_model.ext_action_size), dtype=np.bool)
+            np.ones((batch_size, self.policy_model.int_action_size), dtype=bool),
+            np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
         )
-        self.rewards.append(np.zeros((batch_size, 1), dtype=np.float32))
+        self.rewards.append(np.zeros((batch_size, ), dtype=np.float32))
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         self.last_dones.append([False for _ in range(batch_size)])
         self.last_truncates.append([False for _ in range(batch_size)])

@@ -25,7 +25,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import model_73
 from implementations.networks.torch.policy.base import Projector
-from implementations.networks.torch.policy.base_token import Policy_Core
+from implementations.networks.torch.policy.flipflop import Policy_Core
 from implementations.networks.torch.value.token import Value_Core
 from implementations.learning_algorithms.torch.ppo import PPO
 from implementations.collectors.states import State_Sequence as Collector
@@ -154,7 +154,7 @@ if __name__ == "__main__":
     np.random.seed(20260608)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/flipflop_73"
+    experiment_path = f"{APP_ROOT}/experiments/flipflop_73_size_{args.scale}_scheme_{args.scheme}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -193,14 +193,15 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=3, ext_action_size=2, position_size=2,
+        int_action_size=3, ext_action_size=NUM_TOKENS,
+        position_size=2,
         content_size=1 + C,
         dict_size=NUM_TOKENS, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        int_action_size=3, ext_action_size=2,
+        int_action_size=3, ext_action_size=NUM_TOKENS,
         position_size=2,
         output_dims=1,
         token_part_size=1 + C,
@@ -209,7 +210,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1, 4]), value_model=value_core,
+        policy_model=Projector(policy_core, [0, 1, 2, 3]), value_model=value_core,
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Graph_Memory(

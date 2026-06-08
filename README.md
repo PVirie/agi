@@ -123,6 +123,6 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [x] Carry on states
     - [x] Fixed base model to clear position on done, truncated
     - [x] Separate model for high level and low level policy
-- [ ] Model 73: Graph Memory
-    - [ ] flipflop dataset
+- [x] Model 73: Graph Memory
+    - [x] flipflop dataset
 - [ ] A real world environment (required for pretigious conference publication, but not necessary for the project itself)

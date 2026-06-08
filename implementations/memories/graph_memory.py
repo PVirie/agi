@@ -74,6 +74,7 @@ class NP_Graph_Memory(Graph_Memory):
 
     def write_then_move(self, batch_indices, write_value, next_edge):
         batch_indices = np.asarray(batch_indices)
+        next_edge = np.asarray(next_edge, dtype=np.int32)
         self.nodes[batch_indices, self.head[batch_indices], :] = write_value  # write to head node
         # move head to next node based on next_edge
         next_node = self.edges[batch_indices, self.head[batch_indices], next_edge]  # get next node index from edges
@@ -109,8 +110,8 @@ class NP_Graph_Memory(Graph_Memory):
         # resolve them to actual node indices via the head's edge list
         max_edges = self.edges.shape[2]
         batch_indices = np.asarray(batch_indices)
-        edge_1 = np.asarray(edge_1)
-        edge_2 = np.asarray(edge_2)
+        edge_1 = np.asarray(edge_1, dtype=np.int32)
+        edge_2 = np.asarray(edge_2, dtype=np.int32)
 
         # get the node indices that edge_1 and edge_2 of the head point to
         src_nodes = self.edges[batch_indices, self.head[batch_indices], edge_1]  # (len(batch_indices),)
