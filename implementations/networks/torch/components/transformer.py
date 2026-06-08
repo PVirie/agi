@@ -56,7 +56,17 @@ class InstructionTransformer(nn.Module):
         
         # Prepare Mask (Convert 1/0 to True/False for PyTorch)
         flat_mask = mask.view(B * S, L)
-        src_key_padding_mask = (flat_mask == 0) # True means "mask this out"
+
+        # Guard against all-padding sequences: softmax over all-masked keys produces
+        # NaN (0/0), which poisons LayerNorm gradients. Force at least one token to
+        # be attended per sequence; the original flat_mask is still used for pooling
+        # so these forced tokens never contribute to the output.
+        has_any_real = flat_mask.any(dim=1, keepdim=True)  # (B*S, 1) bool
+        first_token_unmasked = torch.zeros_like(flat_mask)
+        first_token_unmasked[:, 0] = 1.0
+        attn_mask = torch.where(has_any_real, flat_mask, first_token_unmasked)
+
+        src_key_padding_mask = (attn_mask == 0)  # True means "mask this out"
 
         # Pass through Transformer
         encoded = self.transformer_encoder(x_reshaped, src_key_padding_mask=src_key_padding_mask)

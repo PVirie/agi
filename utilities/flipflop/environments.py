@@ -29,10 +29,12 @@ def _load_sequences(category):
     if category not in _sequence_cache:
         # Column access returns all raw texts (transform preserves 'text' key)
         texts = dataset[category]['text']
-        _sequence_cache[category] = [
+        sequences = [
             np.array([_MAPPING[c] for c in text], dtype=np.int64)
             for text in texts
         ]
+        np.random.shuffle(sequences)
+        _sequence_cache[category] = sequences
     return _sequence_cache[category]
 
 
