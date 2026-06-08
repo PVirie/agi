@@ -170,22 +170,22 @@ if __name__ == "__main__":
     
     if args.scale == "small":
         hidden_size = 64
-        embedding_dim = 4
-        C = 32
+        embedding_dim = 8
+        C = 7
         layers = [16, 32, 32] # basic impala
         minibatch_size = 8
         rollout_length = 128
     elif args.scale == "medium":
         hidden_size = 128
-        embedding_dim = 4
-        C = 64
+        embedding_dim = 8
+        C = 7
         layers = [16, 32, 64, 64] # medium impala
         minibatch_size = 8
         rollout_length = 128
     else:  # large
         hidden_size = 256
-        embedding_dim = 4
-        C = 64
+        embedding_dim = 8
+        C = 7
         layers = [16, 32, 64, 128, 128] # large impala
         minibatch_size = 8
         rollout_length = 128
@@ -193,7 +193,7 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=3, ext_action_size=NUM_TOKENS,
+        int_action_size=4, ext_action_size=NUM_TOKENS,
         position_size=2,
         content_size=1 + C,
         dict_size=NUM_TOKENS, embedding_dim=embedding_dim, pad_token_id=0,
@@ -201,7 +201,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        int_action_size=3, ext_action_size=NUM_TOKENS,
+        int_action_size=4, ext_action_size=NUM_TOKENS,
         position_size=2,
         output_dims=1,
         token_part_size=1 + C,

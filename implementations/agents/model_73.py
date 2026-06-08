@@ -72,8 +72,8 @@ class Model_73(Agent):
         self.do_supervision = do_supervision
 
         if scheme == Scheme.FLIPFLOP:
-            self.valid_int_actions = [0, 1, 2] # 0 for create, 1 for write then move, 2 for link
-            self.observe_external_int_actions = [0, 1]
+            self.valid_int_actions = [0, 1, 2, 3] # 0 idle, 1 for create, 2 for write then move, 3 for link
+            self.observe_external_int_actions = [0, 1, 2]
 
         self.reset()
 
@@ -131,15 +131,15 @@ class Model_73(Agent):
             if r:
                 memory_action[i] |= Graph_Memory_Operation_Type.RESET
             if not idle:
-                if flag == 0:
-                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
                 if flag == 1:
+                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
+                if flag == 2:
                     memory_action[i] |= Graph_Memory_Operation_Type.WRITE_THEN_MOVE
             if idle:
                 # if idle, use content and reward from last thought
                 content[i, :] = last_content[i, :]
                 reward[i] = 0
-                if flag == 2:
+                if flag == 3:
                     memory_action[i] |= Graph_Memory_Operation_Type.LINK
             if d or t:
                 self.thought_steps[i] = 0

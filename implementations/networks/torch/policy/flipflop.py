@@ -197,8 +197,8 @@ class Policy_Core(Base_Policy_Core):
 
         action_int = selected_action[:, :, 0]
         action_ext = selected_action[:, :, 1]
-        action_edge_1 = context[:, :, 1 + 1 + 1 + 0]
-        action_edge_2 = context[:, :, 1 + 1 + 1 + 1]
+        action_edge_1 = selected_action[:, :, 1 + 1 + 0]
+        action_edge_2 = selected_action[:, :, 1 + 1 + 1]
 
         log_prob_int = probs_int.log_prob(action_int)
         log_prob_ext = probs_ext.log_prob(action_ext)
@@ -244,8 +244,8 @@ class Policy_Core(Base_Policy_Core):
 
         action_int = selected_action[:, :, 0]
         action_ext = selected_action[:, :, 1]
-        action_edge_1 = context[:, :, 1 + 1 + 1 + 0]
-        action_edge_2 = context[:, :, 1 + 1 + 1 + 1]
+        action_edge_1 = selected_action[:, :, 1 + 1 + 0]
+        action_edge_2 = selected_action[:, :, 1 + 1 + 1]
 
         log_prob_int = probs_int.log_prob(action_int)
         log_prob_ext = probs_ext.log_prob(action_ext)
