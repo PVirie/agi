@@ -72,7 +72,9 @@ class Model_73(Agent):
         self.do_supervision = do_supervision
 
         if scheme == Scheme.FLIPFLOP:
-            self.valid_int_actions = [0, 1, 2, 3, 4] # 0 idle, 1 for write, 2 for create, 3 for link, 4 for move
+            # 0 obs idle, 1 for obs write, 2 for obs create
+            # 3 thought for link, 4 thought for move, 5 thought write, 6 thought create
+            self.valid_int_actions = [0, 1, 2, 3, 4, 5, 6]
             self.observe_external_int_actions = [0, 1, 2]
 
         self.reset()

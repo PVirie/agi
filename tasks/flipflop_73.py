@@ -164,49 +164,52 @@ if __name__ == "__main__":
     os.makedirs(experiment_path, exist_ok=True)
 
     env = FlipFlop_Environment(
-        batch_size=16,
+        batch_size=128,
     )
 
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{stat}" for _ in list(range(env.batch_size)) for stat in ["return"]])
     
     if args.scale == "small":
-        hidden_size = 64
-        embedding_dim = 8
-        C = 7
+        hidden_size = 32
+        embedding_dim = 4
+        C = 3
         layers = [16, 32, 32] # basic impala
-        minibatch_size = 8
+        minibatch_size = 32
         rollout_length = 128
+        WORDS = NUM_TOKENS + 2
     elif args.scale == "medium":
-        hidden_size = 128
+        hidden_size = 32
         embedding_dim = 8
-        C = 7
+        C = 3
         layers = [16, 32, 64, 64] # medium impala
-        minibatch_size = 8
+        minibatch_size = 32
         rollout_length = 128
+        WORDS = NUM_TOKENS + 4
     else:  # large
-        hidden_size = 256
+        hidden_size = 32
         embedding_dim = 8
-        C = 7
+        C = 3
         layers = [16, 32, 64, 128, 128] # large impala
-        minibatch_size = 8
+        minibatch_size = 32
         rollout_length = 128
+        WORDS = NUM_TOKENS + 4
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=5, ext_action_size=NUM_TOKENS,
+        int_action_size=7, ext_action_size=WORDS,
         position_size=2,
         content_size=1 + C,
-        dict_size=NUM_TOKENS, embedding_dim=embedding_dim, pad_token_id=0,
+        dict_size=WORDS, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        int_action_size=5, ext_action_size=NUM_TOKENS,
+        int_action_size=7, ext_action_size=WORDS,
         position_size=2,
         output_dims=1,
         token_part_size=1 + C,
-        dict_size=NUM_TOKENS, embedding_dim=embedding_dim, pad_token_id=0,
+        dict_size=WORDS, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
