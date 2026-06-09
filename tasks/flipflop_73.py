@@ -16,6 +16,7 @@ APP_ROOT = os.getenv("APP_ROOT", "/app")
 from utilities.package_install import install
 
 install("datasets")
+install("colorama")
 
 from utilities.flipflop.environments import FlipFlop_Environment, NUM_TOKENS
 from utilities.episode_recorder import Episode_Recorder
