@@ -2,9 +2,9 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name | Description                              |
-| ---------- | ---------- | ---------------------------------------- |
-| LXXII      | ATAT       | Assisting Training with Algebra Transfer |
+| Generation | Model Name   | Description                |
+| ---------- | ------------ | -------------------------- |
+| LXXIII     | Graph Memory | Full Quest Graph Automaton |
 
 ## Prerequisites
 

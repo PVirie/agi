@@ -16,6 +16,7 @@ APP_ROOT = os.getenv("APP_ROOT", "/app")
 from utilities.package_install import install
 
 install("datasets")
+install("colorama")
 
 from utilities.flipflop.environments import FlipFlop_Environment, NUM_TOKENS
 from utilities.episode_recorder import Episode_Recorder
@@ -166,7 +167,7 @@ if __name__ == "__main__":
         batch_size=16,
     )
 
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{i}/{stat}" for i in list(range(env.batch_size)) for stat in ["return"]])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{stat}" for _ in list(range(env.batch_size)) for stat in ["return"]])
     
     if args.scale == "small":
         hidden_size = 64
