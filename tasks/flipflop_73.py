@@ -193,7 +193,7 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=4, ext_action_size=NUM_TOKENS,
+        int_action_size=5, ext_action_size=NUM_TOKENS,
         position_size=2,
         content_size=1 + C,
         dict_size=NUM_TOKENS, embedding_dim=embedding_dim, pad_token_id=0,
@@ -201,7 +201,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     value_core = Value_Core(
-        int_action_size=4, ext_action_size=NUM_TOKENS,
+        int_action_size=5, ext_action_size=NUM_TOKENS,
         position_size=2,
         output_dims=1,
         token_part_size=1 + C,
