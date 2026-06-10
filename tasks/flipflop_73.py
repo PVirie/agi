@@ -135,7 +135,7 @@ async def eval(env, agent):
 
     total_eval_count = 0
     total_correct_count = 0
-    step = 0
+    steps = 0
     while True:
 
         actions, _ = agent.choose_action(
@@ -165,9 +165,11 @@ async def eval(env, agent):
         last_truncated = [truncations[i] for i in range(len(observations))]
         last_reset = [False for _ in observations]
 
-        if step % 100 == 0:
+        steps += 1
+        if steps % 100 == 0:
+            logging.info(f"{steps}| Selected actions: {actions}")
             accuracy = total_correct_count / total_eval_count if total_eval_count > 0 else 0.0
-            logging.info(f"Step {step}: Total eval count: {total_eval_count}, Total correct count: {total_correct_count}, Accuracy: {accuracy:.4f}")
+            logging.info(f"{steps}| Total eval count: {total_eval_count}, Total correct count: {total_correct_count}, Accuracy: {accuracy:.4f}")
 
     accuracy = total_correct_count / total_eval_count if total_eval_count > 0 else 0.0
     logging.info(f"Evaluation completed. Total eval count: {total_eval_count}, Total correct count: {total_correct_count}, Accuracy: {accuracy:.4f}")

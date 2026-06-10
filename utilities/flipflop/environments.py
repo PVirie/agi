@@ -63,6 +63,7 @@ class FlipFlop_Environment:
 
         # Per-env mutable state
         self._dataset_indices = list(range(batch_size))
+        self._next_index = batch_size  # Round-robin pointer: next sequence to assign
         self._positions = [0] * batch_size
         self._prev_tokens = [None] * batch_size
         self._episode_returns = [0.0] * batch_size
@@ -80,6 +81,7 @@ class FlipFlop_Environment:
 
     def reset(self, seed=None):
         self._dataset_indices = list(range(self.batch_size))
+        self._next_index = self.batch_size
         self._positions = [0] * self.batch_size
         self._prev_tokens = [None] * self.batch_size
         self._episode_returns = [0.0] * self.batch_size
@@ -135,12 +137,13 @@ class FlipFlop_Environment:
                     }
                 }
 
-                if not self.loop and self._dataset_indices[i] + self.batch_size >= self.n_samples:
-                    # If not looping and we've reached the end of the dataset, mark this env as invalid
+                if not self.loop and self._next_index >= self.n_samples:
+                    # If not looping and we've exhausted all sequences, mark this env as invalid
                     self.valid[i] = False
 
-                # Advance to next sequence with stride = batch_size (wrap around)
-                self._dataset_indices[i] = (self._dataset_indices[i] + self.batch_size) % self.n_samples
+                # Round-robin: assign next available sequence
+                self._dataset_indices[i] = self._next_index % self.n_samples
+                self._next_index += 1
                 self._positions[i] = 0
                 self._prev_tokens[i] = None
                 self._episode_returns[i] = 0.0
