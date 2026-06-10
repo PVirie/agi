@@ -54,7 +54,7 @@ class FlipFlop_Environment:
                  looping back to the front when the end is reached.
     """
 
-    def __init__(self, batch_size, category='train'):
+    def __init__(self, batch_size, category='train', loop=True):
         self.batch_size = batch_size
         self._sequences = _load_sequences(category)
         self.n_samples = len(self._sequences)
@@ -66,6 +66,8 @@ class FlipFlop_Environment:
         self._positions = [0] * batch_size
         self._prev_tokens = [None] * batch_size
         self._episode_returns = [0.0] * batch_size
+        self._episode_eval_count = [0.0] * batch_size
+        self._episode_correct_count = [0.0] * batch_size
 
         self.return_obs = [None] * batch_size
         self.return_rewards = [np.float32(0.0)] * batch_size
@@ -73,16 +75,23 @@ class FlipFlop_Environment:
         self.return_truncations = [False] * batch_size
         self.return_infos = [{} for _ in range(batch_size)]
 
+        self.loop = loop
+        self.valid = [True] * batch_size  # Used to indicate if env is still valid (not done when loop=False)
+
     def reset(self, seed=None):
         self._dataset_indices = list(range(self.batch_size))
         self._positions = [0] * self.batch_size
         self._prev_tokens = [None] * self.batch_size
         self._episode_returns = [0.0] * self.batch_size
+        self._episode_eval_count = [0.0] * self.batch_size
+        self._episode_correct_count = [0.0] * self.batch_size
 
         for i in range(self.batch_size):
             tokens = self._sequences[self._dataset_indices[i]]
             self.return_obs[i] = np.array([int(tokens[0])], dtype=np.int64)
             self.return_infos[i] = {}
+
+        self.valid = [True] * self.batch_size
 
         return list(self.return_obs), list(self.return_infos)
 
@@ -101,7 +110,12 @@ class FlipFlop_Environment:
 
             # Reward: agent predicted after seeing TOKEN_R; current token is ground truth
             if prev_token == TOKEN_R:
-                reward = np.float32(0.1) if int(actions[i]) == current_token else np.float32(-0.1)
+                self._episode_eval_count[i] += 1.0
+                if int(actions[i]) == current_token:
+                    self._episode_correct_count[i] += 1
+                    reward = np.float32(0.1)
+                else:
+                    reward = np.float32(-0.1)
             else:
                 reward = np.float32(0.0)
 
@@ -113,13 +127,25 @@ class FlipFlop_Environment:
                 # Sequence finished
                 self.return_terminations[i] = True
                 self.return_truncations[i] = False
-                self.return_infos[i] = {"episode": {"r": self._episode_returns[i]}}
+                self.return_infos[i] = {
+                    "episode": {
+                        "r": self._episode_returns[i],
+                        "ec": self._episode_eval_count[i] if self.valid[i] else 0.0,
+                        "cc": self._episode_correct_count[i] if self.valid[i] else 0.0,
+                    }
+                }
+
+                if not self.loop and self._dataset_indices[i] + self.batch_size >= self.n_samples:
+                    # If not looping and we've reached the end of the dataset, mark this env as invalid
+                    self.valid[i] = False
 
                 # Advance to next sequence with stride = batch_size (wrap around)
                 self._dataset_indices[i] = (self._dataset_indices[i] + self.batch_size) % self.n_samples
                 self._positions[i] = 0
                 self._prev_tokens[i] = None
                 self._episode_returns[i] = 0.0
+                self._episode_eval_count[i] = 0.0
+                self._episode_correct_count[i] = 0.0
 
                 # Return first token of the new sequence
                 new_tokens = self._sequences[self._dataset_indices[i]]
@@ -145,3 +171,6 @@ class FlipFlop_Environment:
 
     def close(self):
         pass
+
+    def has_more(self):
+        return any(self.valid)

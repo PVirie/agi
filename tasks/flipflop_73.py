@@ -42,7 +42,7 @@ def format_float(f):
     else:
         return "{: .1f}".format(f)
 
-async def run(env, agent, do_train=True, rollout_length=16, verbose=False):
+async def run(env, agent, rollout_length=16, verbose=False):
 
     observations, info = env.reset()
     rewards = [np.float32(0) for _ in observations]
@@ -67,7 +67,7 @@ async def run(env, agent, do_train=True, rollout_length=16, verbose=False):
             latest_frames=observations,
             rewards=[r for r in rewards],
             next_available_actions=env.get_available_actions(),
-            force_train=do_train and (steps % rollout_length == 0 or should_stop),
+            force_train=steps % rollout_length == 0 or should_stop,
         )
         actions = [int(a[0].item()) if a is not None else None for a in actions]
 
@@ -123,6 +123,58 @@ async def run(env, agent, do_train=True, rollout_length=16, verbose=False):
     env.close()
 
 
+async def eval(env, agent):
+    agent.reset() # reset agent's internal state before evaluation
+
+    observations, info = env.reset()
+    rewards = [np.float32(0) for _ in observations]
+    last_idle = [False for _ in observations]
+    last_done = [False for _ in observations]
+    last_truncated = [False for _ in observations]
+    last_reset = [False for _ in observations]
+
+    total_eval_count = 0
+    total_correct_count = 0
+    step = 0
+    while True:
+
+        actions, _ = agent.choose_action(
+            last_idles=last_idle,
+            last_dones=last_done,
+            last_truncates=last_truncated,
+            last_resets=last_reset,
+            latest_frames=observations,
+            rewards=[r for r in rewards],
+            next_available_actions=env.get_available_actions(),
+            force_train=False,
+        )
+        actions = [int(a[0].item()) if a is not None else None for a in actions]
+
+        observations, rewards, terminations, truncations, infos = env.step(actions)
+        for i in range(len(observations)):
+            if terminations[i] or truncations[i]:
+                total_eval_count += infos[i]["episode"]["ec"]
+                total_correct_count += infos[i]["episode"]["cc"]
+
+        if not env.has_more():
+            logging.info("All environments have finished their sequences.")
+            break
+
+        last_idle = [False for _ in observations]
+        last_done = [terminations[i] or truncations[i] for i in range(len(observations))]
+        last_truncated = [truncations[i] for i in range(len(observations))]
+        last_reset = [False for _ in observations]
+
+        if step % 100 == 0:
+            accuracy = total_correct_count / total_eval_count if total_eval_count > 0 else 0.0
+            logging.info(f"Step {step}: Total eval count: {total_eval_count}, Total correct count: {total_correct_count}, Accuracy: {accuracy:.4f}")
+
+    accuracy = total_correct_count / total_eval_count if total_eval_count > 0 else 0.0
+    logging.info(f"Evaluation completed. Total eval count: {total_eval_count}, Total correct count: {total_correct_count}, Accuracy: {accuracy:.4f}")
+
+    env.close()
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
@@ -133,6 +185,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
     parser.add_argument("--scheme",                 "-sch", type=str, default="flipflop", help="The scheme to use for the agent's decision making. Default is 'reactive'.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
+    parser.add_argument("--eval",                   "-e",   action="store_true", help="Run the agent in evaluation mode (no training).")
     args = parser.parse_args()
 
     # print summary of arguments that are not default
@@ -235,4 +288,31 @@ if __name__ == "__main__":
         scheme=model_73.Scheme(args.scheme)
     )
 
-    asyncio.run(run(env, agent, do_train=True, rollout_length=rollout_length, verbose=not args.silent))
+    if not args.eval:
+        asyncio.run(run(env, agent, rollout_length=rollout_length, verbose=not args.silent))
+    else:
+        logging.info("Running in evaluation mode (no training).")
+
+        logging.info("Evaluating on validation set...")
+        val_env = FlipFlop_Environment(
+            batch_size=128,
+            category="val",
+            loop=False
+        )
+        asyncio.run(eval(val_env, agent))
+
+        logging.info("Evaluating on dense validation set...")
+        val_dense_env = FlipFlop_Environment(
+            batch_size=128,
+            category="val_dense",
+            loop=False
+        )
+        asyncio.run(eval(val_dense_env, agent))
+
+        logging.info("Evaluating on sparse validation set...")
+        val_sparse_env = FlipFlop_Environment(
+            batch_size=128,
+            category="val_sparse",
+            loop=False
+        )
+        asyncio.run(eval(val_sparse_env, agent))
