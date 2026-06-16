@@ -45,6 +45,7 @@ def apply_cascading_masks(masks, *stop_conditions):
 
 class Scheme(str, Enum):
     FLIPFLOP = "flipflop"
+    FULL = "full"
 
 
 class Model_73(Agent):
@@ -71,9 +72,13 @@ class Model_73(Agent):
         self.max_num_thought_steps = max_num_thought_steps
         self.do_supervision = do_supervision
 
+        # 0 obs idle, 1 for obs write, 2 for obs create
+        # 3 thought for link, 4 thought for write then move, 5 thought create
+        # 6 thought for rotate edge
         if scheme == Scheme.FLIPFLOP:
-            # 0 obs idle, 1 for obs write, 2 for obs create
-            # 3 thought for link, 4 thought for move, 5 thought write, 6 thought create
+            self.valid_int_actions = [0, 1, 2, 3, 4, 5]
+            self.observe_external_int_actions = [0, 1, 2]
+        elif scheme == Scheme.FULL:
             self.valid_int_actions = [0, 1, 2, 3, 4, 5, 6]
             self.observe_external_int_actions = [0, 1, 2]
 
@@ -144,7 +149,12 @@ class Model_73(Agent):
                 if flag == 3:
                     memory_action[i] |= Graph_Memory_Operation_Type.LINK
                 if flag == 4:
+                    memory_action[i] |= Graph_Memory_Operation_Type.WRITE
                     memory_action[i] |= Graph_Memory_Operation_Type.MOVE
+                if flag == 5:
+                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
+                if flag == 6:
+                    memory_action[i] |= Graph_Memory_Operation_Type.ROTATE
             if d or t:
                 self.thought_steps[i] = 0
                 # reset position

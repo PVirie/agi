@@ -13,22 +13,10 @@ except ImportError:
         WRITE = auto()
         MOVE = auto()
         LINK = auto()
+        ROTATE = auto()
 
     class Graph_Memory:
-        def write(self, batch_indices, write_value):
-            pass
-
-        def move(self, batch_indices, next_edge):
-            pass
-
-        def create(self, batch_indices, write_value):
-            pass
-
-        def link(self, batch_indices, edge_1, edge_2):
-            pass
-
-        def reset(self, batch_indices):
-            pass
+        pass
 
 
 class NP_Graph_Memory(Graph_Memory):
@@ -51,7 +39,8 @@ class NP_Graph_Memory(Graph_Memory):
 
 
     def total_used_edges(self):
-        return np.sum(self.next_free_edge, axis=1)  # sum over nodes to get total edges used per batch
+        # each undirected edge is stored twice (once per endpoint), so divide by 2
+        return np.sum(self.next_free_edge, axis=1) // 2
     
 
     def get_node_context(self):
@@ -107,7 +96,8 @@ class NP_Graph_Memory(Graph_Memory):
 
 
     def create(self, batch_indices, write_value):
-        # check both: free node slot AND free edge slot on head
+        # check: free node slot AND free edge slot on head
+        # the new node always has a free back-link slot since it starts empty
         num_nodes = self.nodes.shape[1]
         batch_indices = np.asarray(batch_indices)
         write_value = np.asarray(write_value)
@@ -120,11 +110,15 @@ class NP_Graph_Memory(Graph_Memory):
             new_node_indices = self.next_free_node[write_batches]  # index of the newly created node
             self.nodes[write_batches, new_node_indices, :] = write_value[success]
             self.next_free_node[write_batches] += 1
-            # auto-link from head to new node
             head_indices = self.head[write_batches]
+            # head -> new_node
             link_slots = self.next_free_edge[write_batches, head_indices]
             self.edges[write_batches, head_indices, link_slots] = new_node_indices
             self.next_free_edge[write_batches, head_indices] += 1
+            # new_node -> head (back-link, undirected)
+            back_slots = self.next_free_edge[write_batches, new_node_indices]
+            self.edges[write_batches, new_node_indices, back_slots] = head_indices
+            self.next_free_edge[write_batches, new_node_indices] += 1
 
         return success
 
@@ -132,6 +126,7 @@ class NP_Graph_Memory(Graph_Memory):
     def link(self, batch_indices, edge_1, edge_2):
         # edge_1 and edge_2 are edge slot indices on the head node
         # resolve them to actual node indices via the head's edge list
+        # edges are undirected: both endpoints are updated
         max_edges = self.edges.shape[2]
         batch_indices = np.asarray(batch_indices)
         edge_1 = np.asarray(edge_1, dtype=np.int32)
@@ -141,21 +136,92 @@ class NP_Graph_Memory(Graph_Memory):
         used_edges = self.next_free_edge[batch_indices, self.head[batch_indices]]
         valid_slots = (edge_1 < used_edges) & (edge_2 < used_edges)
 
+        safe_used = np.maximum(used_edges, 1)
         # get the node indices that edge_1 and edge_2 of the head point to
-        src_nodes = np.where(valid_slots, self.edges[batch_indices, self.head[batch_indices], np.minimum(edge_1, used_edges - 1)], 0)
-        dst_nodes = np.where(valid_slots, self.edges[batch_indices, self.head[batch_indices], np.minimum(edge_2, used_edges - 1)], 0)
+        src_nodes = np.where(valid_slots, self.edges[batch_indices, self.head[batch_indices], np.minimum(edge_1, safe_used - 1)], 0)
+        dst_nodes = np.where(valid_slots, self.edges[batch_indices, self.head[batch_indices], np.minimum(edge_2, safe_used - 1)], 0)
 
-        # first check: valid edge slots AND free edge slot on src_nodes
-        free_edges = self.next_free_edge[batch_indices, src_nodes]
-        success = valid_slots & (free_edges < max_edges)
+        # both src and dst must have a free edge slot (undirected edge stored on both ends)
+        free_on_src = self.next_free_edge[batch_indices, src_nodes]
+        free_on_dst = self.next_free_edge[batch_indices, dst_nodes]
+        success = valid_slots & (free_on_src < max_edges) & (free_on_dst < max_edges)
 
         write_batches = batch_indices[success]
         write_src = src_nodes[success]
         write_dst = dst_nodes[success]
         if len(write_batches) > 0:
-            slots = self.next_free_edge[write_batches, write_src]
-            self.edges[write_batches, write_src, slots] = write_dst
+            # src -> dst
+            slots_src = self.next_free_edge[write_batches, write_src]
+            self.edges[write_batches, write_src, slots_src] = write_dst
             self.next_free_edge[write_batches, write_src] += 1
+            # dst -> src
+            slots_dst = self.next_free_edge[write_batches, write_dst]
+            self.edges[write_batches, write_dst, slots_dst] = write_src
+            self.next_free_edge[write_batches, write_dst] += 1
+
+        return success
+    
+
+    def _remove_edge(self, batches, src_nodes, dst_nodes):
+        # remove the edge from src_node to dst_node for each batch item (swap-with-last)
+        # precondition: the edge is guaranteed to exist
+        max_edges = self.edges.shape[2]
+        slot_range = np.arange(max_edges)
+        src_edge_list = self.edges[batches, src_nodes, :]           # (n, max_edges)
+        used = self.next_free_edge[batches, src_nodes]              # (n,)
+        valid = slot_range[None, :] < used[:, None]                 # (n, max_edges)
+        matches = (src_edge_list == dst_nodes[:, None]) & valid     # (n, max_edges)
+        slots = np.argmax(matches, axis=1)                          # first matching slot per item
+        last = used - 1
+        last_nodes = self.edges[batches, src_nodes, last]
+        self.edges[batches, src_nodes, slots] = last_nodes
+        self.edges[batches, src_nodes, last] = 0
+        self.next_free_edge[batches, src_nodes] -= 1
+
+    def rotate(self, batch_indices, edge_1, edge_2):
+        # edge_1 is the pivot slot on head, edge_2 is the src slot on head
+        # edges are undirected, so rotation:
+        #   removes head <-> pivot
+        #   adds    src  <-> pivot
+        # condition: both slots valid on head; src must have a free edge slot
+        # (pivot always gains a free slot from the removal before the addition)
+        batch_indices = np.asarray(batch_indices)
+        edge_1 = np.asarray(edge_1, dtype=np.int32)
+        edge_2 = np.asarray(edge_2, dtype=np.int32)
+
+        heads = self.head[batch_indices]
+        used_edges = self.next_free_edge[batch_indices, heads]
+        valid_slots = (edge_1 < used_edges) & (edge_2 < used_edges)
+
+        safe_used = np.maximum(used_edges, 1)
+        e1_clamped = np.minimum(edge_1, safe_used - 1)
+        e2_clamped = np.minimum(edge_2, safe_used - 1)
+
+        pivot_nodes = self.edges[batch_indices, heads, e1_clamped]  # node to be re-parented
+        src_nodes   = self.edges[batch_indices, heads, e2_clamped]  # node that adopts pivot
+
+        # after removing head<->pivot, pivot frees one slot — only src needs a free slot checked now
+        free_on_src = self.next_free_edge[batch_indices, src_nodes]
+        success = valid_slots & (free_on_src < self.edges.shape[2])
+
+        rotate_batches = batch_indices[success]
+        if len(rotate_batches) > 0:
+            rotate_heads  = heads[success]
+            rotate_pivots = pivot_nodes[success]
+            rotate_srcs   = src_nodes[success]
+
+            # remove head <-> pivot (both directions)
+            self._remove_edge(rotate_batches, rotate_heads,  rotate_pivots)
+            self._remove_edge(rotate_batches, rotate_pivots, rotate_heads)
+
+            # add src <-> pivot (both directions)
+            slots_src = self.next_free_edge[rotate_batches, rotate_srcs]
+            self.edges[rotate_batches, rotate_srcs, slots_src] = rotate_pivots
+            self.next_free_edge[rotate_batches, rotate_srcs] += 1
+
+            slots_pivot = self.next_free_edge[rotate_batches, rotate_pivots]
+            self.edges[rotate_batches, rotate_pivots, slots_pivot] = rotate_srcs
+            self.next_free_edge[rotate_batches, rotate_pivots] += 1
 
         return success
     
@@ -177,6 +243,12 @@ class NP_Graph_Memory(Graph_Memory):
                 op_success = self.write(op_indices, write_value[op_indices])
             elif op == Graph_Memory_Operation_Type.MOVE:
                 op_success = self.move(op_indices, edge_1[op_indices])
+            elif op == Graph_Memory_Operation_Type.WRITE + Graph_Memory_Operation_Type.MOVE:
+                write_ok = self.write(op_indices, write_value[op_indices])
+                move_ok = self.move(op_indices, edge_1[op_indices])
+                op_success = write_ok & move_ok
+            elif op == Graph_Memory_Operation_Type.ROTATE:
+                op_success = self.rotate(op_indices, edge_1[op_indices], edge_2[op_indices])
             elif op == Graph_Memory_Operation_Type.RESET:
                 op_success = self.reset(op_indices)
             else:
@@ -200,322 +272,380 @@ if __name__ == "__main__":
         print(f"  PASS  {name}")
 
     # ================================================================== TEST 1
-    # total_used_nodes / total_used_edges start at zero
+    # initial state: nothing allocated, no edges
     print("TEST 1: initial state")
     m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
     assert_equal("total_used_nodes", m.total_used_nodes(), [0, 0])
     assert_equal("total_used_edges", m.total_used_edges(), [0, 0])
 
     # ================================================================== TEST 2
-    # create: basic write, return value, counter increment, auto-link from head
-    print("TEST 2: create basic")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
-    ok = m.create(np.array([0, 1]), np.array([[1.0, 2.0], [3.0, 4.0]]))
-    assert_equal("create success", ok, [True, True])
-    assert_equal("next_free_node after create", m.next_free_node, [1, 1])
-    assert_allclose("node 0 batch 0", m.nodes[0, 0], [1.0, 2.0])
-    assert_allclose("node 0 batch 1", m.nodes[1, 0], [3.0, 4.0])
-    # head (node 0) should now have an edge to the new node (node 0 itself — same index before increment)
-    assert_equal("auto-link edge written batch 0", m.edges[0, 0, 0], 0)
-    assert_equal("auto-link edge written batch 1", m.edges[1, 0, 0], 0)
-    assert_equal("auto-link edge count batch 0", m.next_free_edge[0, 0], 1)
-    assert_equal("auto-link edge count batch 1", m.next_free_edge[1, 0], 1)
+    # create: bidirectional edge — head -> new_node AND new_node -> head
+    # pre-reserve node 0 as root so new_node != head (avoids self-loop)
+    print("TEST 2: create bidirectional back-link")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[0] = 1  # node 0 is the root, already "allocated"
+    ok = m.create(np.array([0]), np.array([[1.0, 2.0]]))
+    assert_equal("create success", ok, [True])
+    assert_equal("next_free_node after create", m.next_free_node, [2])
+    assert_allclose("new node value written", m.nodes[0, 1], [1.0, 2.0])
+    assert_equal("head -> new_node forward edge", m.edges[0, 0, 0], 1)
+    assert_equal("new_node -> head back-link", m.edges[0, 1, 0], 0)
+    assert_equal("head edge count", m.next_free_edge[0, 0], 1)
+    assert_equal("new_node edge count", m.next_free_edge[0, 1], 1)
+    assert_equal("total_used_edges = 1", m.total_used_edges(), [1])
 
     # ================================================================== TEST 3
-    # create: overflow — no more nodes available
-    print("TEST 3: create overflow")
-    m = NP_Graph_Memory(num_batches=1, num_nodes=2, max_edges_per_node=2, node_dim=2)
-    m.create(np.array([0]), np.array([[1.0, 0.0]]))
-    m.create(np.array([0]), np.array([[2.0, 0.0]]))
-    ok = m.create(np.array([0]), np.array([[9.0, 9.0]]))  # should fail
-    assert_equal("create overflow fails", ok, [False])
-    assert_equal("node count stays at 2", m.next_free_node, [2])
-    assert_allclose("no overwrite", m.nodes[0, 1], [2.0, 0.0])
-    # verify the edges written by the two successful creates
-    assert_equal("first create auto-link", m.edges[0, 0, 0], 0)  # head(0) -> node 0
-    assert_equal("second create auto-link", m.edges[0, 0, 1], 1)  # head(0) -> node 1
+    # create: self-loop when head == new_node (first create from default state)
+    print("TEST 3: create self-loop on first call")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    ok = m.create(np.array([0]), np.array([[5.0, 6.0]]))
+    assert_equal("create success", ok, [True])
+    assert_allclose("node 0 written", m.nodes[0, 0], [5.0, 6.0])
+    assert_equal("next_free_node", m.next_free_node[0], 1)
+    # both forward and back-link land on node 0 -> two self-loop slots
+    assert_equal("self-loop slot 0", m.edges[0, 0, 0], 0)
+    assert_equal("self-loop slot 1", m.edges[0, 0, 1], 0)
+    assert_equal("edge count on node 0", m.next_free_edge[0, 0], 2)
+    assert_equal("total_used_edges = 1 (2 slots / 2)", m.total_used_edges(), [1])
 
     # ================================================================== TEST 4
-    # create: partial success across batches
-    print("TEST 4: create partial")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=1, max_edges_per_node=2, node_dim=2)
-    m.create(np.array([0]), np.array([[5.0, 6.0]]))   # fill batch 0
-    ok = m.create(np.array([0, 1]), np.array([[9.0, 9.0], [7.0, 8.0]]))
-    assert_equal("partial success", ok, [False, True])
-    assert_allclose("batch 0 unchanged", m.nodes[0, 0], [5.0, 6.0])
-    assert_allclose("batch 1 written", m.nodes[1, 0], [7.0, 8.0])
-    assert_equal("batch 1 auto-link written", m.edges[1, 0, 0], 0)
-    assert_equal("batch 1 auto-link count", m.next_free_edge[1, 0], 1)
+    # create: fails when no free node slot
+    print("TEST 4: create overflow — no free nodes")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=2, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[0] = 1
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))  # creates node 1, now full
+    ok = m.create(np.array([0]), np.array([[9.0, 9.0]]))
+    assert_equal("create overflow fails", ok, [False])
+    assert_equal("node count stays at 2", m.next_free_node[0], 2)
 
     # ================================================================== TEST 5
-    # get_node_context: no edges — only head slot filled, rest zeroed
-    print("TEST 5: get_node_context no edges")
-    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=3)
-    m.nodes[0, 0] = [1.0, 2.0, 3.0]
-    # head stays at 0, no edges linked
-    ctx = m.get_node_context()   # shape (1, 3, 3)
-    assert_allclose("head content", ctx[0, 0], [1.0, 2.0, 3.0])
-    assert_allclose("unused edge slot 0 zeroed", ctx[0, 1], [0.0, 0.0, 0.0])
-    assert_allclose("unused edge slot 1 zeroed", ctx[0, 2], [0.0, 0.0, 0.0])
+    # create: fails when head edge slots are full
+    print("TEST 5: create fails — head edge slots full")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=6, max_edges_per_node=2, node_dim=2)
+    m.next_free_node[0] = 1
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))  # head slot 0 used
+    m.create(np.array([0]), np.array([[2.0, 0.0]]))  # head slot 1 used — head now full
+    ok = m.create(np.array([0]), np.array([[3.0, 0.0]]))
+    assert_equal("create fails when head full", ok, [False])
+    assert_equal("node count unchanged", m.next_free_node[0], 3)
 
     # ================================================================== TEST 6
-    # get_node_context: with edges — only occupied slots return content
-    print("TEST 6: get_node_context with edges")
-    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    m.nodes[0, 0] = [10.0, 11.0]
-    m.nodes[0, 1] = [20.0, 21.0]
-    m.nodes[0, 2] = [30.0, 31.0]
-    # manually wire: node 0 -> node 1 (slot 0), node 0 -> node 2 (slot 1)
-    m.edges[0, 0, 0] = 1
-    m.edges[0, 0, 1] = 2
-    m.next_free_edge[0, 0] = 2
-    ctx = m.get_node_context()
-    assert_allclose("head", ctx[0, 0], [10.0, 11.0])
-    assert_allclose("neighbor slot 0", ctx[0, 1], [20.0, 21.0])
-    assert_allclose("neighbor slot 1", ctx[0, 2], [30.0, 31.0])
+    # create: partial success across batches
+    print("TEST 6: create partial success")
+    m = NP_Graph_Memory(num_batches=2, num_nodes=2, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[:] = 1
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))  # batch 0 node 1 created — now full
+    ok = m.create(np.array([0, 1]), np.array([[9.0, 9.0], [2.0, 0.0]]))
+    assert_equal("partial success", ok, [False, True])
+    assert_allclose("batch 0 node 1 unchanged", m.nodes[0, 1], [1.0, 0.0])
+    assert_allclose("batch 1 node 1 written", m.nodes[1, 1], [2.0, 0.0])
+    assert_equal("batch 1 back-link", m.edges[1, 1, 0], 0)
 
     # ================================================================== TEST 7
-    # get_node_context: partial edges — second slot unused, must be zeroed
-    print("TEST 7: get_node_context partial edges masked")
-    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    m.nodes[0, 0] = [1.0, 0.0]
-    m.nodes[0, 1] = [2.0, 0.0]
-    m.nodes[0, 2] = [9.0, 9.0]  # node 2 exists but not linked
-    m.edges[0, 0, 0] = 1
-    m.next_free_edge[0, 0] = 1  # only slot 0 used; slot 1 free
-    ctx = m.get_node_context()
-    assert_allclose("occupied slot filled", ctx[0, 1], [2.0, 0.0])
-    assert_allclose("free slot zeroed", ctx[0, 2], [0.0, 0.0])
-
-    # ================================================================== TEST 8
-    # write: writes value to the head node
-    print("TEST 8: write")
+    # write: writes value to head node
+    print("TEST 7: write")
     m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=2, node_dim=2)
     ok = m.write(np.array([0, 1]), np.array([[5.0, 6.0], [7.0, 8.0]]))
     assert_equal("write success", ok, [True, True])
     assert_allclose("written to head batch 0", m.nodes[0, 0], [5.0, 6.0])
     assert_allclose("written to head batch 1", m.nodes[1, 0], [7.0, 8.0])
-    assert_equal("head unchanged after write batch 0", m.head[0], 0)
-    assert_equal("head unchanged after write batch 1", m.head[1], 0)
-
-    # ================================================================== TEST 8b
-    # move: advances head along a valid (occupied) edge slot
-    print("TEST 8b: move")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    m.edges[0, 0, 0] = 2;  m.next_free_edge[0, 0] = 1  # batch 0: slot 0 -> node 2
-    m.edges[1, 0, 1] = 3;  m.next_free_edge[1, 0] = 2  # batch 1: slot 1 -> node 3
-    ok = m.move(np.array([0, 1]), np.array([0, 1]))
-    assert_equal("move success", ok, [True, True])
-    assert_equal("head moved batch 0", m.head[0], 2)
-    assert_equal("head moved batch 1", m.head[1], 3)
-
-    # ================================================================== TEST 8b2
-    # move: fails when edge slot is not occupied (invalid)
-    print("TEST 8b2: move invalid edge")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    m.edges[0, 0, 0] = 2;  m.next_free_edge[0, 0] = 1  # batch 0: only slot 0 valid
-    # batch 1: no edges at all
-    ok = m.move(np.array([0, 1]), np.array([1, 0]))  # batch 0 requests slot 1 (free), batch 1 requests slot 0 (free)
-    assert_equal("move invalid fails", ok, [False, False])
     assert_equal("head unchanged batch 0", m.head[0], 0)
     assert_equal("head unchanged batch 1", m.head[1], 0)
 
-    # ================================================================== TEST 8b3
-    # move: partial — one valid, one invalid
-    print("TEST 8b3: move partial")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    m.edges[0, 0, 0] = 2;  m.next_free_edge[0, 0] = 1  # batch 0: slot 0 valid
-    # batch 1: no edges
-    ok = m.move(np.array([0, 1]), np.array([0, 0]))
-    assert_equal("move partial success", ok, [True, False])
-    assert_equal("head moved batch 0", m.head[0], 2)
-    assert_equal("head unchanged batch 1", m.head[1], 0)
-
-    # ================================================================== TEST 8c
-    # write then move: combined effect
-    print("TEST 8c: write then move")
-    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    m.edges[0, 0, 0] = 2;  m.next_free_edge[0, 0] = 1  # node 0 edge-slot 0 -> node 2
-    m.write(np.array([0]), np.array([[5.0, 6.0]]))
-    m.move(np.array([0]), np.array([0]))
-    assert_allclose("written to old head", m.nodes[0, 0], [5.0, 6.0])
-    assert_equal("head moved to node 2", m.head, [2])
+    # ================================================================== TEST 8
+    # move: follow a valid edge slot
+    print("TEST 8: move valid")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[0] = 1
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))  # creates node 1; head(0)↔node1
+    ok = m.move(np.array([0]), np.array([0]))  # follow slot 0 of head(0) -> node 1
+    assert_equal("move success", ok, [True])
+    assert_equal("head moved to node 1", m.head[0], 1)
 
     # ================================================================== TEST 9
-    # link: connects two nodes visible from head
-    print("TEST 9: link basic")
-    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    # head (node 0) has two edges: slot 0 -> node 1, slot 1 -> node 2
-    m.edges[0, 0, 0] = 1
-    m.edges[0, 0, 1] = 2
-    m.next_free_edge[0, 0] = 2
-    # link edge_1=0 (node 1) -> edge_2=1 (node 2), i.e. add an edge from node 1 to node 2
-    ok = m.link(np.array([0]), np.array([0]), np.array([1]))
-    assert_equal("link success", ok, [True])
-    assert_equal("edge written on node 1", m.edges[0, 1, 0], 2)
-    assert_equal("node 1 edge count incremented", m.next_free_edge[0, 1], 1)
-
-    # ================================================================== TEST 9b
-    # link: fails when edge_1 or edge_2 slot is not occupied on head
-    print("TEST 9b: link invalid edge slots")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    m.edges[0, 0, 0] = 1;  m.next_free_edge[0, 0] = 1  # batch 0: only slot 0 valid
-    m.edges[1, 0, 0] = 1;  m.edges[1, 0, 1] = 2;  m.next_free_edge[1, 0] = 2  # batch 1: both slots valid
-    # batch 0: edge_2=1 is beyond next_free_edge (only 1 used) -> fail
-    # batch 1: both valid -> success
-    ok = m.link(np.array([0, 1]), np.array([0, 0]), np.array([1, 1]))
-    assert_equal("link invalid slot fails", ok, [False, True])
-    assert_equal("batch 0 edge count unchanged", m.next_free_edge[0, 1], 0)
-    assert_equal("batch 1 edge written", m.edges[1, 1, 0], 2)
+    # move: traverse back via back-link
+    print("TEST 9: move back via back-link")
+    # head is now at node 1, which has back-link to node 0 at slot 0
+    ok = m.move(np.array([0]), np.array([0]))
+    assert_equal("move back success", ok, [True])
+    assert_equal("head back at node 0", m.head[0], 0)
 
     # ================================================================== TEST 10
-    # link: overflow — src node has no free edge slots
-    print("TEST 10: link overflow")
-    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=1, node_dim=2)
-    m.edges[0, 0, 0] = 1  # head -> node 1 (slot 0)
-    m.next_free_edge[0, 0] = 1
-    m.edges[0, 1, 0] = 3  # node 1 already has its single edge slot filled
-    m.next_free_edge[0, 1] = 1
-    # try to link from node 1 (edge_1=0) to anything — node 1 is full
-    ok = m.link(np.array([0]), np.array([0]), np.array([0]))
-    assert_equal("link overflow fails", ok, [False])
-    assert_equal("edge count on node 1 unchanged", m.next_free_edge[0, 1], 1)
+    # move: fails on unoccupied edge slot
+    print("TEST 10: move invalid slot")
+    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[:] = 1
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))  # batch 0: slot 0 occupied
+    ok = m.move(np.array([0, 1]), np.array([1, 0]))  # batch 0: slot 1 free; batch 1: slot 0 free
+    assert_equal("move fails on free slots", ok, [False, False])
+    assert_equal("head unchanged batch 0", m.head[0], 0)
+    assert_equal("head unchanged batch 1", m.head[1], 0)
 
     # ================================================================== TEST 11
-    # multi-batch link: partial success
-    print("TEST 11: link partial multi-batch")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=1, node_dim=2)
-    # batch 0: head (node 0) edge slot 0 -> node 1; node 1 edge slot free
-    m.edges[0, 0, 0] = 1
-    m.next_free_edge[0, 0] = 1
-    # batch 1: head (node 0) edge slot 0 -> node 2; node 2 already full
-    m.edges[1, 0, 0] = 2
-    m.next_free_edge[1, 0] = 1
-    m.edges[1, 2, 0] = 3
-    m.next_free_edge[1, 2] = 1
-    ok = m.link(np.array([0, 1]), np.array([0, 0]), np.array([0, 0]))
-    assert_equal("partial link success", ok, [True, False])
-    assert_equal("batch 0 edge written", m.edges[0, 1, 0], 1)
-    assert_equal("batch 1 unchanged", m.next_free_edge[1, 2], 1)
-
-    # ================================================================== TEST 11b
-    # create: fails when head edge slots are full (even if node slot is free)
-    print("TEST 11b: create fails when head edge full")
-    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=1, node_dim=2)
-    # fill the single edge slot on head (node 0)
-    m.edges[0, 0, 0] = 3
-    m.next_free_edge[0, 0] = 1
-    ok = m.create(np.array([0]), np.array([[5.0, 5.0]]))
-    assert_equal("create fails when head full", ok, [False])
-    assert_equal("node count unchanged", m.next_free_node[0], 0)
-    assert_equal("head edge slot unchanged", m.edges[0, 0, 0], 3)
-    assert_equal("head edge count unchanged", m.next_free_edge[0, 0], 1)
+    # get_node_context: no edges — only head slot filled, rest zeroed
+    print("TEST 11: get_node_context no edges")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=3)
+    m.nodes[0, 0] = [1.0, 2.0, 3.0]
+    ctx = m.get_node_context()
+    assert_allclose("head content", ctx[0, 0], [1.0, 2.0, 3.0])
+    assert_allclose("unused slot 0 zeroed", ctx[0, 1], [0.0, 0.0, 0.0])
+    assert_allclose("unused slot 1 zeroed", ctx[0, 2], [0.0, 0.0, 0.0])
 
     # ================================================================== TEST 12
-    # reset: clears nodes, edges, counters, and head for given batch indices
-    print("TEST 12: reset basic")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=3, max_edges_per_node=2, node_dim=2)
+    # get_node_context: occupied slots show neighbor content
+    print("TEST 12: get_node_context with edges")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=2)
+    m.nodes[0, 0] = [10.0, 11.0]
+    m.nodes[0, 1] = [20.0, 21.0]
+    m.nodes[0, 2] = [30.0, 31.0]
+    m.edges[0, 0, 0] = 1;  m.edges[0, 0, 1] = 2;  m.next_free_edge[0, 0] = 2
+    ctx = m.get_node_context()
+    assert_allclose("head", ctx[0, 0], [10.0, 11.0])
+    assert_allclose("neighbor slot 0", ctx[0, 1], [20.0, 21.0])
+    assert_allclose("neighbor slot 1", ctx[0, 2], [30.0, 31.0])
+
+    # ================================================================== TEST 13
+    # get_node_context: partial edges — free slot must be zeroed
+    print("TEST 13: get_node_context partial edges masked")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=2)
+    m.nodes[0, 0] = [1.0, 0.0];  m.nodes[0, 1] = [2.0, 0.0]
+    m.edges[0, 0, 0] = 1;  m.next_free_edge[0, 0] = 1
+    ctx = m.get_node_context()
+    assert_allclose("occupied slot filled", ctx[0, 1], [2.0, 0.0])
+    assert_allclose("free slot zeroed", ctx[0, 2], [0.0, 0.0])
+
+    # ================================================================== TEST 14
+    # link: adds bidirectional edge between two neighbors of head
+    print("TEST 14: link basic bidirectional")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    # manually wire: head(0) ↔ node1, head(0) ↔ node2
+    m.edges[0, 0, 0] = 1;  m.edges[0, 0, 1] = 2;  m.next_free_edge[0, 0] = 2
+    m.edges[0, 1, 0] = 0;  m.next_free_edge[0, 1] = 1
+    m.edges[0, 2, 0] = 0;  m.next_free_edge[0, 2] = 1
+    assert_equal("total_used_edges before link", m.total_used_edges(), [2])
+    ok = m.link(np.array([0]), np.array([0]), np.array([1]))  # link node1 <-> node2
+    assert_equal("link success", ok, [True])
+    assert_equal("node1 -> node2 added", m.edges[0, 1, 1], 2)
+    assert_equal("node2 -> node1 added", m.edges[0, 2, 1], 1)
+    assert_equal("node1 edge count", m.next_free_edge[0, 1], 2)
+    assert_equal("node2 edge count", m.next_free_edge[0, 2], 2)
+    assert_equal("total_used_edges after link", m.total_used_edges(), [3])
+
+    # ================================================================== TEST 15
+    # link: fails when destination node is full (new undirected requirement)
+    print("TEST 15: link fails — dst node full")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=1, node_dim=2)
+    # head(0) -> node1 (slot 0), node1 -> head (back-link, fills its only slot)
+    m.edges[0, 0, 0] = 1;  m.next_free_edge[0, 0] = 1  # head full too
+    m.edges[0, 1, 0] = 0;  m.next_free_edge[0, 1] = 1  # node1 full
+    ok = m.link(np.array([0]), np.array([0]), np.array([0]))  # try node1 <-> node1 (self)
+    assert_equal("link fails dst full", ok, [False])
+    assert_equal("node1 edge count unchanged", m.next_free_edge[0, 1], 1)
+
+    # ================================================================== TEST 16
+    # link: fails when edge slot indices are not occupied on head
+    print("TEST 16: link fails — invalid slot indices")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.edges[0, 0, 0] = 1;  m.next_free_edge[0, 0] = 1  # only slot 0 occupied
+    ok = m.link(np.array([0]), np.array([0]), np.array([1]))  # edge_2=1 not occupied
+    assert_equal("link fails invalid slot", ok, [False])
+
+    # ================================================================== TEST 17
+    # rotate: basic — remove head↔pivot, add src↔pivot (both bidirectional)
+    print("TEST 17: rotate basic")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    # head(0) ↔ node1 (slot 0), head(0) ↔ node2 (slot 1), both bidirectional
+    m.edges[0, 0, 0] = 1;  m.edges[0, 0, 1] = 2;  m.next_free_edge[0, 0] = 2
+    m.edges[0, 1, 0] = 0;  m.next_free_edge[0, 1] = 1
+    m.edges[0, 2, 0] = 0;  m.next_free_edge[0, 2] = 1
+    assert_equal("total_used_edges before rotate", m.total_used_edges(), [2])
+    ok = m.rotate(np.array([0]), np.array([0]), np.array([1]))  # pivot=node1, src=node2
+    assert_equal("rotate success", ok, [True])
+    # head: lost node1, still has node2 → 1 edge
+    assert_equal("head edge count", m.next_free_edge[0, 0], 1)
+    assert_equal("head slot 0 = node2 (swapped)", m.edges[0, 0, 0], 2)
+    # node1: lost head, gained node2 → 1 edge
+    assert_equal("node1 edge count", m.next_free_edge[0, 1], 1)
+    assert_equal("node1 -> node2", m.edges[0, 1, 0], 2)
+    # node2: still has head (slot 0), gained node1 → 2 edges
+    assert_equal("node2 edge count", m.next_free_edge[0, 2], 2)
+    assert_equal("total_used_edges unchanged after rotate", m.total_used_edges(), [2])
+
+    # ================================================================== TEST 18
+    # rotate: fails when src node has no free edge slot
+    print("TEST 18: rotate fails — src node full")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=2)
+    m.edges[0, 0, 0] = 1;  m.edges[0, 0, 1] = 2;  m.next_free_edge[0, 0] = 2
+    m.edges[0, 1, 0] = 0;  m.next_free_edge[0, 1] = 1
+    m.edges[0, 2, 0] = 0;  m.edges[0, 2, 1] = 3;  m.next_free_edge[0, 2] = 2  # node2 full
+    ok = m.rotate(np.array([0]), np.array([0]), np.array([1]))  # pivot=node1, src=node2(full)
+    assert_equal("rotate fails src full", ok, [False])
+    assert_equal("head edge count unchanged", m.next_free_edge[0, 0], 2)
+    assert_equal("node1 edge count unchanged", m.next_free_edge[0, 1], 1)
+    assert_equal("node2 edge count unchanged", m.next_free_edge[0, 2], 2)
+
+    # ================================================================== TEST 19
+    # rotate: fails when edge slot indices are not occupied on head
+    print("TEST 19: rotate fails — invalid slot indices")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.edges[0, 0, 0] = 1;  m.next_free_edge[0, 0] = 1  # only slot 0 occupied
+    ok = m.rotate(np.array([0]), np.array([1]), np.array([0]))  # edge_1=1 not occupied
+    assert_equal("rotate fails invalid edge_1", ok, [False])
+    ok = m.rotate(np.array([0]), np.array([0]), np.array([1]))  # edge_2=1 not occupied
+    assert_equal("rotate fails invalid edge_2", ok, [False])
+    assert_equal("head edge count unchanged", m.next_free_edge[0, 0], 1)
+
+    # ================================================================== TEST 20
+    # rotate: partial success across batches
+    print("TEST 20: rotate partial multi-batch")
+    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    for b in range(2):
+        m.edges[b, 0, 0] = 1;  m.edges[b, 0, 1] = 2;  m.next_free_edge[b, 0] = 2
+        m.edges[b, 1, 0] = 0;  m.next_free_edge[b, 1] = 1
+        m.edges[b, 2, 0] = 0;  m.next_free_edge[b, 2] = 1
+    m.edges[1, 2, 1] = 3;  m.edges[1, 2, 2] = 3;  m.next_free_edge[1, 2] = 3  # batch 1 src full
+    ok = m.rotate(np.array([0, 1]), np.array([0, 0]), np.array([1, 1]))
+    assert_equal("rotate partial success", ok, [True, False])
+    assert_equal("batch 0 head edge count", m.next_free_edge[0, 0], 1)
+    assert_equal("batch 0 node1 -> node2", m.edges[0, 1, 0], 2)
+    assert_equal("batch 1 head unchanged", m.next_free_edge[1, 0], 2)
+    assert_equal("batch 1 node1 unchanged", m.next_free_edge[1, 1], 1)
+
+    # ================================================================== TEST 21
+    # reset: clears nodes, edges, counters, head for given batches
+    print("TEST 21: reset basic")
+    m = NP_Graph_Memory(num_batches=2, num_nodes=3, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[:] = 1
     m.create(np.array([0, 1]), np.array([[1.0, 2.0], [3.0, 4.0]]))
-    m.edges[0, 0, 0] = 1
-    m.next_free_edge[0, 0] = 1
     m.head[0] = 1
     m.reset(np.array([0]))
-    assert_allclose("nodes zeroed after reset", m.nodes[0], np.zeros((3, 2)))
-    assert_equal("edges zeroed after reset", m.edges[0], np.zeros((3, 2), dtype=np.int32))
+    assert_allclose("nodes zeroed", m.nodes[0], np.zeros((3, 2)))
+    assert_equal("edges zeroed", m.edges[0], np.zeros((3, 3), dtype=np.int32))
     assert_equal("next_free_node reset", m.next_free_node[0], 0)
     assert_equal("next_free_edge reset", m.next_free_edge[0], [0, 0, 0])
     assert_equal("head reset", m.head[0], 0)
     # batch 1 untouched
-    assert_equal("other batch next_free_node untouched", m.next_free_node[1], 1)
-    assert_allclose("other batch node untouched", m.nodes[1, 0], [3.0, 4.0])
+    assert_equal("batch 1 node count untouched", m.next_free_node[1], 2)
+    assert_allclose("batch 1 node untouched", m.nodes[1, 1], [3.0, 4.0])
 
-    # ================================================================== TEST 13
-    # reset: multiple batches at once
-    print("TEST 13: reset multiple batches")
-    m = NP_Graph_Memory(num_batches=3, num_nodes=2, max_edges_per_node=1, node_dim=2)
-    m.create(np.array([0, 1, 2]), np.array([[1.0, 0.0], [2.0, 0.0], [3.0, 0.0]]))
-    m.reset(np.array([0, 2]))
-    assert_equal("batch 0 cleared", m.next_free_node[0], 0)
-    assert_equal("batch 2 cleared", m.next_free_node[2], 0)
-    assert_equal("batch 1 untouched", m.next_free_node[1], 1)
-
-    # ================================================================== TEST 14
-    # execute: each batch runs a different operation
-    print("TEST 14: execute mixed operations")
-    m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    # pre-populate batch 1 so MOVE has an edge to follow
-    m.nodes[1, 0] = [7.0, 8.0]  # pre-write so we can check MOVE only
-    m.edges[1, 0, 0] = 2;  m.next_free_edge[1, 0] = 1  # slot 0 occupied
-    # pre-populate batch 2 with a node so reset has something to clear
-    m.nodes[2, 0] = [9.0, 9.0]
-    m.next_free_node[2] = 1
+    # ================================================================== TEST 22
+    # execute: mixed operations dispatched correctly
+    print("TEST 22: execute mixed operations")
+    m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[:] = 1
+    # batch 1: setup for MOVE
+    m.edges[1, 0, 0] = 2;  m.edges[1, 2, 0] = 0;  m.next_free_edge[1, 0] = 1;  m.next_free_edge[1, 2] = 1
+    # batch 2: something to reset
+    m.nodes[2, 0] = [9.0, 9.0];  m.next_free_node[2] = 2
     write_value = np.array([[5.0, 6.0], [0.0, 0.0], [0.0, 0.0]])
-    edge_1 = np.array([0, 0, 0])
-    edge_2 = np.array([0, 0, 0])
     OP = Graph_Memory_Operation_Type
-    ok = m.execute([OP.CREATE, OP.MOVE, OP.RESET], write_value, edge_1, edge_2)
-    assert_equal("execute success order", ok, [True, True, True])
-    # batch 0: create -> node 0 written, counter = 1, auto-link head(0)->node 0
-    assert_allclose("execute create wrote node", m.nodes[0, 0], [5.0, 6.0])
-    assert_equal("execute create counter", m.next_free_node[0], 1)
-    assert_equal("execute create auto-link", m.edges[0, 0, 0], 0)
-    # batch 1: move -> head moves to node 2
-    assert_equal("execute move head", m.head[1], 2)
-    # batch 2: reset -> everything cleared
-    assert_equal("execute reset counter", m.next_free_node[2], 0)
-    assert_allclose("execute reset node zeroed", m.nodes[2, 0], [0.0, 0.0])
+    ok = m.execute([OP.CREATE, OP.MOVE, OP.RESET], write_value, np.array([0, 0, 0]), np.array([0, 0, 0]))
+    assert_equal("execute success", ok, [True, True, True])
+    # batch 0: create -> node 1 written, bidirectional edge
+    assert_allclose("create wrote node", m.nodes[0, 1], [5.0, 6.0])
+    assert_equal("create forward edge", m.edges[0, 0, 0], 1)
+    assert_equal("create back-link", m.edges[0, 1, 0], 0)
+    # batch 1: move -> head moved to node 2
+    assert_equal("move head", m.head[1], 2)
+    # batch 2: reset -> cleared
+    assert_equal("reset node count", m.next_free_node[2], 0)
+    assert_allclose("reset node zeroed", m.nodes[2, 0], [0.0, 0.0])
 
-    # ================================================================== TEST 14b
-    # execute: WRITE dispatched correctly
-    print("TEST 14b: execute write")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    write_value = np.array([[1.0, 2.0], [3.0, 4.0]])
+    # ================================================================== TEST 23
+    # execute: ROTATE dispatched correctly
+    print("TEST 23: execute rotate")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.edges[0, 0, 0] = 1;  m.edges[0, 0, 1] = 2;  m.next_free_edge[0, 0] = 2
+    m.edges[0, 1, 0] = 0;  m.next_free_edge[0, 1] = 1
+    m.edges[0, 2, 0] = 0;  m.next_free_edge[0, 2] = 1
     OP = Graph_Memory_Operation_Type
-    ok = m.execute([OP.WRITE, OP.WRITE], write_value, np.zeros(2, dtype=int), np.zeros(2, dtype=int))
-    assert_equal("execute write success", ok, [True, True])
-    assert_allclose("execute write batch 0", m.nodes[0, 0], [1.0, 2.0])
-    assert_allclose("execute write batch 1", m.nodes[1, 0], [3.0, 4.0])
+    ok = m.execute([OP.ROTATE], np.zeros((1, 2)), np.array([0]), np.array([1]))
+    assert_equal("execute rotate success", ok, [True])
+    assert_equal("execute rotate head edge count", m.next_free_edge[0, 0], 1)
+    assert_equal("execute rotate node1 -> node2", m.edges[0, 1, 0], 2)
+    assert_equal("execute rotate node2 has node1", m.next_free_edge[0, 2], 2)
 
-    # ================================================================== TEST 15
-    # execute: all same operation (create) across all batches
-    print("TEST 15: execute all-create")
-    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    write_value = np.array([[1.0, 2.0], [3.0, 4.0]])
-    OP = Graph_Memory_Operation_Type
-    ok = m.execute([OP.CREATE, OP.CREATE], write_value, np.zeros(2, dtype=int), np.zeros(2, dtype=int))
-    assert_equal("all-create success", ok, [True, True])
-    assert_equal("all-create counters", m.next_free_node, [1, 1])
-    assert_allclose("all-create batch 0", m.nodes[0, 0], [1.0, 2.0])
-    assert_allclose("all-create batch 1", m.nodes[1, 0], [3.0, 4.0])
-    assert_equal("all-create auto-link batch 0", m.edges[0, 0, 0], 0)
-    assert_equal("all-create auto-link batch 1", m.edges[1, 0, 0], 0)
-
-    # ================================================================== TEST 16
-    # execute: link operation dispatched correctly
-    print("TEST 16: execute link")
-    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=2, node_dim=2)
-    m.edges[0, 0, 0] = 1  # head slot 0 -> node 1
-    m.edges[0, 0, 1] = 2  # head slot 1 -> node 2
-    m.next_free_edge[0, 0] = 2
-    write_value = np.zeros((1, 2))
-    edge_1 = np.array([0])  # src = node 1
-    edge_2 = np.array([1])  # dst = node 2
-    OP = Graph_Memory_Operation_Type
-    ok = m.execute([OP.LINK], write_value, edge_1, edge_2)
-    assert_equal("execute link success", ok, [True])
-    assert_equal("execute link edge written", m.edges[0, 1, 0], 2)
-    assert_equal("execute link counter incremented", m.next_free_edge[0, 1], 1)
-
-    # ================================================================== TEST 17
-    # execute: IDLE is a no-op but still returns True; mixed IDLE + CREATE preserves order
-    print("TEST 17: execute IDLE and order")
+    # ================================================================== TEST 24
+    # execute: IDLE is a no-op, WRITE dispatched correctly
+    print("TEST 24: execute IDLE and WRITE")
     m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=2, node_dim=2)
     write_value = np.array([[1.0, 0.0], [0.0, 0.0], [2.0, 0.0]])
     OP = Graph_Memory_Operation_Type
-    ok = m.execute([OP.CREATE, OP.IDLE, OP.CREATE], write_value, np.zeros(3, dtype=int), np.zeros(3, dtype=int))
-    assert_equal("IDLE+CREATE order", ok, [True, True, True])
-    assert_allclose("batch 0 created", m.nodes[0, 0], [1.0, 0.0])
-    assert_equal("batch 1 idle untouched", m.next_free_node[1], 0)
-    assert_allclose("batch 2 created", m.nodes[2, 0], [2.0, 0.0])
+    ok = m.execute([OP.WRITE, OP.IDLE, OP.WRITE], write_value, np.zeros(3, dtype=int), np.zeros(3, dtype=int))
+    assert_equal("WRITE+IDLE success", ok, [True, True, True])
+    assert_allclose("batch 0 written", m.nodes[0, 0], [1.0, 0.0])
+    assert_equal("batch 1 IDLE untouched", m.next_free_node[1], 0)
+    assert_allclose("batch 2 written", m.nodes[2, 0], [2.0, 0.0])
+
+    # ================================================================== TEST 25
+    # WRITE|MOVE combo: both succeed — value written to old head, head moves
+    print("TEST 25: WRITE|MOVE both succeed")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[0] = 1
+    m.create(np.array([0]), np.array([[0.0, 0.0]]))  # creates node 1; head(0) ↔ node1
+    OP = Graph_Memory_Operation_Type
+    ok = m.execute(
+        [OP.WRITE | OP.MOVE],
+        np.array([[7.0, 8.0]]),
+        np.array([0]),  # edge slot 0 on head -> node1
+        np.zeros(1, dtype=int),
+    )
+    assert_equal("write|move success", ok, [True])
+    assert_allclose("value written to old head (node 0)", m.nodes[0, 0], [7.0, 8.0])
+    assert_equal("head moved to node 1", m.head[0], 1)
+
+    # ================================================================== TEST 26
+    # WRITE|MOVE combo: move fails (invalid slot) — write still happens, returns False
+    print("TEST 26: WRITE|MOVE move fails — write still applied")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    OP = Graph_Memory_Operation_Type
+    ok = m.execute(
+        [OP.WRITE | OP.MOVE],
+        np.array([[5.0, 6.0]]),
+        np.array([0]),  # slot 0 not occupied — no edges on head
+        np.zeros(1, dtype=int),
+    )
+    assert_equal("write|move returns False when move fails", ok, [False])
+    assert_allclose("write still applied to head", m.nodes[0, 0], [5.0, 6.0])
+    assert_equal("head unchanged", m.head[0], 0)
+
+    # ================================================================== TEST 27
+    # WRITE|MOVE combo: partial success across batches
+    print("TEST 27: WRITE|MOVE partial success")
+    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[:] = 1
+    m.create(np.array([0]), np.array([[0.0, 0.0]]))  # batch 0: head(0) ↔ node1, slot 0 valid
+    # batch 1: no edges, slot 0 invalid
+    OP = Graph_Memory_Operation_Type
+    ok = m.execute(
+        [OP.WRITE | OP.MOVE, OP.WRITE | OP.MOVE],
+        np.array([[1.0, 2.0], [3.0, 4.0]]),
+        np.array([0, 0]),
+        np.zeros(2, dtype=int),
+    )
+    assert_equal("partial success", ok, [True, False])
+    assert_allclose("batch 0 value written to old head", m.nodes[0, 0], [1.0, 2.0])
+    assert_equal("batch 0 head moved to node 1", m.head[0], 1)
+    assert_allclose("batch 1 write still applied", m.nodes[1, 0], [3.0, 4.0])
+    assert_equal("batch 1 head unchanged", m.head[1], 0)
+
+    # ================================================================== TEST 28
+    # execute: WRITE|MOVE mixed with other ops in same call
+    print("TEST 28: WRITE|MOVE mixed with CREATE in execute")
+    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[:] = 1
+    m.create(np.array([0]), np.array([[0.0, 0.0]]))  # batch 0: head(0) ↔ node1
+    OP = Graph_Memory_Operation_Type
+    ok = m.execute(
+        [OP.WRITE | OP.MOVE, OP.CREATE],
+        np.array([[9.0, 9.0], [5.0, 5.0]]),
+        np.array([0, 0]),
+        np.zeros(2, dtype=int),
+    )
+    assert_equal("mixed ops success", ok, [True, True])
+    assert_allclose("batch 0 written to old head", m.nodes[0, 0], [9.0, 9.0])
+    assert_equal("batch 0 head moved to node 1", m.head[0], 1)
+    assert_allclose("batch 1 new node written", m.nodes[1, 1], [5.0, 5.0])
+    assert_equal("batch 1 new node back-link to head", m.edges[1, 1, 0], 0)
 
     print("\nAll tests passed.")
