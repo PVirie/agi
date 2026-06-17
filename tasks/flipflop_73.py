@@ -25,10 +25,9 @@ from colorama import Fore, Back, Style
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import model_73
-from implementations.networks.torch.policy.base import Projector
+from implementations.networks.torch.policy.flipflop import Projector
 from implementations.networks.torch.policy.flipflop import Policy_Core
-from implementations.networks.torch.value.token import Value_Core
-from implementations.learning_algorithms.torch.ppo import PPO
+from implementations.learning_algorithms.torch.ppo_combine import PPO
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
@@ -104,7 +103,6 @@ async def run(env, agent, rollout_length=16, verbose=False):
 
             # save 
             policy_core.save()
-            value_core.save()
             ppo_learner.save()
 
         if steps % (rollout_length * 10) == 0:
@@ -259,17 +257,8 @@ if __name__ == "__main__":
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
-    value_core = Value_Core(
-        int_action_size=7, ext_action_size=WORDS,
-        position_size=2,
-        output_dims=1,
-        token_part_size=1 + C,
-        dict_size=WORDS, embedding_dim=embedding_dim, pad_token_id=0,
-        hidden_size=hidden_size, layers=layers,
-        device=device, persistence_path=parameters_path
-    ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1, 2, 3]), value_model=value_core,
+        policy_model=Projector(policy_core, [0, 1, 2, 3]),
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Graph_Memory(
@@ -279,7 +268,7 @@ if __name__ == "__main__":
         node_dim=1
     )
     agent = model_73.Model_73(
-        policy_model=policy_core, value_model=value_core,
+        policy_model=policy_core,
         trainer=ppo_learner,
         context_collector=Collector(max_history=0),
         action_collector=Collector(max_history=0),

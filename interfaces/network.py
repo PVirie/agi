@@ -30,6 +30,13 @@ class Value_Network(abc.ABC):
         pass
 
 
+class Policy_Value_Network(abc.ABC):
+    
+    @abc.abstractmethod
+    def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
+        pass
+
+
 class Q_Network(abc.ABC):
     
     @abc.abstractmethod

@@ -51,7 +51,7 @@ class Scheme(str, Enum):
 class Model_73(Agent):
     
     def __init__(self, 
-                 policy_model: Policy_Network, value_model: Value_Network,
+                 policy_model: Policy_Network,
                  trainer: RL_Learner, 
                  context_collector: Context_Collector, 
                  action_collector: Context_Collector, 
@@ -62,7 +62,6 @@ class Model_73(Agent):
                  scheme: Scheme = Scheme.FLIPFLOP
                  ):
         self.policy_model = policy_model
-        self.value_model = value_model
         self.trainer = trainer
         self.obs = context_collector
         self.actions = action_collector
