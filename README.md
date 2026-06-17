@@ -125,3 +125,9 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [x] Separate model for high level and low level policy
 - [x] Model 73: Graph Memory
     - [x] flipflop dataset
+- [ ] Spatio-temporal learning
+    - [ ] On graph automaton
+    - [ ] On fixed environment graph
+- [ ] Cognitive map building
+    - [ ] "recognized" location linking
+    - [ ] External to internal action transfer

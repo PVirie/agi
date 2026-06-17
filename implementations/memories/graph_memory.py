@@ -243,7 +243,7 @@ class NP_Graph_Memory(Graph_Memory):
                 op_success = self.write(op_indices, write_value[op_indices])
             elif op == Graph_Memory_Operation_Type.MOVE:
                 op_success = self.move(op_indices, edge_1[op_indices])
-            elif op == Graph_Memory_Operation_Type.WRITE + Graph_Memory_Operation_Type.MOVE:
+            elif op == (Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.MOVE):
                 write_ok = self.write(op_indices, write_value[op_indices])
                 move_ok = self.move(op_indices, edge_1[op_indices])
                 op_success = write_ok & move_ok
