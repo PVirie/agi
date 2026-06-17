@@ -48,7 +48,7 @@ class Scheme(str, Enum):
     FULL = "full"
 
 
-class Model_73(Agent):
+class Model_74(Agent):
     
     def __init__(self, 
                  policy_model: Policy_Network,

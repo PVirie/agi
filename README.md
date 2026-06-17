@@ -2,9 +2,9 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name   | Description                |
-| ---------- | ------------ | -------------------------- |
-| LXXIII     | Graph Memory | Full Quest Graph Automaton |
+| Generation | Model Name      | Description                |
+| ---------- | --------------- | -------------------------- |
+| LXXIV      | Graph Automaton | Full Quest Graph Automaton |
 
 ## Prerequisites
 
@@ -123,7 +123,7 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [x] Carry on states
     - [x] Fixed base model to clear position on done, truncated
     - [x] Separate model for high level and low level policy
-- [x] Model 73: Graph Memory
+- [x] Model 74: Graph Memory
     - [x] flipflop dataset
 - [ ] Spatio-temporal learning
     - [ ] On graph automaton

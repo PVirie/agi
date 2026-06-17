@@ -24,7 +24,7 @@ from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from implementations.agents import model_73
+from implementations.agents import model_74
 from implementations.networks.torch.policy.flipflop import Projector
 from implementations.networks.torch.policy.flipflop import Policy_Core
 from implementations.learning_algorithms.torch.ppo_combine import PPO
@@ -208,7 +208,7 @@ if __name__ == "__main__":
     np.random.seed(20260608)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/flipflop_73_size_{args.scale}_scheme_{args.scheme}"
+    experiment_path = f"{APP_ROOT}/experiments/flipflop_74_size_{args.scale}_scheme_{args.scheme}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -267,7 +267,7 @@ if __name__ == "__main__":
         max_edges_per_node=C,
         node_dim=1
     )
-    agent = model_73.Model_73(
+    agent = model_74.Model_74(
         policy_model=policy_core,
         trainer=ppo_learner,
         context_collector=Collector(max_history=0),
@@ -276,7 +276,7 @@ if __name__ == "__main__":
         graph_memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=False,
-        scheme=model_73.Scheme(args.scheme)
+        scheme=model_74.Scheme(args.scheme)
     )
 
     if not args.eval:
