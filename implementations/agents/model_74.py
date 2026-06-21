@@ -92,6 +92,7 @@ class Model_74(Agent):
         self.last_idles = []
         self.last_dones = []
         self.last_truncates = []
+        self.last_edge_times = []
 
         self.thought_steps = None
 
@@ -169,6 +170,8 @@ class Model_74(Agent):
             edge_1=position[:, 0],
             edge_2=position[:, 1]
         )
+        self.last_edge_times.append(self.graph_memory.get_edge_update_time())
+
         # update reward by mem_op_results (0 for True, -1 for False)
         reward += np.array([0 if res else -1 for res in mem_op_results])
 
@@ -197,18 +200,6 @@ class Model_74(Agent):
         # if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
         if force_train and current_cl > 1:
             
-            if self.do_supervision:
-                # learn Supervise content
-                # masks has shape (batch_size, context_length)
-                svl_masks = apply_cascading_masks(
-                    self.actions.make_mask(batch_led=True)[:, :-1],
-                    self.last_idles[1:],
-                    self.last_dones[1:],
-                    self.last_truncates[1:]
-                )
-            else:
-                svl_masks = None
-
             # learn RL
 
             # masks has shape (batch_size, context_length)
@@ -225,7 +216,7 @@ class Model_74(Agent):
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                 masks=masks,
-                aux_masks=svl_masks
+                causes=self.last_truncates
             )
             
             left_over_slide = self.obs.mark(skip_last=True)
@@ -236,6 +227,8 @@ class Model_74(Agent):
             self.last_dones = self.last_dones[left_over_slide]
             self.last_truncates = self.last_truncates[left_over_slide]
 
+            self.graph_memory.reset_timestamp()
+            self.last_edge_times = []
 
         # Choose a random action
         packed_action = self.policy_model.get_action(

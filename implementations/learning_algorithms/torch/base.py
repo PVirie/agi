@@ -17,6 +17,10 @@ def convert_np_array_to_bool_tensor(np_array: np.ndarray, device) -> torch.Tenso
     return torch.tensor(np_array.astype(bool), dtype=torch.bool).to(device)
 
 
+def convert_np_array_to_int_tensor(np_array: np.ndarray, device) -> torch.Tensor:
+    return torch.tensor(np_array.astype(int), dtype=torch.int64).to(device)
+
+
 def convert_list_of_np_array_to_float_tensor(np_array_list: List[np.ndarray], device) -> List[torch.Tensor]:
     combined = np.stack(np_array_list, axis=1)
     return torch.tensor(combined, dtype=torch.float32).to(device)
