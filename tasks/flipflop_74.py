@@ -27,7 +27,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from implementations.agents import model_74
 from implementations.networks.torch.policy.flipflop import Projector
 from implementations.networks.torch.policy.flipflop import Policy_Core
-from implementations.learning_algorithms.torch.ppo_combine import PPO
+from implementations.learning_algorithms.torch.ppo_graph import PPO
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 

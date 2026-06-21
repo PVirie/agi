@@ -92,7 +92,7 @@ class Model_74(Agent):
         self.last_idles = []
         self.last_dones = []
         self.last_truncates = []
-        self.last_edge_times = []
+        self.last_edge_update_times = []
 
         self.thought_steps = None
 
@@ -170,7 +170,7 @@ class Model_74(Agent):
             edge_1=position[:, 0],
             edge_2=position[:, 1]
         )
-        self.last_edge_times.append(self.graph_memory.get_edge_update_time())
+        self.last_edge_update_times.append(self.graph_memory.get_edge_update_time())
 
         # update reward by mem_op_results (0 for True, -1 for False)
         reward += np.array([0 if res else -1 for res in mem_op_results])
@@ -228,7 +228,7 @@ class Model_74(Agent):
             self.last_truncates = self.last_truncates[left_over_slide]
 
             self.graph_memory.reset_timestamp()
-            self.last_edge_times = []
+            self.last_edge_update_times = []
 
         # Choose a random action
         packed_action = self.policy_model.get_action(
