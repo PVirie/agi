@@ -126,7 +126,7 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] Model 74: Graph Memory
     - [x] flipflop dataset
 - [ ] Spatio-temporal learning
-    - [ ] On graph automaton
+    - [x] On graph automaton
     - [ ] On fixed environment graph
 - [ ] Cognitive map building
     - [ ] "recognized" location linking
