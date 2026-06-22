@@ -10,7 +10,7 @@ from interfaces.learning import RL_Learner
 from interfaces.network import Policy_Value_Network
 from utilities.safe_torch_module import Safe_nn_Module
 
-from .base import convert_list_of_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_np_array_to_int_tensor, convert_list_of_np_array_to_float_tensor, convert_np_array_to_bool_tensor
+from .base import convert_list_of_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, convert_list_of_np_array_to_int_tensor, convert_np_array_to_bool_tensor
 from .base import masked_mean, masked_std
 
 
@@ -91,7 +91,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
         b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
-        b_causes = convert_np_array_to_int_tensor(causes, self.device) if causes is not None else None
+        b_causes = convert_list_of_np_array_to_int_tensor(causes, self.device) if causes is not None else None
 
         batch_size = b_rewards.shape[0]
         sequence_size = b_rewards.shape[1]

@@ -208,7 +208,7 @@ if __name__ == "__main__":
     np.random.seed(20260608)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/flipflop_74_size_{args.scale}_scheme_{args.scheme}"
+    experiment_path = f"{APP_ROOT}/experiments/flipflop_74_graph_size_{args.scale}_scheme_{args.scheme}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
