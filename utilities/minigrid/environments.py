@@ -18,12 +18,14 @@ class Multi_Environment:
         full_mdp=False,
         full_mdp_width=64,
         full_mdp_height=64,
+        include_inventory=True
         ):
 
         self.mission_max_len = mission_max_len
         self.full_mdp = full_mdp
         self.full_mdp_width = full_mdp_width
         self.full_mdp_height = full_mdp_height
+        self.include_inventory = include_inventory
 
         self.tokenizer = tokenizer
 
@@ -36,7 +38,8 @@ class Multi_Environment:
         for gid in game_ids:
             self.available_actions.append(list(range(len(MINIGRID_ACTIONS)))) 
             env = gym.make(gid)
-            env = InventoryWrapper(env)
+            if include_inventory:
+                env = InventoryWrapper(env)
             if full_mdp:
                 env = FullyObsWrapper(env)
             self.envs.append(env)
@@ -146,13 +149,17 @@ class Multi_Environment:
             mission_tokens = np.pad(mission_tokens, (0, self.mission_max_len - len(mission_tokens)), constant_values=self.tokenizer.pad_token_id)
             
         direction = ['right', 'down', 'left', 'up'][obs['direction']]
-        inventory = obs['inventory']
-        inventory_tokens = np.array(self.tokenizer([direction, inventory])[0], dtype=np.int32)
-        # pad inventory tokens to 3
-        if len(inventory_tokens) > 3:
-            inventory_tokens = inventory_tokens[:3]
+        if self.include_inventory:
+            inventory = obs['inventory']
+            internal_state_tokens = np.array(self.tokenizer([direction, inventory])[0], dtype=np.int32)
         else:
-            inventory_tokens = np.pad(inventory_tokens, (0, 3 - len(inventory_tokens)), constant_values=self.tokenizer.pad_token_id)
+            internal_state_tokens = np.array(self.tokenizer([direction])[0], dtype=np.int32)
+
+        # pad internal_state_tokens to 3
+        if len(internal_state_tokens) > 3:
+            internal_state_tokens = internal_state_tokens[:3]
+        else:
+            internal_state_tokens = np.pad(internal_state_tokens, (0, 3 - len(internal_state_tokens)), constant_values=self.tokenizer.pad_token_id)
         
         if self.full_mdp:
             image = obs['image']  # shape (h, w, 3)
@@ -164,13 +171,13 @@ class Multi_Environment:
 
             output = np.zeros((self.mission_max_len + 3 + (self.full_mdp_height * self.full_mdp_width * 3),), dtype=np.int32)
             output[:self.mission_max_len] = mission_tokens
-            output[self.mission_max_len:self.mission_max_len + 3] = inventory_tokens
+            output[self.mission_max_len:self.mission_max_len + 3] = internal_state_tokens
             output[(self.mission_max_len + 3):] = image_padded.flatten()
         else:
             image = obs['image']  # shape (7, 7, 3)
 
             output = np.zeros((self.mission_max_len + 3 + (7 * 7 * 3),), dtype=np.int32)
             output[:self.mission_max_len] = mission_tokens
-            output[self.mission_max_len:self.mission_max_len + 3] = inventory_tokens
+            output[self.mission_max_len:self.mission_max_len + 3] = internal_state_tokens
             output[(self.mission_max_len + 3):] = image_padded.flatten()
         return output
