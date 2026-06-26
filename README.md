@@ -2,9 +2,10 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name      | Description                |
-| ---------- | --------------- | -------------------------- |
-| LXXIV      | Graph Automaton | Full Quest Graph Automaton |
+| Generation | Model Name             | Description                |
+| ---------- | ---------------------- | -------------------------- |
+| LXXIV      | Graph Automaton        | Full Quest Graph Automaton |
+| LXXVI      | Cognitive Cartographer | Cognitive Map Building     |
 
 ## Prerequisites
 
@@ -125,9 +126,9 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [x] Separate model for high level and low level policy
 - [x] Model 74: Graph Memory
     - [x] flipflop dataset
-- [ ] Spatio-temporal learning
-    - [x] On graph automaton
-    - [ ] On fixed environment graph
-- [ ] Cognitive map building
+- [x] Spatio-temporal learning
+- [x] Model 76: Cognitive Cartographer
+    - [x] minigrid environment
+- [ ] Simplified Cognitive map building
     - [ ] "recognized" location linking
     - [ ] External to internal action transfer

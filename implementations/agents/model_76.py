@@ -44,11 +44,10 @@ def apply_cascading_masks(masks, *stop_conditions):
 
 
 class Scheme(str, Enum):
-    FLIPFLOP = "flipflop"
     FULL = "full"
 
 
-class Model_74(Agent):
+class Model_76(Agent):
     
     def __init__(self, 
                  policy_model: Policy_Network,
@@ -71,15 +70,14 @@ class Model_74(Agent):
         self.max_num_thought_steps = max_num_thought_steps
         self.do_supervision = do_supervision
 
-        # 0 obs idle, 1 for obs write, 2 for obs create
-        # 3 thought for link, 4 thought for write then move, 5 thought create
-        # 6 thought for rotate edge
-        if scheme == Scheme.FLIPFLOP:
-            self.valid_int_actions = [0, 1, 2, 3, 4, 5]
-            self.observe_external_int_actions = [0, 1, 2]
-        elif scheme == Scheme.FULL:
-            self.valid_int_actions = [0, 1, 2, 3, 4, 5, 6]
-            self.observe_external_int_actions = [0, 1, 2]
+        # 0 obs
+        # 1 thought for write then move
+        # 2 thought create
+        # 3 thought for link
+        # 4 thought for rotate edge
+        if scheme == Scheme.FULL:
+            self.valid_int_actions = [0, 1, 2, 3, 4]
+            self.observe_external_int_actions = [0]
 
         self.reset()
 
@@ -130,7 +128,7 @@ class Model_74(Agent):
 
         # get last action's position
         last_action = self.actions.get_last()
-        int_action, ext_action, position, last_content = self.policy_model.unpack_action(last_action)
+        int_action, ext_action, position, write_content = self.policy_model.unpack_action(last_action)
 
         memory_action = [Graph_Memory_Operation_Type.IDLE for _ in range(batch_size)]
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
@@ -138,22 +136,17 @@ class Model_74(Agent):
             if r:
                 memory_action[i] |= Graph_Memory_Operation_Type.RESET
             if not idle:
+                pass
+            if idle:
+                reward[i] = 0
                 if flag == 1:
                     memory_action[i] |= Graph_Memory_Operation_Type.WRITE
+                    memory_action[i] |= Graph_Memory_Operation_Type.MOVE
                 if flag == 2:
                     memory_action[i] |= Graph_Memory_Operation_Type.CREATE
-            if idle:
-                # if idle, use content and reward from last thought
-                content[i, :] = last_content[i, :]
-                reward[i] = 0
                 if flag == 3:
                     memory_action[i] |= Graph_Memory_Operation_Type.LINK
                 if flag == 4:
-                    memory_action[i] |= Graph_Memory_Operation_Type.WRITE
-                    memory_action[i] |= Graph_Memory_Operation_Type.MOVE
-                if flag == 5:
-                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
-                if flag == 6:
                     memory_action[i] |= Graph_Memory_Operation_Type.ROTATE
             if d or t:
                 self.thought_steps[i] = 0
@@ -166,7 +159,7 @@ class Model_74(Agent):
         # update memory
         mem_op_results = self.graph_memory.execute(
             operations=memory_action,
-            write_value=content,
+            write_value=write_content, # write value
             edge_1=position[:, 0],
             edge_2=position[:, 1]
         )
@@ -185,7 +178,7 @@ class Model_74(Agent):
                 b_int=int_action,
                 b_ext=ext_action,
                 b_position=position,
-                b_content=context
+                b_content=np.concatenate([context, content], axis=-1)
             )
         )
         self.rewards[-1] = reward
@@ -238,7 +231,7 @@ class Model_74(Agent):
         packed_action = packed_action[:, -1, ...]
 
         # extract output here
-        int_action, ext_action, position, content = self.policy_model.unpack_action(packed_action)
+        int_action, ext_action, position, write_content = self.policy_model.unpack_action(packed_action)
 
         # check flag for external observation override and update thought steps
         return_action = [None for _ in range(batch_size)]
