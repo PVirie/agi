@@ -175,9 +175,8 @@ class Multi_Environment:
             output[(self.mission_max_len + 3):] = image_padded.flatten()
         else:
             image = obs['image']  # shape (7, 7, 3)
-
             output = np.zeros((self.mission_max_len + 3 + (7 * 7 * 3),), dtype=np.int32)
             output[:self.mission_max_len] = mission_tokens
             output[self.mission_max_len:self.mission_max_len + 3] = internal_state_tokens
-            output[(self.mission_max_len + 3):] = image_padded.flatten()
+            output[(self.mission_max_len + 3):] = image.flatten()
         return output

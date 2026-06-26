@@ -51,7 +51,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
 
         self.position_size = 2
         self.content_size = internal_state_size + goal_size + inventory_size + width * height * channel
-        self.packed_action_size = 1 + 1 + self.position_size + self.content_size
+        self.packed_action_size = 1 + 1 + self.position_size + 1
         self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
 
         self.internal_state_pos = 1 + 1 + 1 + self.position_size
@@ -108,12 +108,12 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         self.head_edge_1 = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, self.context_size - 1)
+            nn.Linear(hidden_size, internal_state_size - 1)
         )
         self.head_edge_2 = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, self.context_size - 1)
+            nn.Linear(hidden_size, internal_state_size - 1)
         )
         self.head_write_value = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
@@ -174,7 +174,6 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         batch_size = context.size(0)
         context_size = context.size(1)
 
-        reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         internal_state = context[:, :, self.internal_state_pos: (self.internal_state_pos + self.internal_state_size)]  # (batch_size, context_size, internal_state_size)
@@ -204,8 +203,8 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
         ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
-        edge_1_logits = self.head_edge_1(base_output)  # (batch_size, context_size, content_size - 1)
-        edge_2_logits = self.head_edge_2(base_output)  # (batch_size, context_size, content_size - 1)
+        edge_1_logits = self.head_edge_1(base_output)  # (batch_size, context_size, C)
+        edge_2_logits = self.head_edge_2(base_output)  # (batch_size, context_size, C)
         write_value_logits = self.head_write_value(base_output)  # (batch_size, context_size, write_action_size)
 
         values = self.head_value(base_output)  # (batch_size, context_size, 1)
@@ -243,14 +242,14 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         action_ext = probs_ext.sample()
         edge_1 = probs_edge_1.sample()
         edge_2 = probs_edge_2.sample()
-        action_content = probs_write_value.sample()
+        write_value = probs_write_value.sample()
 
         action = np.concatenate([
             action_int.unsqueeze(-1).cpu().numpy(),
             action_ext.unsqueeze(-1).cpu().numpy(),
             edge_1.unsqueeze(-1).cpu().numpy(),
             edge_2.unsqueeze(-1).cpu().numpy(),
-            action_content.unsqueeze(-1).cpu().numpy()
+            write_value.unsqueeze(-1).cpu().numpy()
         ], axis=-1)
 
         return action.astype(float)

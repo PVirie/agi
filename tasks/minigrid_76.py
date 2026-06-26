@@ -180,9 +180,8 @@ if __name__ == "__main__":
 
     mission_size = env.mission_max_len
     inventory_size = 3 # inventory include 1 slot for current direction and 2 slots for items
-    content_size = mission_size + inventory_size + 7 * 7 * 3 # mission + inv + image
     
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"minigrid/return" for _ in list(range(env.batch_size))])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"minigrid/return" for gid in game_ids])
     
     if args.scale == "small":
         hidden_size = 128
@@ -213,7 +212,7 @@ if __name__ == "__main__":
         write_action_size=16,
         internal_state_size=1 + C,
         goal_size=mission_size, inventory_size=inventory_size,
-        width=7, height=7, channels=3,
+        width=7, height=7, channel=3,
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
@@ -223,7 +222,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Graph_Memory(
-        num_batches=env.batch_size,
+        num_batches=len(game_ids),
         num_nodes=4096,
         max_edges_per_node=C,
         node_dim=1
