@@ -46,7 +46,7 @@ class Graph_Memory:
     def reset(self, batch_indices):
         pass
 
-    def get_edge_update_time(self):
+    def get_cause_times(self):
         pass
 
     def reset_timestamp(self):
