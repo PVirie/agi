@@ -60,13 +60,17 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         self.obs_pos = self.inv_pos + inventory_size
 
         self.pad_token_id = pad_token_id
+
+        self.internal_state_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for internal state tokens
         self.goal_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
-        self.goal_feature_extraction = InstructionTransformer(
+        self.inv_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for inventory tokens
+
+        self.internal_state_feature_extraction = InstructionTransformer(
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=8, 
-            num_layers=2, 
-            max_len=goal_size
+            num_layers=4, 
+            max_len=internal_state_size + goal_size + inventory_size,
         )
 
         self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
@@ -78,19 +82,10 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             depths=layers
         )
 
-        self.internal_state_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
-        self.internal_state_feature_extraction = InstructionTransformer(
-            input_dim=embedding_dim,
-            d_model=hidden_size,
-            nhead=8, 
-            num_layers=2, 
-            max_len=internal_state_size
-        )
-
         # internal_state, goal, inv, obs -> hidden
         self.backbone = ResNet(
             output_dims=hidden_size, 
-            input_dims=hidden_size + hidden_size + inventory_size * embedding_dim + hidden_size, 
+            input_dims=hidden_size + hidden_size, 
             hidden_dims=hidden_size, 
             layers=[hidden_size for _ in layers]
         )
@@ -134,14 +129,15 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
 
     def reset_parameters(self):
         # Reset parameters of all layers
-        self.goal_embedding.reset_parameters()
-        self.image_embedding.reset_parameters()
         self.internal_state_embedding.reset_parameters()
+        self.goal_embedding.reset_parameters()
+        self.inv_embedding.reset_parameters()
 
-        self.goal_feature_extraction.reset_parameters()
         self.internal_state_feature_extraction.reset_parameters()
 
+        self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
+
         self.backbone.reset_parameters()
 
         def init_actor_weights(m):
@@ -181,24 +177,23 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
         obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
 
-        internal_state_padding_mask = get_padding_mask(internal_state, self.pad_token_id)  # (batch_size, context_size, internal_state_size)
+        internal_state_goal_inv = torch.concat([internal_state, goal, inv], dim=-1)  # (batch_size, context_size, internal_state_size + goal_size + inventory_size)
+        padding_mask = get_padding_mask(internal_state_goal_inv, self.pad_token_id)  # (batch_size, context_size, internal_state_size + goal_size + inventory_size)
+        
         internal_state_embedded = self.internal_state_embedding(internal_state.long())  # (batch_size, context_size, internal_state_size, embedding_dim)
-        internal_state_features = self.internal_state_feature_extraction(internal_state_embedded, internal_state_padding_mask)  # (batch_size, context_size, hidden_size)
-
-        goal_padding_mask = get_padding_mask(goal, self.pad_token_id)  # (batch_size, context_size, goal_size)
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
-        goal_features = self.goal_feature_extraction(goal_embedded, goal_padding_mask)  # (batch_size, context_size, hidden_size)
-        
-        inv_embedded = self.goal_embedding(inv.long())  # (batch_size, context_size, inventory_size, inv_size * embedding_dim)
-        inv_embedded = inv_embedded.view(batch_size, context_size, -1)  # (batch_size, context_size, inventory_size * embedding_dim)
-        
+        inv_embedded = self.inv_embedding(inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
+
+        internal_state_goal_embedded = torch.concat([internal_state_embedded, goal_embedded, inv_embedded], dim=2)  # (batch_size, context_size, internal_state_size + goal_size + inventory_size, embedding_dim)
+        internal_state_features = self.internal_state_feature_extraction(internal_state_goal_embedded, padding_mask)  # (batch_size, context_size, hidden_size)
+
         obs_embedded = self.image_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
         obs_features = torch.reshape(obs_embedded, (batch_size * context_size, self.height, self.width, self.feature_channel))  # (batch_size * context_size, height, width, channel * embedding_dim)
         obs_features = obs_features.permute(0, 3, 1, 2)  # (batch_size * context_size, channel * embedding_dim, height, width)
         obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
-        base_input = torch.concat([internal_state_features, goal_features, inv_embedded, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        base_input = torch.concat([internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)

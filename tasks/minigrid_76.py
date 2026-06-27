@@ -169,7 +169,7 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids=["BabyAI-MiniBossLevel-v0"]*64
+    game_ids=["MiniGrid-BlockedUnlockPickup-v0"] * 128
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -186,24 +186,24 @@ if __name__ == "__main__":
     if args.scale == "small":
         hidden_size = 128
         embedding_dim = 16
-        C = 16
-        layers = [16, 32, 32] # basic impala
+        C = 4
+        layers = [16, 32, 64] # basic impala
         minibatch_size = 32
         rollout_length = 128
     elif args.scale == "medium":
-        hidden_size = 128
+        hidden_size = 256
         embedding_dim = 16
-        C = 16
-        layers = [16, 32, 64, 64] # medium impala
+        C = 4
+        layers = [16, 32, 64, 128] # medium impala
         minibatch_size = 32
-        rollout_length = 128
+        rollout_length = 256
     else:  # large
-        hidden_size = 128
+        hidden_size = 256
         embedding_dim = 16
-        C = 16
+        C = 4
         layers = [16, 32, 64, 128, 128] # large impala
         minibatch_size = 32
-        rollout_length = 128
+        rollout_length = 256
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
