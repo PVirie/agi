@@ -21,12 +21,13 @@ except ImportError:
 
 class NP_Graph_Memory(Graph_Memory):
 
-    def __init__(self, num_batches, num_nodes, max_edges_per_node, node_dim):
+    def __init__(self, num_batches, num_nodes, max_edges_per_node, node_dim, start_node_value=1):
 
         self.C = 1 + max_edges_per_node
 
-        self.nodes = np.zeros((num_batches, num_nodes, node_dim), dtype=np.float32)
-        self.edges = np.full((num_batches, num_nodes, max_edges_per_node), -1, dtype=np.int32) # store the source node index for each edge slot, -1 means no edge
+        self.start_value = start_node_value
+        self.nodes = np.full((num_batches, num_nodes, node_dim), start_node_value, dtype=np.float32)
+        self.edges = np.zeros((num_batches, num_nodes, max_edges_per_node), dtype=np.int32) # store the source node index for each edge slot
 
         self.next_free_node = np.ones((num_batches,), dtype=np.int32)  # track the next free node index for each batch
         self.next_free_edge = np.zeros((num_batches, num_nodes), dtype=np.int32)  # track the next free edge index for each node in each batch
@@ -57,9 +58,8 @@ class NP_Graph_Memory(Graph_Memory):
         context[:, 0, :] = self.nodes[batch_idx, self.head, :]
         
         # gather connected nodes' content with numpy advanced indexing and broadcasting
-        neighbor_indices = self.edges[batch_idx, self.head, :]  # (batch_size, max_edges_per_node), source nodes (-1 = empty)
-        safe_indices = np.clip(neighbor_indices, 0, self.nodes.shape[1] - 1)  # clamp -1 to valid range before indexing
-        context[:, 1:, :] = self.nodes[batch_idx[:, None], safe_indices, :]  # (batch_size, max_edges_per_node, node_dim)
+        neighbor_indices = self.edges[batch_idx, self.head, :]  # (batch_size, max_edges_per_node)
+        context[:, 1:, :] = self.nodes[batch_idx[:, None], neighbor_indices, :]  # (batch_size, max_edges_per_node, node_dim)
 
         # zero out free (unused) edge slots
         used_edges = self.next_free_edge[batch_idx, self.head]  # (batch_size,)
@@ -85,8 +85,8 @@ class NP_Graph_Memory(Graph_Memory):
 
     def reset(self, batch_indices):
         batch_indices = np.asarray(batch_indices)
-        self.nodes[batch_indices, :, :] = 0.0
-        self.edges[batch_indices, :, :] = -1
+        self.nodes[batch_indices, :, :] = self.start_value
+        self.edges[batch_indices, :, :] = 0
         self.next_free_node[batch_indices] = 1  # node 0 always exists after reset
         self.next_free_edge[batch_indices, :] = 0
         self.head[batch_indices] = 0
@@ -108,8 +108,8 @@ class NP_Graph_Memory(Graph_Memory):
             used = self.next_free_edge[batch_indices]                           # (B, num_nodes)
             slot_range = np.arange(max_edges)
             occupied = slot_range[None, None, :] < used[:, :, None]            # (B, num_nodes, max_edges)
-            points_to_head = edge_vals == heads[:, None, None]                 # (B, num_nodes, max_edges)
-            update_mask = points_to_head & occupied
+            come_from_head = edge_vals == heads[:, None, None]                 # (B, num_nodes, max_edges)
+            update_mask = come_from_head & occupied
             temp = self.edge_cause_time[batch_indices]
             temp[update_mask] = self.timestep
             self.edge_cause_time[batch_indices] = temp
@@ -155,7 +155,8 @@ class NP_Graph_Memory(Graph_Memory):
             back_slots = self.next_free_edge[write_batches, new_node_indices]
             self.edges[write_batches, new_node_indices, back_slots] = head_indices
             self.next_free_edge[write_batches, new_node_indices] += 1
-            # update trace: a->z direction (new node's slot pointing back to head = head caused new node)
+            # update trace: a<->z direction
+            self.edge_cause_time[write_batches, head_indices, link_slots] = self.timestep
             self.edge_cause_time[write_batches, new_node_indices, back_slots] = self.timestep
 
         return success
@@ -196,12 +197,9 @@ class NP_Graph_Memory(Graph_Memory):
             slots_dst = self.next_free_edge[write_batches, write_dst]
             self.edges[write_batches, write_dst, slots_dst] = write_src
             self.next_free_edge[write_batches, write_dst] += 1
-            # update trace: a->src and a->dst (head's slot in src/dst edge lists = head caused src/dst to change)
-            heads_write = self.head[write_batches]
-            src_head_slots = np.argmax(self.edges[write_batches, write_src, :] == heads_write[:, None], axis=1)
-            self.edge_cause_time[write_batches, write_src, src_head_slots] = self.timestep
-            dst_head_slots = np.argmax(self.edges[write_batches, write_dst, :] == heads_write[:, None], axis=1)
-            self.edge_cause_time[write_batches, write_dst, dst_head_slots] = self.timestep
+            # update trace: both new edge slots
+            self.edge_update_time[write_batches, write_src, slots_src] = self.timestep
+            self.edge_update_time[write_batches, write_dst, slots_dst] = self.timestep
 
         return success
     
@@ -219,7 +217,7 @@ class NP_Graph_Memory(Graph_Memory):
         last = used - 1
         last_nodes = self.edges[batches, src_nodes, last]
         self.edges[batches, src_nodes, slots] = last_nodes
-        self.edges[batches, src_nodes, last] = -1
+        self.edges[batches, src_nodes, last] = 0
         # propagate edge_cause_time for the swapped slot; removal counts as a change on the last slot
         self.edge_cause_time[batches, src_nodes, slots] = self.edge_cause_time[batches, src_nodes, last]
         self.edge_cause_time[batches, src_nodes, last] = self.timestep
@@ -269,11 +267,9 @@ class NP_Graph_Memory(Graph_Memory):
             slots_pivot = self.next_free_edge[rotate_batches, rotate_pivots]
             self.edges[rotate_batches, rotate_pivots, slots_pivot] = rotate_srcs
             self.next_free_edge[rotate_batches, rotate_pivots] += 1
-            # update trace: a->src (head's slot in src = head caused src to gain pivot)
-            # and s->pivot (new slot in pivot = src/head caused pivot to be re-parented)
-            src_head_slots = np.argmax(self.edges[rotate_batches, rotate_srcs, :] == rotate_heads[:, None], axis=1)
-            self.edge_cause_time[rotate_batches, rotate_srcs, src_head_slots] = self.timestep
-            self.edge_cause_time[rotate_batches, rotate_pivots, slots_pivot] = self.timestep
+            # and s<->pivot
+            self.edge_update_time[rotate_batches, rotate_srcs, slots_src] = self.timestep
+            self.edge_update_time[rotate_batches, rotate_pivots, slots_pivot] = self.timestep
 
         return success
     
@@ -572,8 +568,8 @@ if __name__ == "__main__":
     m.create(np.array([0, 1]), np.array([[1.0, 2.0], [3.0, 4.0]]))
     m.head[0] = 1
     m.reset(np.array([0]))
-    assert_allclose("nodes zeroed", m.nodes[0], np.zeros((3, 2)))
-    assert_equal("edges cleared", m.edges[0], np.full((3, 3), -1, dtype=np.int32))
+    assert_allclose("nodes reset to start_value", m.nodes[0], np.ones((3, 2)))
+    assert_equal("edges cleared", m.edges[0], np.zeros((3, 3), dtype=np.int32))
     assert_equal("next_free_node reset", m.next_free_node[0], 1)
     assert_equal("next_free_edge reset", m.next_free_edge[0], [0, 0, 0])
     assert_equal("head reset", m.head[0], 0)
@@ -602,7 +598,7 @@ if __name__ == "__main__":
     assert_equal("move head", m.head[1], 2)
     # batch 2: reset -> cleared
     assert_equal("reset node count", m.next_free_node[2], 1)
-    assert_allclose("reset node zeroed", m.nodes[2, 0], [0.0, 0.0])
+    assert_allclose("reset node set to start_value", m.nodes[2, 0], [1.0, 1.0])
 
     # ================================================================== TEST 23
     # execute: ROTATE dispatched correctly

@@ -225,7 +225,8 @@ if __name__ == "__main__":
         num_batches=len(game_ids),
         num_nodes=4096,
         max_edges_per_node=C,
-        node_dim=1
+        node_dim=1,
+        start_node_value=vocab_size - 1
     )
     agent = model_76.Model_76(
         policy_model=policy_core,

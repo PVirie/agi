@@ -126,8 +126,7 @@ class PPO(RL_Learner, Safe_nn_Module):
             # future step that c caused.  Because causes always point backward (c < t), by the
             # time the loop reaches c every future t > c has already propagated its credit, so
             # causal_returns[:, c] is fully populated when it is consumed.
-            causal_returns = torch.full((batch_size, sequence_size), float('-inf'), device=self.device) \
-                if b_causes is not None else None
+            causal_returns = torch.full((batch_size, sequence_size), float('-inf'), device=self.device) if b_causes is not None else None
             advantages = []
             lastgaelam = torch.zeros(batch_size).to(self.device)
             for t in reversed(range(sequence_size)):

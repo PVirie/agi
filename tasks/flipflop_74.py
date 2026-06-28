@@ -203,12 +203,12 @@ if __name__ == "__main__":
     logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(20260608)  
-    torch.manual_seed(20260608)
-    np.random.seed(20260608)
+    random.seed(20260628)  
+    torch.manual_seed(20260628)
+    np.random.seed(20260628)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/flipflop_74_graph_size_{args.scale}_scheme_{args.scheme}"
+    experiment_path = f"{APP_ROOT}/experiments/flipflop_74_size_{args.scale}_scheme_{args.scheme}"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -265,7 +265,8 @@ if __name__ == "__main__":
         num_batches=env.batch_size,
         num_nodes=4096,
         max_edges_per_node=C,
-        node_dim=1
+        node_dim=1,
+        start_node_value=WORDS - 1
     )
     agent = model_74.Model_74(
         policy_model=policy_core,
