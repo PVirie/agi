@@ -266,7 +266,7 @@ if __name__ == "__main__":
         num_nodes=4096,
         max_edges_per_node=C,
         node_dim=1,
-        start_node_value=WORDS - 1
+        start_node_value=0
     )
     agent = model_74.Model_74(
         policy_model=policy_core,

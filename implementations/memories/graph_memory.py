@@ -29,7 +29,7 @@ class NP_Graph_Memory(Graph_Memory):
         self.nodes = np.full((num_batches, num_nodes, node_dim), start_node_value, dtype=np.float32)
         self.edges = np.zeros((num_batches, num_nodes, max_edges_per_node), dtype=np.int32) # store the source node index for each edge slot
 
-        self.next_free_node = np.ones((num_batches,), dtype=np.int32)  # track the next free node index for each batch
+        self.next_free_node = np.zeros((num_batches,), dtype=np.int32)  # track the next free node index for each batch
         self.next_free_edge = np.zeros((num_batches, num_nodes), dtype=np.int32)  # track the next free edge index for each node in each batch
 
         self.head = np.zeros((num_batches,), dtype=np.int32)  # track the head node index for each batch
@@ -87,7 +87,7 @@ class NP_Graph_Memory(Graph_Memory):
         batch_indices = np.asarray(batch_indices)
         self.nodes[batch_indices, :, :] = self.start_value
         self.edges[batch_indices, :, :] = 0
-        self.next_free_node[batch_indices] = 1  # node 0 always exists after reset
+        self.next_free_node[batch_indices] = 0  # node 0 always exists after reset
         self.next_free_edge[batch_indices, :] = 0
         self.head[batch_indices] = 0
 
