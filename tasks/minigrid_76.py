@@ -175,7 +175,8 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         mission_max_len=16,
         full_mdp=False,
-        include_inventory=False
+        include_inventory=False,
+        position_bonus=True
     )
 
     mission_size = env.mission_max_len

@@ -1,9 +1,9 @@
 import gymnasium as gym
-from minigrid.wrappers import FullyObsWrapper
+from minigrid.wrappers import FullyObsWrapper, PositionBonus
 import numpy as np
 import time
 
-from .custom_wrappers import InventoryWrapper
+from .custom_wrappers import InventoryWrapper, OriginalRewardWrapper
 
 MINIGRID_ACTIONS = [
     "left", "right", "forward", "pickup", "drop", "toggle", "done"
@@ -18,7 +18,8 @@ class Multi_Environment:
         full_mdp=False,
         full_mdp_width=64,
         full_mdp_height=64,
-        include_inventory=True
+        include_inventory=True,
+        position_bonus=False
         ):
 
         self.mission_max_len = mission_max_len
@@ -42,6 +43,9 @@ class Multi_Environment:
                 env = InventoryWrapper(env)
             if full_mdp:
                 env = FullyObsWrapper(env)
+            if position_bonus:
+                env = OriginalRewardWrapper(env)
+                env = PositionBonus(env)
             self.envs.append(env)
 
         total = len(self.envs)
@@ -52,6 +56,7 @@ class Multi_Environment:
         self.return_infos = [None] * total
 
         self.total_return = [0] * total
+        self.total_aux_return = [0] * total
         self.total_length = [0] * total
         self.total_duration = [0] * total # store the start time of the episode for each env, misnoming but consistent with other statistics
 
@@ -64,6 +69,7 @@ class Multi_Environment:
             self.return_infos[i] = None
 
             self.total_return[i] = 0
+            self.total_aux_return[i] = 0
             self.total_length[i] = 0
             self.total_duration[i] = time.perf_counter()
         return self.return_obs, self.return_infos
@@ -82,18 +88,21 @@ class Multi_Environment:
             self.return_truncations[i] = truncation
             self.return_infos[i] = None
 
-            self.total_return[i] += reward
+            self.total_return[i] += info.get('original_reward', reward) if info else reward
+            self.total_aux_return[i] += reward
             self.total_length[i] += 1
             if termination or truncation:
                 obs, _ = env.reset() # You must manually reset!
                 self.return_infos[i] = {
                     "episode": {
                         "r": self.total_return[i],
+                        "aug_r": self.total_aux_return[i],
                         "l": self.total_length[i],
                         "t": time.perf_counter() - self.total_duration[i]
                     }
                 }
                 self.total_return[i] = 0
+                self.total_aux_return[i] = 0
                 self.total_length[i] = 0
                 self.total_duration[i] = time.perf_counter()
             self.return_obs[i] = self.obs_to_object(obs)
@@ -130,6 +139,7 @@ class Multi_Environment:
         self.return_infos = None
 
         self.total_return = None
+        self.total_aux_return = None
         self.total_length = None
         self.total_duration = None
 
