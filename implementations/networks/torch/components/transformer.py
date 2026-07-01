@@ -102,3 +102,29 @@ if __name__ == "__main__":
     padding_mask = get_padding_mask(dummy_token_input, pad_token_id)
     expected_mask = torch.tensor([[[1, 1, 1, 0, 0], [1, 1, 0, 0, 0]]], dtype=torch.float)
     assert torch.equal(padding_mask, expected_mask), f"Expected mask {expected_mask}, got {padding_mask}"
+
+    # Test training
+    instr_transformer.train()
+    optimizer = torch.optim.Adam(instr_transformer.parameters(), lr=1e-3)
+    optimizer.zero_grad()
+
+    for i in range(5):  # Run a few training steps
+        instr_output = instr_transformer(dummy_instr_input, dummy_mask)
+        loss = instr_output.mean()  # Dummy loss for testing
+        loss.backward()
+        optimizer.step()
+
+    # test invalid padding mask (all zeros)
+    dummy_invalid_mask = torch.zeros(3, 10, 20)  # All tokens are padding
+    instr_output_invalid = instr_transformer(dummy_instr_input, dummy_invalid_mask)
+    assert torch.allclose(instr_output_invalid, torch.zeros_like(instr_output_invalid)), "Expected output to be zeros for all-padding input, got {instr_output_invalid}"
+
+    # test training with invalid padding mask
+    instr_transformer.train()
+    optimizer.zero_grad()
+    instr_output_invalid = instr_transformer(dummy_instr_input, dummy_invalid_mask)
+    loss_invalid = instr_output_invalid.mean()  # Dummy loss for testing
+    loss_invalid.backward()
+    optimizer.step()
+
+    print("All tests passed!")
