@@ -69,7 +69,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=8, 
-            num_layers=4, 
+            num_layers=2,
             max_len=internal_state_size + goal_size + inventory_size,
         )
 

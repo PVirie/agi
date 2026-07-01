@@ -185,21 +185,21 @@ if __name__ == "__main__":
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"minigrid/return" for gid in game_ids])
     
     if args.scale == "small":
-        hidden_size = 128
+        hidden_size = 64
         embedding_dim = 16
         C = 4
         layers = [16, 32, 64] # basic impala
         minibatch_size = 32
         rollout_length = 128
     elif args.scale == "medium":
-        hidden_size = 256
+        hidden_size = 64
         embedding_dim = 16
         C = 4
         layers = [16, 32, 64, 128] # medium impala
         minibatch_size = 32
         rollout_length = 256
     else:  # large
-        hidden_size = 256
+        hidden_size = 64
         embedding_dim = 16
         C = 4
         layers = [16, 32, 64, 128, 128] # large impala

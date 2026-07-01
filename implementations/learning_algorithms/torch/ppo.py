@@ -69,7 +69,7 @@ class PPO(RL_Learner, Safe_nn_Module):
     def learn(self, 
               obs: Any, last_actions: Any, rewards: List[Any], 
               next_dones: List[List[bool]],
-              valid_actions: Any = None, masks: Any = None, aux_masks: Any = None):
+              valid_actions: Any = None, masks: Any = None, aux: Any = None):
         """
         obs: np array of shape (batch_size, context_length + 1, ...)
         last_actions: np array of shape (batch_size, context_length + 1, ...)
@@ -77,7 +77,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         next_dones: list (context_length) of bools of length batch_size
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
-        aux_masks: np array of shape (batch_size, context_length)
+        aux: np array of shape (batch_size, context_length)
 
         Note that obs and last_actions include the context length + 1 items.
         This corresponds to the observations after taking the last actions.
@@ -91,7 +91,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
         
         if self.aux_coef is not None:
-            b_aux_masks = b_masks if aux_masks is None else convert_np_array_to_float_tensor(aux_masks, self.device)
+            b_aux_masks = b_masks if aux is None else convert_np_array_to_float_tensor(aux, self.device)
 
         batch_size = b_rewards.shape[0]
         sequence_size = b_rewards.shape[1]

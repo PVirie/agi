@@ -63,7 +63,7 @@ class PPO(RL_Learner, Safe_nn_Module):
     def learn(self, 
               obs: Any, last_actions: Any, rewards: List[Any], 
               next_dones: List[List[bool]],
-              valid_actions: Any = None, masks: Any = None, aux_masks: Any = None):
+              valid_actions: Any = None, masks: Any = None, aux: Any = None):
         """
         obs: np array of shape (batch_size, context_length + 1, ...)
         last_actions: np array of shape (batch_size, context_length + 1, ...)
@@ -71,7 +71,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         next_dones: list (context_length) of bools of length batch_size
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
-        aux_masks: np array of shape (batch_size, context_length)
+        aux: np array of shape (batch_size, context_length)
 
         Note that obs and last_actions include the context length + 1 items.
         This corresponds to the observations after taking the last actions.

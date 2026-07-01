@@ -67,7 +67,7 @@ class PPO(RL_Learner, Safe_nn_Module):
               next_dones: List[List[bool]],
               valid_actions: Any = None, 
               masks: Any = None, 
-              causes: Any = None
+              aux: Any = None
             ):
         """
         obs: np array of shape (batch_size, context_length + 1, ...)
@@ -76,7 +76,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         next_dones: list (context_length) of bools of length batch_size
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
-        causes: np array of shape (batch_size, context_length + 1, cause_size)
+        aux: np array of shape (batch_size, context_length + 1, cause_size)
 
         Note that obs and last_actions include the context length + 1 items.
         This corresponds to the observations after taking the last actions.
@@ -91,7 +91,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
         b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
-        b_causes = convert_list_of_np_array_to_int_tensor(causes, self.device) if causes is not None else None
+        b_causes = convert_list_of_np_array_to_int_tensor(aux, self.device) if aux is not None else None
 
         batch_size = b_rewards.shape[0]
         sequence_size = b_rewards.shape[1]
@@ -121,12 +121,6 @@ class PPO(RL_Learner, Safe_nn_Module):
 
             values = values_with_last[:, :-1, ...]  # (batch_size, context_length)
 
-            # Bootstrap value using standard GAE, with causal credit assignment merged into the
-            # same backward pass.  causal_returns[b, c] accumulates the max return seen from any
-            # future step that c caused.  Because causes always point backward (c < t), by the
-            # time the loop reaches c every future t > c has already propagated its credit, so
-            # causal_returns[:, c] is fully populated when it is consumed.
-            causal_returns = torch.full((batch_size, sequence_size), float('-inf'), device=self.device) if b_causes is not None else None
             advantages = []
             lastgaelam = torch.zeros(batch_size).to(self.device)
             for t in reversed(range(sequence_size)):
@@ -137,20 +131,20 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 standard_return = lastgaelam + values[:, t]             # (batch_size,)
 
-                # Take the best of the standard return and any causal credit received from
-                # future steps, then propagate that effective return back to all past causes
-                # of t.  Propagating the effective (post-max) value means transitive chains
-                # (c caused t, t caused t') are handled without an extra pass.
-                if causal_returns is not None:
-                    effective_return = torch.max(standard_return, causal_returns[:, t])
-                    # Vectorised scatter-max: propagate effective_return[b] to every valid
-                    # cause position c for each batch item b, in one operation.
-                    all_causes = b_causes[:, t, :]                              # (batch_size, cause_size)
-                    valid_mask = (all_causes >= 0) & (all_causes < sequence_size)
-                    safe_causes = all_causes.clamp(0, sequence_size - 1)        # prevent OOB on scatter
-                    src = effective_return[:, None].expand(-1, b_causes.shape[2])   # (batch_size, cause_size)
-                    src = src.masked_fill(~valid_mask, float('-inf'))            # invalid slots → -inf (no-op under max)
-                    causal_returns = causal_returns.scatter_reduce(1, safe_causes, src, reduce='amax', include_self=True)
+                if b_causes is not None:
+                    # Average one-step discounted TD returns from step t and all future steps caused by t.
+                    # For each future step t' where t is listed as a cause, its contribution is
+                    # r_(t'-1) + gamma * V(t'), then average all.
+                    # Use standard_return (GAE) as the base contribution
+                    td_sum = standard_return
+                    count = torch.ones(batch_size, device=self.device)
+                    for t_prime in range(t + 2, sequence_size):
+                        # b_causes[:, t_prime, :] contains the indices of steps that caused t_prime
+                        is_caused_by_t = (b_causes[:, t_prime, :] == t).any(dim=-1).float()  # (batch_size,)
+                        contrib = b_rewards[:, t_prime - 1] + self.gamma * values_with_last[:, t_prime]
+                        td_sum = td_sum + is_caused_by_t * contrib
+                        count = count + is_caused_by_t
+                    effective_return = td_sum / count
                 else:
                     effective_return = standard_return
 

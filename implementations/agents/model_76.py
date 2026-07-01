@@ -209,7 +209,7 @@ class Model_76(Agent):
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                 masks=masks,
-                causes=self.last_cause_times
+                aux=self.last_cause_times
             )
             
             left_over_slide = self.obs.mark(skip_last=True)
