@@ -75,7 +75,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
         last_idle = [False for _ in observations]
         last_done = [terminations[i] or truncations[i] for i in range(len(observations))]
         last_truncated = [truncations[i] for i in range(len(observations))]
-        last_reset = [False for _ in observations]
+        last_reset = [terminations[i] or truncations[i] for i in range(len(observations))]
 
         stat_row = []
         for i in range(len(observations)):

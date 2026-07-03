@@ -77,7 +77,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
         last_idle = [False for _ in observations]
         last_done = [terminations[i] or truncations[i] for i in range(len(observations))]
         last_truncated = [truncations[i] for i in range(len(observations))]
-        last_reset = [False for _ in observations]
+        last_reset = [terminations[i] or truncations[i] for i in range(len(observations))]
 
         stat_row = []
         for i in range(len(observations)):
@@ -209,8 +209,8 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=5, ext_action_size=7,
-        write_action_size=16,
+        int_action_size=7, ext_action_size=7,
+        write_action_size=8,
         internal_state_size=1 + C,
         goal_size=mission_size, inventory_size=inventory_size,
         width=7, height=7, channel=3,

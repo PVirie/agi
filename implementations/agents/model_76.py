@@ -76,8 +76,8 @@ class Model_76(Agent):
         # 3 thought for link
         # 4 thought for rotate edge
         if scheme == Scheme.FULL:
-            self.valid_int_actions = [0, 1, 2, 3, 4]
-            self.observe_external_int_actions = [0]
+            self.valid_int_actions = [0, 1, 2, 3, 4, 5, 6]
+            self.observe_external_int_actions = [0, 1, 2]
 
         self.reset()
 
@@ -136,17 +136,20 @@ class Model_76(Agent):
             if r:
                 memory_action[i] |= Graph_Memory_Operation_Type.RESET
             if not idle:
-                pass
-            if idle:
-                reward[i] = 0
                 if flag == 1:
                     memory_action[i] |= Graph_Memory_Operation_Type.WRITE
-                    memory_action[i] |= Graph_Memory_Operation_Type.MOVE
                 if flag == 2:
                     memory_action[i] |= Graph_Memory_Operation_Type.CREATE
+            if idle:
+                reward[i] = 0
                 if flag == 3:
                     memory_action[i] |= Graph_Memory_Operation_Type.LINK
                 if flag == 4:
+                    memory_action[i] |= Graph_Memory_Operation_Type.WRITE
+                    memory_action[i] |= Graph_Memory_Operation_Type.MOVE
+                if flag == 5:
+                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
+                if flag == 6:
                     memory_action[i] |= Graph_Memory_Operation_Type.ROTATE
             if d or t:
                 self.thought_steps[i] = 0
