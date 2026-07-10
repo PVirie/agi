@@ -66,7 +66,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=observations,
-            rewards=[r for r in rewards],
+            rewards=[r * 10 for r in rewards],
             next_available_actions=env.get_available_actions(),
             force_train=steps % rollout_length == 0 or should_stop,
         )
@@ -185,24 +185,24 @@ if __name__ == "__main__":
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"minigrid/return" for gid in game_ids])
     
     if args.scale == "small":
-        hidden_size = 64
-        embedding_dim = 16
+        hidden_size = 128
+        embedding_dim = 32
         C = 4
-        layers = [16, 32, 64] # basic impala
+        layers = [16, 32, 64]
         minibatch_size = 32
-        rollout_length = 128
+        rollout_length = 256
     elif args.scale == "medium":
-        hidden_size = 64
-        embedding_dim = 16
-        C = 4
-        layers = [16, 32, 64, 128] # medium impala
+        hidden_size = 128
+        embedding_dim = 32
+        C = 8
+        layers = [32, 64, 128, 128]
         minibatch_size = 32
         rollout_length = 256
     else:  # large
-        hidden_size = 64
-        embedding_dim = 16
-        C = 4
-        layers = [16, 32, 64, 128, 128] # large impala
+        hidden_size = 128
+        embedding_dim = 32
+        C = 16
+        layers = [64, 128, 128, 256, 256]
         minibatch_size = 32
         rollout_length = 256
 

@@ -10,7 +10,7 @@ from interfaces.network import Policy_Value_Network
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
-from implementations.networks.torch.components.std_conv import ImpalaCNN
+from implementations.networks.torch.components.std_conv import MiniGridCNN
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
 from implementations.networks.torch.policy.base import Projector as Base_Projector
@@ -69,17 +69,14 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=8, 
-            num_layers=2,
+            num_layers=4,
             max_len=internal_state_size + goal_size + inventory_size,
         )
 
-        self.image_embedding = nn.Embedding(256, 4)  # for image pixels, shared across channels
-        self.feature_channel = self.channel * 4
-        self.conv_layers = ImpalaCNN(
+        self.conv_layers = MiniGridCNN(
             output_dims=hidden_size, 
-            input_channels=self.feature_channel, 
-            width=width, height=height,
-            depths=layers
+            input_channels=channel, 
+            width=width, height=height
         )
 
         # internal_state, goal, inv, obs -> hidden
@@ -135,7 +132,6 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
 
         self.internal_state_feature_extraction.reset_parameters()
 
-        self.image_embedding.reset_parameters()
         self.conv_layers.reset_parameters()
 
         self.backbone.reset_parameters()
@@ -187,9 +183,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         internal_state_goal_embedded = torch.concat([internal_state_embedded, goal_embedded, inv_embedded], dim=2)  # (batch_size, context_size, internal_state_size + goal_size + inventory_size, embedding_dim)
         internal_state_features = self.internal_state_feature_extraction(internal_state_goal_embedded, padding_mask)  # (batch_size, context_size, hidden_size)
 
-        obs_embedded = self.image_embedding(obs.long())  # (batch_size, context_size, obs_size, embedding_dim)
-        obs_features = torch.reshape(obs_embedded, (batch_size * context_size, self.height, self.width, self.feature_channel))  # (batch_size * context_size, height, width, channel * embedding_dim)
-        obs_features = obs_features.permute(0, 3, 1, 2)  # (batch_size * context_size, channel * embedding_dim, height, width)
+        obs_features = torch.reshape(obs, (batch_size * context_size, self.height, self.width, self.channel))  # (batch_size * context_size, height, width, channel)
         obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 

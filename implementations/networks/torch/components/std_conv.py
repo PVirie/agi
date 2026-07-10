@@ -86,7 +86,69 @@ class ImpalaCNN(nn.Module):
         x = torch.flatten(x, start_dim=1)
         x = self.fc(x)
         return x
-    
+
+
+class MiniGridCNN(nn.Module):
+    """
+    A compact convolutional encoder for small symbolic grids (e.g. MiniGrid 7x7x3).
+
+    Mirrors the standard rl-starter-files / torch-ac MiniGrid model: the raw image
+    channels (object id, color, state) are fed directly as float values through a
+    stack of small 2x2 convolutions with a single max-pool, then flattened and
+    projected to `output_dims`.
+    """
+    def __init__(self, output_dims, input_channels, width, height):
+        super().__init__()
+
+        self.output_dims = output_dims
+        self.input_channels = input_channels
+        self.width = width
+        self.height = height
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(input_channels, 16, (2, 2)),
+            nn.ReLU(),
+            nn.MaxPool2d((2, 2)),
+            nn.Conv2d(16, 32, (2, 2)),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, (2, 2)),
+            nn.ReLU(),
+        )
+
+        # Compute flatten dim dynamically (2x2 convs + maxpool shrink the map)
+        with torch.no_grad():
+            dummy = torch.zeros(1, input_channels, height, width)
+            dummy = self.conv(dummy)
+            self.flatten_dim = dummy.reshape(1, -1).size(1)
+
+        self.fc = nn.Sequential(
+            nn.Linear(self.flatten_dim, output_dims),
+            nn.ReLU()
+        )
+
+
+    def reset_parameters(self):
+        # Initialization from https://github.com/ikostrikov/pytorch-a2c-ppo-acktr
+        def init_params(m):
+            classname = m.__class__.__name__
+            if classname.find("Linear") != -1:
+                m.weight.data.normal_(0, 1)
+                m.weight.data *= 1 / torch.sqrt(m.weight.data.pow(2).sum(1, keepdim=True))
+                if m.bias is not None:
+                    m.bias.data.fill_(0)
+
+        self.apply(init_params)
+
+
+    def forward(self, x):
+        # x: tensor of shape (B, H, W, C) holding raw grid encodings
+        x = x.float()
+        x = x.permute(0, 3, 1, 2)  # (B, C, H, W)
+        x = self.conv(x)
+        x = torch.flatten(x, start_dim=1)
+        x = self.fc(x)
+        return x
+
 
 class ImpalaBlock1D(nn.Module):
     """
@@ -192,3 +254,17 @@ if __name__ == "__main__":
     x = torch.randn(2, 3, 10)
     out = model(x)
     assert out.shape == (2, 256)
+
+    model = MiniGridCNN(output_dims=128, input_channels=3, width=7, height=7)
+    model.reset_parameters()
+    x = torch.randint(0, 256, (4, 7, 7, 3))
+    out = model(x)
+    assert out.shape == (4, 128)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer.zero_grad()
+    loss = out.sum()
+    loss.backward()
+    optimizer.step()
+
+    print("MiniGridCNN step successful.")

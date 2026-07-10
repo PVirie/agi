@@ -161,7 +161,7 @@ class Multi_Environment:
         direction = ['right', 'down', 'left', 'up'][obs['direction']]
         if self.include_inventory:
             inventory = obs['inventory']
-            internal_state_tokens = np.array(self.tokenizer([direction, inventory])[0], dtype=np.int32)
+            internal_state_tokens = np.array(self.tokenizer([f"{direction} {inventory}"])[0], dtype=np.int32)
         else:
             internal_state_tokens = np.array(self.tokenizer([direction])[0], dtype=np.int32)
 
