@@ -176,7 +176,7 @@ if __name__ == "__main__":
         mission_max_len=16,
         full_mdp=False,
         include_inventory=False,
-        position_bonus=True
+        position_bonus=False
     )
 
     mission_size = env.mission_max_len
