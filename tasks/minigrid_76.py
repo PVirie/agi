@@ -29,7 +29,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from implementations.agents import model_76
 from implementations.networks.torch.policy.minigrid import Projector
 from implementations.networks.torch.policy.minigrid import Policy_Core
-from implementations.learning_algorithms.torch.ppo_graph import PPO
+from implementations.learning_algorithms.torch.ppo_combine import PPO
+from implementations.learning_algorithms.torch.ppo_graph import PPO as PPO_Graph
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
@@ -133,6 +134,7 @@ if __name__ == "__main__":
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
     parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
     parser.add_argument("--scheme",                 "-sch", type=str, default="full", help="The scheme to use for the agent's decision making. Default is 'reactive'.")
+    parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     args = parser.parse_args()
 
@@ -157,7 +159,10 @@ if __name__ == "__main__":
     np.random.seed(20260625)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/minigrid_76_graph_size_{args.scale}_scheme_{args.scheme}"
+    experiment_path = f"{APP_ROOT}/experiments/minigrid_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
+    if args.st_train:
+        experiment_path += "_st"
+    
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -170,6 +175,7 @@ if __name__ == "__main__":
     tokenizer.load(f"{experiment_path}/parameters")
 
     game_ids=["MiniGrid-Fetch-8x8-N3-v0"] * 128
+    # game_ids=["MiniGrid-PutNear-8x8-N3-v0"] * 128
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -186,25 +192,25 @@ if __name__ == "__main__":
     
     if args.scale == "small":
         hidden_size = 128
-        embedding_dim = 32
+        embedding_dim = 8
         C = 4
         layers = [16, 32, 64]
         minibatch_size = 32
-        rollout_length = 256
+        rollout_length = 128
     elif args.scale == "medium":
         hidden_size = 128
-        embedding_dim = 32
+        embedding_dim = 8
         C = 8
         layers = [32, 64, 128, 128]
         minibatch_size = 32
-        rollout_length = 256
+        rollout_length = 128
     else:  # large
         hidden_size = 128
         embedding_dim = 32
         C = 16
         layers = [64, 128, 128, 256, 256]
         minibatch_size = 32
-        rollout_length = 256
+        rollout_length = 128
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -218,10 +224,16 @@ if __name__ == "__main__":
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
-    ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
-        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
-    )
+    if args.st_train:
+        ppo_learner = PPO_Graph(
+            policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
+            device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
+        )
+    else:
+        ppo_learner = PPO(
+            policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
+            device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
+        )
     memory = Graph_Memory(
         num_batches=len(game_ids),
         num_nodes=4096,
