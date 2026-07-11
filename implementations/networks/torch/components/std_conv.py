@@ -92,21 +92,31 @@ class MiniGridCNN(nn.Module):
     """
     A compact convolutional encoder for small symbolic grids (e.g. MiniGrid 7x7x3).
 
-    Mirrors the standard rl-starter-files / torch-ac MiniGrid model: the raw image
-    channels (object id, color, state) are fed directly as float values through a
-    stack of small 2x2 convolutions with a single max-pool, then flattened and
-    projected to `output_dims`.
+    Each input channel (object id, color, state) is a categorical map and is
+    embedded with its own embedding table. The per-channel embeddings are
+    concatenated along the feature dimension and fed through a stack of small
+    2x2 convolutions with a single max-pool (following the standard
+    rl-starter-files / torch-ac MiniGrid model), then flattened and projected
+    to `output_dims`.
     """
-    def __init__(self, output_dims, input_channels, width, height):
+    def __init__(self, output_dims, input_channels, width, height, vocab_size=256, embedding_dim=8):
         super().__init__()
 
         self.output_dims = output_dims
         self.input_channels = input_channels
         self.width = width
         self.height = height
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+
+        # Per-channel embedding tables (each channel has its own categorical vocab)
+        self.embeddings = nn.ModuleList([
+            nn.Embedding(vocab_size, embedding_dim) for _ in range(input_channels)
+        ])
+        feature_channels = input_channels * embedding_dim
 
         self.conv = nn.Sequential(
-            nn.Conv2d(input_channels, 16, (2, 2)),
+            nn.Conv2d(feature_channels, 16, (2, 2)),
             nn.ReLU(),
             nn.MaxPool2d((2, 2)),
             nn.Conv2d(16, 32, (2, 2)),
@@ -117,7 +127,7 @@ class MiniGridCNN(nn.Module):
 
         # Compute flatten dim dynamically (2x2 convs + maxpool shrink the map)
         with torch.no_grad():
-            dummy = torch.zeros(1, input_channels, height, width)
+            dummy = torch.zeros(1, feature_channels, height, width)
             dummy = self.conv(dummy)
             self.flatten_dim = dummy.reshape(1, -1).size(1)
 
@@ -128,6 +138,9 @@ class MiniGridCNN(nn.Module):
 
 
     def reset_parameters(self):
+        for embedding in self.embeddings:
+            embedding.reset_parameters()
+
         # Initialization from https://github.com/ikostrikov/pytorch-a2c-ppo-acktr
         def init_params(m):
             classname = m.__class__.__name__
@@ -141,9 +154,10 @@ class MiniGridCNN(nn.Module):
 
 
     def forward(self, x):
-        # x: tensor of shape (B, H, W, C) holding raw grid encodings
-        x = x.float()
-        x = x.permute(0, 3, 1, 2)  # (B, C, H, W)
+        # x: tensor of shape (B, H, W, C) with per-channel categorical indices
+        embedded = [self.embeddings[c](x[..., c].long()) for c in range(self.input_channels)]
+        x = torch.cat(embedded, dim=-1)  # (B, H, W, C * embedding_dim)
+        x = x.permute(0, 3, 1, 2)  # (B, C * embedding_dim, H, W)
         x = self.conv(x)
         x = torch.flatten(x, start_dim=1)
         x = self.fc(x)

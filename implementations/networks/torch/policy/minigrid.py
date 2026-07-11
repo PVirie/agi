@@ -76,7 +76,8 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         self.conv_layers = MiniGridCNN(
             output_dims=hidden_size, 
             input_channels=channel, 
-            width=width, height=height
+            width=width, height=height,
+            vocab_size=256, embedding_dim=embedding_dim
         )
 
         # internal_state, goal, inv, obs -> hidden
