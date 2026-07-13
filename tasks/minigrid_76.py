@@ -161,7 +161,7 @@ if __name__ == "__main__":
 
     experiment_path = f"{APP_ROOT}/experiments/minigrid_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
     if args.st_train:
-        experiment_path += "_st"
+        experiment_path += "_stmax_aicode"
     
     if args.reset:
         # clear the experiment path
@@ -174,8 +174,7 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids=["MiniGrid-Fetch-8x8-N3-v0"] * 128
-    # game_ids=["MiniGrid-PutNear-8x8-N3-v0"] * 128
+    game_ids = ["MiniGrid-Fetch-8x8-N3-v0"] * 64 + ["MiniGrid-PutNear-8x8-N3-v0"] * 64
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -188,7 +187,7 @@ if __name__ == "__main__":
     mission_size = env.mission_max_len
     inventory_size = 3 # inventory include 1 slot for current direction and 2 slots for items
     
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"minigrid/return" for gid in game_ids])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/return" for gid in game_ids])
     
     if args.scale == "small":
         hidden_size = 128
