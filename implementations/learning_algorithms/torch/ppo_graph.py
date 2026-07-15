@@ -42,6 +42,10 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.update_epochs = 4
         self.minibatch_size = minibatch_size
 
+        # How causal credit received by a step is aggregated across the future steps it caused.
+        # 'amax' keeps the best future return; 'mean' averages them.
+        self.causal_reduce = 'mean'  # one of {'amax', 'mean'}
+
         self.all_parameters = list(self.policy_model.parameters())
         self.optimizer = optim.Adam(self.all_parameters, lr=self.lr, eps=1e-5)
 
@@ -122,12 +126,29 @@ class PPO(RL_Learner, Safe_nn_Module):
             values = values_with_last[:, :-1, ...]  # (batch_size, context_length)
 
             # Bootstrap value using standard GAE, with causal credit assignment merged into the
-            # same backward pass.  causal_returns[b, c] accumulates the max return seen from any
-            # future step that c caused.  Because causes always point backward (c < t), by the
-            # time the loop reaches c every future t > c has already propagated its credit, so
-            # causal_returns[:, c] is fully populated when it is consumed.
-            causal_returns = torch.full((batch_size, sequence_size), float('-inf'), device=self.device) \
-                if b_causes is not None else None
+            # same backward pass.  For every step t we propagate its effective return back to all
+            # past causes c (c < t).  Because causes always point backward, by the time the loop
+            # reaches c every future t > c has already deposited its credit, so c's aggregated
+            # causal credit is fully populated when it is consumed.
+            #
+            # Two aggregation modes are supported via self.causal_reduce:
+            #   'amax' - a cause keeps the best (max) return among the future steps it caused.
+            #   'mean' - a cause keeps the average return among the future steps it caused.
+            # For 'amax' we keep a single running buffer initialised to -inf (the max identity).
+            # For 'mean' we keep running sum/count buffers and divide on read, so that invalid
+            # cause slots can be excluded from the average without corrupting it.
+            if b_causes is not None:
+                use_mean = (self.causal_reduce == 'mean')
+                if use_mean:
+                    causal_sum = torch.zeros((batch_size, sequence_size), device=self.device)
+                    causal_count = torch.zeros((batch_size, sequence_size), device=self.device)
+                    causal_returns = None
+                else:
+                    causal_returns = torch.full((batch_size, sequence_size), float('-inf'), device=self.device)
+                    causal_sum = causal_count = None
+            else:
+                use_mean = False
+                causal_returns = causal_sum = causal_count = None
             advantages = []
             lastgaelam = torch.zeros(batch_size).to(self.device)
             for t in reversed(range(sequence_size)):
@@ -138,20 +159,40 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 standard_return = lastgaelam + values[:, t]             # (batch_size,)
 
-                # Take the best of the standard return and any causal credit received from
-                # future steps, then propagate that effective return back to all past causes
-                # of t.  Propagating the effective (post-max) value means transitive chains
+                # Take the best/average of the standard return and any causal credit received from
+                # future steps, then propagate that effective return back to all past causes of t.
+                # Propagating the effective (post-aggregation) value means transitive chains
                 # (c caused t, t caused t') are handled without an extra pass.
-                if causal_returns is not None:
-                    effective_return = torch.max(standard_return, causal_returns[:, t])
-                    # Vectorised scatter-max: propagate effective_return[b] to every valid
-                    # cause position c for each batch item b, in one operation.
+                if b_causes is not None:
                     all_causes = b_causes[:, t, :]                              # (batch_size, cause_size)
                     valid_mask = (all_causes >= 0) & (all_causes < sequence_size)
                     safe_causes = all_causes.clamp(0, sequence_size - 1)        # prevent OOB on scatter
-                    src = effective_return[:, None].expand(-1, b_causes.shape[2])   # (batch_size, cause_size)
-                    src = src.masked_fill(~valid_mask, float('-inf'))            # invalid slots → -inf (no-op under max)
-                    causal_returns = causal_returns.scatter_reduce(1, safe_causes, src, reduce='amax', include_self=True)
+
+                    if use_mean:
+                        # Read aggregated causal credit for t: mean over caused future steps, or
+                        # the standard return when no future step deposited any credit yet.
+                        count_t = causal_count[:, t]
+                        mean_credit = torch.where(
+                            count_t > 0,
+                            causal_sum[:, t] / count_t.clamp(min=1),
+                            standard_return,
+                        )
+                        effective_return = torch.max(standard_return, mean_credit)
+
+                        # Vectorised scatter-add of sum and count; invalid slots add 0 / 0.
+                        src = effective_return[:, None].expand(-1, b_causes.shape[2])   # (batch_size, cause_size)
+                        src_val = src.masked_fill(~valid_mask, 0.0)
+                        ones = valid_mask.float()
+                        causal_sum = causal_sum.scatter_add(1, safe_causes, src_val)
+                        causal_count = causal_count.scatter_add(1, safe_causes, ones)
+                    else:
+                        effective_return = torch.max(standard_return, causal_returns[:, t])
+
+                        # Vectorised scatter-max: propagate effective_return[b] to every valid
+                        # cause position c for each batch item b, in one operation.
+                        src = effective_return[:, None].expand(-1, b_causes.shape[2])   # (batch_size, cause_size)
+                        src = src.masked_fill(~valid_mask, float('-inf'))          # invalid slots → -inf (no-op under max)
+                        causal_returns = causal_returns.scatter_reduce(1, safe_causes, src, reduce='amax', include_self=True)
                 else:
                     effective_return = standard_return
 

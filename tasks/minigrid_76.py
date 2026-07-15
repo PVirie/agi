@@ -161,7 +161,7 @@ if __name__ == "__main__":
 
     experiment_path = f"{APP_ROOT}/experiments/minigrid_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
     if args.st_train:
-        experiment_path += "_stmax_aicode"
+        experiment_path += "_stmean_aicode"
     
     if args.reset:
         # clear the experiment path
@@ -204,10 +204,10 @@ if __name__ == "__main__":
         minibatch_size = 32
         rollout_length = 128
     else:  # large
-        hidden_size = 128
-        embedding_dim = 32
-        C = 16
-        layers = [64, 128, 128, 256, 256]
+        hidden_size = 256
+        embedding_dim = 16
+        C = 8
+        layers = [32, 64, 128, 128]
         minibatch_size = 32
         rollout_length = 128
 
