@@ -2,6 +2,64 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from implementations.networks.torch.components.base import init_weights
+
+
+class BasicResidualBlock(nn.Module):
+    """Causal residual block with left zero-padding to preserve sequence length.
+    kernel_size=2: output at t uses inputs [t-dilation, t]."""
+    def __init__(self, d_model, dilation):
+        super().__init__()
+        self.dilation = dilation
+        self.conv1 = nn.Conv1d(d_model, d_model, kernel_size=2, dilation=dilation, padding=0)
+        self.conv2 = nn.Conv1d(d_model, d_model, kernel_size=1)
+        self.activation = nn.ReLU()
+
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.conv1.weight, nonlinearity='relu')
+        nn.init.zeros_(self.conv1.bias)
+        nn.init.kaiming_uniform_(self.conv2.weight, nonlinearity='relu')
+        nn.init.zeros_(self.conv2.bias)
+
+    def forward(self, x):
+        out = self.activation(x)
+        out = F.pad(out, (self.dilation, 0))  # left-only pad to keep length
+        out = self.conv1(out)
+        out = self.activation(out)
+        out = self.conv2(out)
+        return x + out
+
+
+class BasicWavenet(nn.Module):
+    """Causal WaveNet (kernel_size=2, original style) with left zero-padding.
+
+    Dilations double each layer: 1, 2, 4, ..., 2^(num_layers-1).
+    Total causal receptive field = 2^num_layers positions.
+    Input and output are both (B, L, D).
+
+    Args:
+        d_model: channel dimension.
+        num_layers: number of dilated residual blocks.
+    """
+    def __init__(self, d_model=64, num_layers=10):
+        super().__init__()
+        self.residual_blocks = nn.ModuleList([
+            BasicResidualBlock(d_model, 2 ** i)
+            for i in range(num_layers)
+        ])
+
+    def reset_parameters(self):
+        for block in self.residual_blocks:
+            block.reset_parameters()
+
+    def forward(self, x):
+        # x: (B, L, D)
+        x = x.transpose(1, 2)   # (B, D, L)
+        for block in self.residual_blocks:
+            x = block(x)
+        x = x.transpose(1, 2)   # (B, L, D)
+        return x
+
 
 class ResidualBlock(nn.Module):
     def __init__(self, d_model, kernel_size, dilation):
@@ -92,3 +150,12 @@ if __name__ == "__main__":
             out_modified = model_history(input_modified)
             assert torch.allclose(out_history[0, t, :], out_modified[0, t, :], atol=1e-4)
     print("History constraint test successful.")
+
+    # test BasicWavenet input/output shape
+    for batch, seq_len, d_model, num_layers in [(1, 16, 32, 4), (4, 100, 64, 10), (2, 1, 8, 3)]:
+        model_basic = BasicWavenet(d_model=d_model, num_layers=num_layers).to(device)
+        model_basic.eval()
+        x = torch.randn(batch, seq_len, d_model).to(device)
+        y = model_basic(x)
+        assert y.shape == x.shape, f"Shape mismatch: input {x.shape} vs output {y.shape}"
+    print("BasicWavenet shape test successful.")

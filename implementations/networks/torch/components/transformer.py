@@ -7,13 +7,15 @@ from implementations.networks.torch.components.base import init_weights
 
 
 class InstructionTransformer(nn.Module):
-    def __init__(self, input_dim, d_model, nhead, num_layers, max_len, mlp_ratio=2, dropout=0.01):
+    def __init__(self, input_dim, d_model, nhead, num_layers, max_len, mlp_ratio=2, dropout=0.01, use_pe=False):
         super().__init__()
         self.d_model = d_model
+        self.use_pe = use_pe
         
         # 1. Positional Encoding: A learned parameter for each position up to max_len
         # Shape: (1, max_len, d_model) for easy broadcasting
-        # self.pos_embedding = nn.Parameter(torch.zeros(1, max_len, d_model))
+        if self.use_pe:
+            self.pos_embedding = nn.Parameter(torch.zeros(1, max_len, d_model))
 
         self.dropout = nn.Dropout(p=dropout)
 
@@ -34,7 +36,8 @@ class InstructionTransformer(nn.Module):
         self.apply(init_weights)
 
         # init positional encoding to small values to prevent early saturation
-        # trunc_normal_(self.pos_embedding, std=0.02)
+        if self.use_pe:
+            trunc_normal_(self.pos_embedding, std=0.02)
 
 
     def forward(self, x, mask):
@@ -50,8 +53,9 @@ class InstructionTransformer(nn.Module):
         x_reshaped = x.view(B * S, L, E)
         x_reshaped = self.input_projection(x_reshaped)
         
-        # remove positional encoding per latest knowledge
-        # x_reshaped = x_reshaped + self.pos_embedding[:, :L, :]
+        # Add positional encoding if enabled
+        if self.use_pe:
+            x_reshaped = x_reshaped + self.pos_embedding[:, :L, :]
         x_reshaped = self.dropout(x_reshaped)
         
         # Prepare Mask (Convert 1/0 to True/False for PyTorch)
