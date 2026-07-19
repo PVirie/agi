@@ -17,6 +17,7 @@ from utilities.package_install import install
 
 install("minigrid")
 install("gymnasium[other]")
+install("colorama")
 
 from utilities import scatter
 from utilities.minigrid.environments import Multi_Environment
