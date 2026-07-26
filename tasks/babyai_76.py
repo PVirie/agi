@@ -89,9 +89,9 @@ async def run(env, agent, rollout_length=16, verbose=False):
                     session_return_update_alpha * total_returns[i]
                     + (1 - session_return_update_alpha) * total_score
                 )
-                stat_row.extend([infos[i]["episode"]["r"]])
+                stat_row.extend([infos[i]["episode"]["r"], infos[i]["episode"]["l"]])
             else:
-                stat_row.extend([None])
+                stat_row.extend([None, None])
         stat_recorder.record(stat_row)
 
         steps += 1
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids = ["BabyAI-MiniBossLevel-v0"] * 256
+    game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     mission_size = env.mission_max_len
     inventory_size = 3 # inventory include 1 slot for current direction and 2 slots for items
     
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/return" for gid in game_ids])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "length"]])
     
     if args.scale == "small":
         hidden_size = 128
@@ -203,14 +203,14 @@ if __name__ == "__main__":
         C = 8
         layers = [32, 64, 128, 128]
         minibatch_size = 32
-        rollout_length = 256
+        rollout_length = 128
     else:  # large
         hidden_size = 256
         embedding_dim = 32
         C = 8
         layers = [32, 64, 128, 128]
         minibatch_size = 32
-        rollout_length = 256
+        rollout_length = 128
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
