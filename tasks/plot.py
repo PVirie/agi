@@ -239,7 +239,15 @@ if __name__ == "__main__":
         # line start start from solid and change frequency of dot and dash to make it more distinguishable
         linestyle=['-', (0, (5, 1)), (0, (3, 1)), (0, (1, 1)), (0, (5, 1, 3, 1)), (0, (3, 1, 1, 1)), (0, (1, 1, 1, 1)), (0, (5, 1, 1, 1, 1, 1)), (0, (3, 1, 3, 1, 1, 1)), (0, (3, 1, 1, 1, 3, 1))],
     )
-    fig, axs = plt.subplots(3, 1, figsize=(9, 16))
+
+    # calculate the number of unique metrics across all games to determine the number of subplots needed
+    unique_metrics = set()
+    for k, (game_id, game_data) in enumerate(data.items()):
+        for j, (metric_name, stats) in enumerate(game_data.items()):
+            unique_metrics.add(metric_name)
+    num_metrics = len(unique_metrics)
+    fig, axs = plt.subplots(num_metrics, 1, figsize=(9, 16))
+
     for ax in axs:
         ax.set_prop_cycle(style_cycler)
     for k, (game_id, game_data) in enumerate(data.items()):
