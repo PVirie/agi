@@ -247,6 +247,8 @@ if __name__ == "__main__":
             unique_metrics.add(metric_name)
     num_metrics = len(unique_metrics)
     fig, axs = plt.subplots(num_metrics, 1, figsize=(9, 16))
+    if num_metrics == 1:
+        axs = [axs]
 
     for ax in axs:
         ax.set_prop_cycle(style_cycler)
