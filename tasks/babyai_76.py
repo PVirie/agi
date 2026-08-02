@@ -160,7 +160,7 @@ if __name__ == "__main__":
     np.random.seed(20260718)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_76_multi_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
     if args.st_train:
         experiment_path += "_stmean_aicode"
     
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
+    game_ids = ["BabyAI-MiniBossLevel-v0"] * 256 + ["BabyAI-GoToLocalS8N7-v0"] * 128 + ["BabyAI-UnlockPickupDist-v0"] * 128
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -195,21 +195,21 @@ if __name__ == "__main__":
         embedding_dim = 8
         C = 4
         layers = [16, 32, 64]
-        minibatch_size = 32
+        minibatch_size = 64
         rollout_length = 128
     elif args.scale == "medium":
         hidden_size = 128
         embedding_dim = 16
         C = 8
         layers = [32, 64, 128, 128]
-        minibatch_size = 32
+        minibatch_size = 64
         rollout_length = 128
     else:  # large
         hidden_size = 256
         embedding_dim = 32
         C = 8
         layers = [32, 64, 128, 128]
-        minibatch_size = 32
+        minibatch_size = 64
         rollout_length = 128
 
     parameters_path = f"{experiment_path}/parameters"
