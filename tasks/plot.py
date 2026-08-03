@@ -156,6 +156,9 @@ def parse_statistic_file(file_path_generator, aggregate_steps=1000, N=50):
                 game_id = f"{sup}/" + "/".join(parts[:-1])
                 info.append((metric_name, game_id))
 
+            # unique (metric, game) pairs; duplicate columns must not add extra datapoints
+            unique_info = list(dict.fromkeys(info))
+
             stats = {}
             for metric_name, game_id in info:
                 if game_id not in game_data:
@@ -171,7 +174,7 @@ def parse_statistic_file(file_path_generator, aggregate_steps=1000, N=50):
 
             def add_datapoint():
                 # compute mean and variance for the previous batch
-                for metric_name, game_id in info:
+                for metric_name, game_id in unique_info:
                     stat = stats[game_id][metric_name]
                     count = len(stat)
                     if count > 0:
