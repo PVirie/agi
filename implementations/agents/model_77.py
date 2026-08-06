@@ -166,7 +166,14 @@ class Model_77(Agent):
             edge_1=position[:, 0],
             edge_2=position[:, 1]
         )
-        self.last_cause_times.append(self.graph_memory.get_cause_times())
+        # present context and content exclusively based on idle state:
+        # idle -> only context (content zeroed), not idle -> only content (context zeroed)
+        idle_mask = np.array(last_idles, dtype=bool).reshape(batch_size, 1)
+
+        # cause time is only meaningful while context is active (idle); mark inactive with -1
+        cause_times = self.graph_memory.get_cause_times()
+        cause_times = np.where(idle_mask, cause_times, -1)
+        self.last_cause_times.append(cause_times)
 
         # update reward by mem_op_results (0 for True, -1 for False)
         reward += np.array([0 if res else -1 for res in mem_op_results])
@@ -174,9 +181,6 @@ class Model_77(Agent):
         context = self.graph_memory.get_node_context()
         context = context.reshape(batch_size, -1) # reshape to (batch_size, context_size)
 
-        # present context and content exclusively based on idle state:
-        # idle -> only context (content zeroed), not idle -> only content (context zeroed)
-        idle_mask = np.array(last_idles, dtype=bool).reshape(batch_size, 1)
         context = context * idle_mask
         content = content * (~idle_mask)
 
