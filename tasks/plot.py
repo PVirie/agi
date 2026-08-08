@@ -3,6 +3,7 @@ import sys
 import logging
 from datetime import datetime
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 from tkinter import filedialog
 import matplotlib.pyplot as plt
 from matplotlib import lines, markers
@@ -90,6 +91,84 @@ def compute_common_part(file_paths, separator=os.sep, suffix=False):
     return separator.join(common_part)
 
 
+def parse_single_file(sup, file_path, aggregate_steps, N):
+    logging.info(f"Parsing file: {sup}")
+    local_data = {}
+    with open(file_path, 'rb') as f:
+        reader = csv.reader(f)
+        header = next(reader)
+
+        # parse header to get metric names and game ids
+        info = []
+        for col in header:
+            parts = col.split('/')
+            if len(parts) < 2:
+                logging.warning(f"Unexpected column name format: {col}")
+                continue
+            metric_name = parts[-1]
+            game_id = f"{sup}/" + "/".join(parts[:-1])
+            info.append((metric_name, game_id))
+
+        # unique (metric, game) pairs; duplicate columns must not add extra datapoints
+        unique_info = list(dict.fromkeys(info))
+
+        stats = {}
+        for metric_name, game_id in info:
+            if game_id not in local_data:
+                local_data[game_id] = {}
+                stats[game_id] = {}
+            if metric_name not in local_data[game_id]:
+                local_data[game_id][metric_name] = {
+                    "mean": [],
+                    "var": []
+                }
+                stats[game_id][metric_name] = []
+
+
+        def add_datapoint(j):
+            # compute mean and variance for the previous batch
+            for metric_name, game_id in unique_info:
+                stat = stats[game_id][metric_name]
+                count = len(stat)
+                if count > 0:
+                    sum_stat = sum(stat)
+                    sum_stat2 = sum(x ** 2 for x in stat)
+                    mean = sum_stat / count
+                    var = (sum_stat2 / count) - (mean * mean)
+                    local_data[game_id][metric_name]["mean"].append(mean)
+                    local_data[game_id][metric_name]["var"].append(var)
+                else:
+                    logging.warning(f"No valid data for metric '{metric_name}' and game '{game_id}' in batch ending at row {j}")
+                    local_data[game_id][metric_name]["mean"].append(0)
+                    local_data[game_id][metric_name]["var"].append(0)
+
+
+        for j, row in enumerate(reader):
+            # first append 0 for each row
+            if j % aggregate_steps == 0 and j > 0:
+                add_datapoint(j)
+
+            for i, value in enumerate(row):
+                if i >= len(info):
+                    logging.warning(f"More columns than expected in row: {row}")
+                    break
+                metric_name, game_id = info[i]
+                try:
+                    x = float(value)
+                except ValueError:
+                    # logging.warning(f"Non-numeric value '{value}' for metric '{metric_name}' and game '{game_id}' in row: {row}")
+                    continue
+
+                stats[game_id][metric_name].append(x)
+                while len(stats[game_id][metric_name]) > N:
+                    stats[game_id][metric_name].pop(0)
+        else:
+            # finalize the last batch if it is not complete
+            add_datapoint(len(local_data))
+
+    return local_data
+
+
 def parse_statistic_file(file_path_generator, aggregate_steps=1000, N=50):
     """
     The input is a csv file with columns: namespace/game_id/metric_name, ...
@@ -138,80 +217,12 @@ def parse_statistic_file(file_path_generator, aggregate_steps=1000, N=50):
         unique_file_paths.append((sup, file_path))
 
 
+    # parse files in parallel; each file maps to a unique set of game_ids (prefixed by sup)
     game_data = {}
-    for (sup, file_path) in unique_file_paths:
-        logging.info(f"Parsing file: {sup}")
-        with open(file_path, 'rb') as f:
-            reader = csv.reader(f)
-            header = next(reader)
-
-            # parse header to get metric names and game ids
-            info = []
-            for col in header:
-                parts = col.split('/')
-                if len(parts) < 2:
-                    logging.warning(f"Unexpected column name format: {col}")
-                    continue
-                metric_name = parts[-1]
-                game_id = f"{sup}/" + "/".join(parts[:-1])
-                info.append((metric_name, game_id))
-
-            # unique (metric, game) pairs; duplicate columns must not add extra datapoints
-            unique_info = list(dict.fromkeys(info))
-
-            stats = {}
-            for metric_name, game_id in info:
-                if game_id not in game_data:
-                    game_data[game_id] = {}
-                    stats[game_id] = {}
-                if metric_name not in game_data[game_id]:
-                    game_data[game_id][metric_name] = {
-                        "mean": [],
-                        "var": []
-                    }
-                    stats[game_id][metric_name] = []
-
-
-            def add_datapoint():
-                # compute mean and variance for the previous batch
-                for metric_name, game_id in unique_info:
-                    stat = stats[game_id][metric_name]
-                    count = len(stat)
-                    if count > 0:
-                        sum_stat = sum(stat)
-                        sum_stat2 = sum(x ** 2 for x in stat)
-                        mean = sum_stat / count
-                        var = (sum_stat2 / count) - (mean * mean)
-                        game_data[game_id][metric_name]["mean"].append(mean)
-                        game_data[game_id][metric_name]["var"].append(var)
-                    else:
-                        logging.warning(f"No valid data for metric '{metric_name}' and game '{game_id}' in batch ending at row {j}")
-                        game_data[game_id][metric_name]["mean"].append(0)
-                        game_data[game_id][metric_name]["var"].append(0)
-
-
-            for j, row in enumerate(reader):
-                # first append 0 for each row
-                if j % aggregate_steps == 0 and j > 0:
-                    add_datapoint()
-
-                for i, value in enumerate(row):
-                    if i >= len(info):
-                        logging.warning(f"More columns than expected in row: {row}")
-                        break
-                    metric_name, game_id = info[i]
-                    try:
-                        x = float(value)
-                    except ValueError:
-                        # logging.warning(f"Non-numeric value '{value}' for metric '{metric_name}' and game '{game_id}' in row: {row}")
-                        continue
-
-                    stats[game_id][metric_name].append(x)
-                    while len(stats[game_id][metric_name]) > N:
-                        stats[game_id][metric_name].pop(0)
-            else:
-                # finalize the last batch if it is not complete
-                add_datapoint()
+    with ProcessPoolExecutor(max_workers=min(len(unique_file_paths), os.cpu_count() or 1)) as executor:
+        futures = [executor.submit(parse_single_file, sup, file_path, aggregate_steps, N) for (sup, file_path) in unique_file_paths]
+        for future in futures:
+            game_data.update(future.result())
 
     return game_data
 
