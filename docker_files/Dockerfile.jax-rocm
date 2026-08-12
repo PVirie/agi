@@ -11,11 +11,8 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 WORKDIR /app
 
-# install jax with cuda support https://github.com/jax-ml/jax/blob/main/build/rocm/README.md
-RUN pip3 install https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.8.2/jax_rocm7_pjrt-0.8.2+rocm7.1.1-py3-none-manylinux_2_28_x86_64.whl \
-    https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.8.2/jax_rocm7_plugin-0.8.2+rocm7.1.1-cp312-cp312-manylinux_2_28_x86_64.whl \
-    https://github.com/ROCm/rocm-jax/releases/download/rocm-jax-v0.8.2/jaxlib-0.8.2+rocm7-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl \
-    jax==0.8.2 
+# install jax with ROCM support https://github.com/jax-ml/jax/blob/main/build/rocm/README.md
+RUN pip3 install --upgrade jax[rocm7-local]
 RUN pip3 install flax optax orbax-checkpoint
 RUN pip3 install debugpy
 
