@@ -139,6 +139,7 @@ if __name__ == "__main__":
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--sie",                    "-sie",   action="store_true", help="Use separate internal-external attention (model 77). Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
+    parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
     args = parser.parse_args()
 
 
@@ -167,6 +168,8 @@ if __name__ == "__main__":
         experiment_path += "_stmean_aicode"
     if args.sie:
         experiment_path += "_sie"
+    if args.low_var:
+        experiment_path += "_lv"
 
     if args.reset:
         # clear the experiment path
@@ -232,7 +235,8 @@ if __name__ == "__main__":
         ppo_learner = PPO_Graph(
             policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
             device=device, persistence_path=parameters_path,
-            lr=1e-4, minibatch_size=minibatch_size
+            lr=1e-4, minibatch_size=minibatch_size,
+            gae_lambda=0.95 if not args.low_var else 0.90
         )
     else:
         ppo_learner = PPO(
