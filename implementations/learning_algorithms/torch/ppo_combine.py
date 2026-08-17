@@ -19,7 +19,8 @@ class PPO(RL_Learner, Safe_nn_Module):
     def __init__(self, 
                  policy_model: Policy_Value_Network, 
                  device, persistence_path=None, 
-                 lr=3e-4, minibatch_size=8):
+                 lr=3e-4, minibatch_size=8,
+                 gae_lambda=None):
         """
         PPO: Proximal Policy Optimization Algorithm
 
@@ -30,7 +31,7 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         self.lr = lr
         self.gamma = 0.99
-        self.gae_lambda = 0.95
+        self.gae_lambda = 0.95 if gae_lambda is None else gae_lambda
         self.clip_coef = 0.2
         self.norm_adv = True
         self.clip_vloss = True

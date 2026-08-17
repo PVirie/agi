@@ -242,7 +242,8 @@ if __name__ == "__main__":
         ppo_learner = PPO(
             policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
             device=device, persistence_path=parameters_path,
-            lr=1e-4, minibatch_size=minibatch_size
+            lr=1e-4, minibatch_size=minibatch_size,
+            gae_lambda=0.95 if not args.low_var else 0.90
         )
     memory = Graph_Memory(
         num_batches=len(game_ids),
