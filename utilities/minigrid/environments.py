@@ -98,7 +98,9 @@ class Multi_Environment:
                         "r": self.total_return[i],
                         "aug_r": self.total_aux_return[i],
                         "l": self.total_length[i],
-                        "t": time.perf_counter() - self.total_duration[i]
+                        "t": time.perf_counter() - self.total_duration[i],
+                        # MiniGrid/BabyAI only emit a positive reward (1 - 0.9*steps/max_steps) on task completion
+                        "s": 1.0 if self.total_return[i] > 0 else 0.0
                     }
                 }
                 self.total_return[i] = 0
