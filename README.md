@@ -2,10 +2,10 @@
 
 An attempt to solve AGI.
 
-| Generation | Model Name             | Description                |
-| ---------- | ---------------------- | -------------------------- |
-| LXXIV      | Graph Automaton        | Full Quest Graph Automaton |
-| LXXVI      | Cognitive Cartographer | Cognitive Map Building     |
+| Generation | Model Name      | Description                                                 |
+| ---------- | --------------- | ----------------------------------------------------------- |
+| LXXIV      | Graph Automaton | Full Quest Graph Automaton                                  |
+| LXXVI      | Graph Hybrid    | 74 with Concatenated Observations (for general RL problems) |
 
 ## Prerequisites
 
