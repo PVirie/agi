@@ -217,7 +217,7 @@ if __name__ == "__main__":
         embedding_dim = 32
         C = 8
         layers = [32, 64, 128, 128]
-        minibatch_size = 32
+        minibatch_size = 12 # 30GB/32GB VRAM
         rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
