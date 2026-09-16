@@ -183,7 +183,7 @@ if __name__ == "__main__":
     tokenizer.load(f"{experiment_path}/parameters")
 
     # game_ids = ["BabyAI-MiniBossLevel-v0"] * 256 + ["BabyAI-GoToLocalS8N7-v0"] * 128 + ["BabyAI-UnlockPickupDist-v0"] * 128
-    game_ids = ["BabyAI-MiniBossLevel-v0"] * 256
+    game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         embedding_dim = 32
         C = 8
         layers = [32, 64, 128, 128]
-        minibatch_size = 16
+        minibatch_size = 32
         rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"

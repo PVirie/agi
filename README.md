@@ -17,7 +17,7 @@ An attempt to solve AGI.
 2.  Accelerator support: Follow the installation guide for your machine configuration. I would recommend using Linux for the best experience.
     1. CUDA support
         - Nvidia driver version 555.xx or higher (for CUDA 12.5.1+)
-        - Linux, install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+        - Linux, install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), then configure docker to use the NVIDIA runtime.
         - Windows, follow [this guide](https://docs.docker.com/desktop/gpu/) to enable gpu support in docker desktop.
     2. ROCm support
         - Install [ROCm-kernel (amdgpu-dkms)](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html)
