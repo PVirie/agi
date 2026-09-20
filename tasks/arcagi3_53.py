@@ -101,8 +101,8 @@ async def run(env, agent, rollout_length=16, verbose=False):
             break
 
         steps += 1
-        if steps % (rollout_length) == 0:
-            ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
+        # constant LR on purpose: elapsed_time restarts each session, so a wall-clock
+        # anneal would sawtooth across resumed runs
 
         if (steps % (rollout_length) == 0 or has_event) and verbose:
             log_str = "; ".join([s.short_str() for s in states])

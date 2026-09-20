@@ -98,8 +98,8 @@ async def run(env, agent, rollout_length=16, verbose=False):
         if any([r != 0 for r in rewards]) and verbose:
             logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in rewards])}")
 
-        if steps % rollout_length == 0:
-            ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
+        # constant LR on purpose: elapsed_time restarts each session, so a wall-clock
+        # anneal would sawtooth across resumed runs
 
         if steps % (rollout_length * 2) == 0 or should_stop:
             logging.info(f"{steps}| Returns: {', '.join([format_float(s) for s in total_returns])}")

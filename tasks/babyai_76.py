@@ -106,8 +106,8 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
         if any([r != 0 for r in rewards]) and verbose:
             logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in rewards])}")
 
-        if steps % rollout_length == 0:
-            ppo_learner.update_learning_rate(time=elapsed_time / max_running_time)
+        # constant LR on purpose: a wall-clock anneal would give the arms different schedules
+        # at the same environment step, which is the axis they are compared on
 
         if steps % (rollout_length * 2) == 0 or should_stop:
             logging.info(f"{steps}| Returns: {', '.join([format_float(s) for s in total_returns])}")
@@ -120,7 +120,7 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
         if steps % (rollout_length * 10) == 0:
             # compute estimated time left
-            logging.info(f"Completed {steps} steps.")
+            logging.info(f"Completed {steps} steps, {env.total_env_steps()} environment steps.")
             logging.info(f"Current elapsed time: {elapsed_time:.2f} seconds.")
             logging.info(f"Expected time left: {max_running_time - elapsed_time:.2f} seconds.")
 
@@ -128,7 +128,8 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
             stat_recorder.write()
 
         if should_stop:
-            logging.info("Max running time reached, stopping the experiment.")
+            # arms differ in throughput, so this total is the truncation point for comparison
+            logging.info(f"Max running time reached after {env.total_env_steps()} environment steps, stopping the experiment.")
             break
 
     env.close()
