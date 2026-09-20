@@ -46,9 +46,9 @@ def format_float(f):
     else:
         return "{: .1f}".format(f)
 
-async def run(env, agent, rollout_length=16, verbose=False):
+async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
-    observations, info = env.reset()
+    observations, info = env.reset(seed=env_seed)
     rewards = [np.float32(0) for _ in observations]
     last_idle = [False for _ in observations]
     last_done = [False for _ in observations]
@@ -91,14 +91,15 @@ async def run(env, agent, rollout_length=16, verbose=False):
                     + (1 - session_return_update_alpha) * total_score
                 )
                 stat_row.extend([
+                    infos[i]["episode"]["e"],
                     infos[i]["episode"]["r"], 
                     infos[i]["episode"]["l"], 
                     infos[i]["episode"]["s"],
                     metrics[0][i],
-                    metrics[1][i]
+                    metrics[1][i],
                 ])
             else:
-                stat_row.extend([None, None, None, None, None])
+                stat_row.extend([None, None, None, None, None, None])
         stat_recorder.record(stat_row)
 
         steps += 1
@@ -163,9 +164,10 @@ if __name__ == "__main__":
     logging.info(f"The experiment will be run for {hours} hours, {minutes} minutes, and {seconds} seconds.")
 
     # For reproducibility (https://docs.pytorch.org/docs/stable/notes/randomness.html)
-    random.seed(20260625)  
-    torch.manual_seed(20260625)
-    np.random.seed(20260625)
+    seed = 20260625
+    random.seed(seed)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
     experiment_path = f"{APP_ROOT}/experiments/minigrid_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
@@ -197,7 +199,7 @@ if __name__ == "__main__":
     mission_size = env.mission_max_len
     inventory_size = 3 # inventory include 1 slot for current direction and 2 slots for items
     
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "length", "success", "edges_per_node", "graph_nodes"]])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "success", "edges_per_node", "graph_nodes"]])
     
     if args.scale == "small":
         hidden_size = 128
@@ -264,4 +266,4 @@ if __name__ == "__main__":
         scheme=model_module.Scheme(args.scheme)
     )
 
-    asyncio.run(run(env, agent, rollout_length, verbose=not args.silent))
+    asyncio.run(run(env, agent, rollout_length, verbose=not args.silent, env_seed=seed))

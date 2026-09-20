@@ -58,19 +58,22 @@ class Multi_Environment:
         self.total_return = [0] * total
         self.total_aux_return = [0] * total
         self.total_length = [0] * total
+        self.cumulative_length = [0] * total # env transitions since the run started; never reset per episode
         self.total_duration = [0] * total # store the start time of the episode for each env, misnoming but consistent with other statistics
 
 
     def reset(self, seed=None):
             # return self.envs.reset(seed=seed)
         for i, env in enumerate(self.envs):
-            obs, info = env.reset(seed=seed)
+            # offset per env: a shared seed would make every env replay the same episode
+            obs, info = env.reset(seed=None if seed is None else seed + i)
             self.return_obs[i] = self.obs_to_object(obs)
             self.return_infos[i] = None
 
             self.total_return[i] = 0
             self.total_aux_return[i] = 0
             self.total_length[i] = 0
+            self.cumulative_length[i] = 0
             self.total_duration[i] = time.perf_counter()
         return self.return_obs, self.return_infos
 
@@ -91,6 +94,7 @@ class Multi_Environment:
             self.total_return[i] += info.get('original_reward', reward) if info else reward
             self.total_aux_return[i] += reward
             self.total_length[i] += 1
+            self.cumulative_length[i] += 1
             if termination or truncation:
                 obs, _ = env.reset() # You must manually reset!
                 self.return_infos[i] = {
@@ -98,6 +102,7 @@ class Multi_Environment:
                         "r": self.total_return[i],
                         "aug_r": self.total_aux_return[i],
                         "l": self.total_length[i],
+                        "e": self.cumulative_length[i],
                         "t": time.perf_counter() - self.total_duration[i],
                         # MiniGrid/BabyAI only emit a positive reward (1 - 0.9*steps/max_steps) on task completion
                         "s": 1.0 if self.total_return[i] > 0 else 0.0
@@ -109,6 +114,10 @@ class Multi_Environment:
                 self.total_duration[i] = time.perf_counter()
             self.return_obs[i] = self.obs_to_object(obs)
         return self.return_obs, self.return_rewards, self.return_terminations, self.return_truncations, self.return_infos
+
+
+    def total_env_steps(self):
+        return sum(self.cumulative_length)
 
 
     def get_available_actions(self):
