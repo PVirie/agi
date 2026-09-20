@@ -215,13 +215,15 @@ if __name__ == "__main__":
         minibatch_size = 64
         rollout_length = 512
     elif args.scale == "medium":
+        # 19GB VRAM
         hidden_size = 256
         embedding_dim = 16
         C = 8
         layers = [32, 64, 128, 128]
-        minibatch_size = 32
+        minibatch_size = 16
         rollout_length = 512
-    else:  # large 30GB/32GB VRAM
+    else:
+        # large 30GB VRAM
         hidden_size = 512
         embedding_dim = 32
         C = 8
