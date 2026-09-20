@@ -261,15 +261,14 @@ if __name__ == "__main__":
         for j, (metric_name, stats) in enumerate(game_data.items()):
             unique_metrics.add(metric_name)
     num_metrics = len(unique_metrics)
-    fig, axs = plt.subplots(num_metrics, 1, figsize=(9, 16))
-    if num_metrics == 1:
-        axs = [axs]
 
-    for ax in axs:
+    for metric_name in unique_metrics:
+        fig, ax = plt.subplots()
         ax.set_prop_cycle(style_cycler)
-    for k, (game_id, game_data) in enumerate(data.items()):
-        for j, (metric_name, stats) in enumerate(game_data.items()):
-            ax = axs[j]
+        for k, (game_id, game_data) in enumerate(data.items()):
+            if metric_name not in game_data:
+                continue
+            stats = game_data[metric_name]
             X = [i * aggregate_steps for i in range(len(stats["mean"]))]
             if args.ma_window_size > 1:
                 # apply moving average to Y and STD
@@ -295,11 +294,12 @@ if __name__ == "__main__":
             # ax.errorbar(X, Y, yerr=STD, markersize=3, capsize=3, label=label, elinewidth=1, markeredgewidth=1, linewidth=2)
             ax.plot(X, Y, markersize=3, label=label, linewidth=2)
             ax.fill_between(X, [Y[i] - STD[i] for i in range(len(Y))], [Y[i] + STD[i] for i in range(len(Y))], alpha=0.1)
-            ax.set_xlabel('step')
-            ax.set_ylabel(metric_name)
-            # ax.set_title('Rollout Scores')
-            ax.legend()
-    fig.tight_layout()
+
+        ax.set_xlabel('step')
+        ax.set_ylabel(metric_name)
+        ax.set_title(f'{metric_name} over Steps')
+        ax.legend()
+        fig.tight_layout()
     plt.show()
 
 
@@ -317,4 +317,4 @@ if __name__ == "__main__":
     #                 continue
     #             f.write(line)
 
-    plt.close(fig)
+    plt.close('all')
