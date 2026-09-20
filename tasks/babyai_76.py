@@ -221,12 +221,12 @@ if __name__ == "__main__":
         layers = [32, 64, 128, 128]
         minibatch_size = 32
         rollout_length = 512
-    else:  # large
+    else:  # large 30GB/32GB VRAM
         hidden_size = 512
         embedding_dim = 32
         C = 8
         layers = [32, 64, 128, 128]
-        minibatch_size = 12 # 30GB/32GB VRAM
+        minibatch_size = 12
         rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
