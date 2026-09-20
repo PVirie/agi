@@ -35,7 +35,7 @@ class NP_Graph_Memory(Graph_Memory):
         self.head = np.zeros((num_batches,), dtype=np.int32)  # track the head node index for each batch
 
         # update trace for training
-        self.timestep = 0
+        self.timestep = 0  # sequence index the current op is attributed to; set by execute()
         self.edge_cause_time = np.full((num_batches, num_nodes, max_edges_per_node), -1, dtype=np.int32)  # store time index from which the edge was last affected. -1 means never updated
 
 
@@ -75,11 +75,17 @@ class NP_Graph_Memory(Graph_Memory):
         # return shape: (batch_size, max_edges_per_node)
         batch_size = self.nodes.shape[0]
         batch_idx = np.arange(batch_size)
-        return self.edge_cause_time[batch_idx, self.head, :]
+        cause_times = self.edge_cause_time[batch_idx, self.head, :]
+
+        # free slots are hidden from get_node_context, so they must not emit credit either
+        used_edges = self.next_free_edge[batch_idx, self.head]
+        slot_indices = np.arange(self.edges.shape[2])
+        cause_times[slot_indices[None, :] >= used_edges[:, None]] = -1
+
+        return cause_times
 
 
     def reset_timestamp(self):
-        self.timestep = 0
         self.edge_cause_time.fill(-1)
 
 
@@ -310,10 +316,14 @@ class NP_Graph_Memory(Graph_Memory):
         return success
     
 
-    def execute(self, operations, write_value, edge_1, edge_2):
+    def execute(self, operations, write_value, edge_1, edge_2, cause_time):
         # operations is a list of Graph_Memory_Operation_Type
         # group together operations by type and execute in batches for efficiency,
         # then reassemble results in the original argument order
+        # cause_time: sequence index this op is attributed to; required so the trace is always
+        # derived from the caller's own buffers and can never drift from them
+        self.timestep = cause_time
+
         batch_indices = np.arange(len(operations))
         success = np.ones(len(operations), dtype=bool)
 
@@ -347,7 +357,6 @@ class NP_Graph_Memory(Graph_Memory):
                 raise ValueError(f"unhandled graph memory operation: {op!r}")
             success[op_indices] = op_success
 
-        self.timestep += 1  # increment timestep for trace
         return success
 
 
@@ -632,7 +641,7 @@ if __name__ == "__main__":
     m.nodes[2, 0] = [9.0, 9.0];  m.next_free_node[2] = 2
     write_value = np.array([[5.0, 6.0], [0.0, 0.0], [0.0, 0.0]])
     OP = Graph_Memory_Operation_Type
-    ok = m.execute([OP.CREATE, OP.MOVE, OP.RESET], write_value, np.array([0, 0, 0]), np.array([0, 0, 0]))
+    ok = m.execute([OP.CREATE, OP.MOVE, OP.RESET], write_value, np.array([0, 0, 0]), np.array([0, 0, 0]), cause_time=0)
     assert_equal("execute success", ok, [True, True, True])
     # batch 0: create -> node 1 written, bidirectional edge
     assert_allclose("create wrote node", m.nodes[0, 1], [5.0, 6.0])
@@ -652,7 +661,7 @@ if __name__ == "__main__":
     m.edges[0, 1, 0] = 0;  m.next_free_edge[0, 1] = 1
     m.edges[0, 2, 0] = 0;  m.next_free_edge[0, 2] = 1
     OP = Graph_Memory_Operation_Type
-    ok = m.execute([OP.ROTATE], np.zeros((1, 2)), np.array([0]), np.array([1]))
+    ok = m.execute([OP.ROTATE], np.zeros((1, 2)), np.array([0]), np.array([1]), cause_time=0)
     assert_equal("execute rotate success", ok, [True])
     assert_equal("execute rotate head edge count", m.next_free_edge[0, 0], 1)
     assert_equal("execute rotate node1 -> node2", m.edges[0, 1, 0], 2)
@@ -664,7 +673,7 @@ if __name__ == "__main__":
     m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=2, node_dim=2)
     write_value = np.array([[1.0, 0.0], [0.0, 0.0], [2.0, 0.0]])
     OP = Graph_Memory_Operation_Type
-    ok = m.execute([OP.WRITE, OP.IDLE, OP.WRITE], write_value, np.zeros(3, dtype=int), np.zeros(3, dtype=int))
+    ok = m.execute([OP.WRITE, OP.IDLE, OP.WRITE], write_value, np.zeros(3, dtype=int), np.zeros(3, dtype=int), cause_time=0)
     assert_equal("WRITE+IDLE success", ok, [True, True, True])
     assert_allclose("batch 0 written", m.nodes[0, 0], [1.0, 0.0])
     assert_equal("batch 1 IDLE untouched", m.next_free_node[1], 1)
@@ -682,6 +691,7 @@ if __name__ == "__main__":
         np.array([[7.0, 8.0]]),
         np.array([0]),  # edge slot 0 on head -> node1
         np.zeros(1, dtype=int),
+        cause_time=0,
     )
     assert_equal("write|move success", ok, [True])
     assert_allclose("value written to old head (node 0)", m.nodes[0, 0], [7.0, 8.0])
@@ -697,6 +707,7 @@ if __name__ == "__main__":
         np.array([[5.0, 6.0]]),
         np.array([0]),  # slot 0 not occupied — no edges on head
         np.zeros(1, dtype=int),
+        cause_time=0,
     )
     assert_equal("write|move returns False when move fails", ok, [False])
     assert_allclose("write still applied to head", m.nodes[0, 0], [5.0, 6.0])
@@ -715,6 +726,7 @@ if __name__ == "__main__":
         np.array([[1.0, 2.0], [3.0, 4.0]]),
         np.array([0, 0]),
         np.zeros(2, dtype=int),
+        cause_time=0,
     )
     assert_equal("partial success", ok, [True, False])
     assert_allclose("batch 0 value written to old head", m.nodes[0, 0], [1.0, 2.0])
@@ -734,6 +746,7 @@ if __name__ == "__main__":
         np.array([[9.0, 9.0], [5.0, 5.0]]),
         np.array([0, 0]),
         np.zeros(2, dtype=int),
+        cause_time=0,
     )
     assert_equal("mixed ops success", ok, [True, True])
     assert_allclose("batch 0 written to old head", m.nodes[0, 0], [9.0, 9.0])
@@ -757,6 +770,7 @@ if __name__ == "__main__":
         np.array([[4.0, 4.0], [6.0, 6.0]]),
         np.zeros(2, dtype=int),
         np.zeros(2, dtype=int),
+        cause_time=0,
     )
     assert_equal("reset+op success", ok, [True, True])
     assert_equal("batch 0 head reset", m.head[0], 0)
@@ -773,7 +787,7 @@ if __name__ == "__main__":
     m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
     OP = Graph_Memory_Operation_Type
     try:
-        m.execute([OP.WRITE | OP.LINK], np.zeros((1, 2)), np.zeros(1, dtype=int), np.zeros(1, dtype=int))
+        m.execute([OP.WRITE | OP.LINK], np.zeros((1, 2)), np.zeros(1, dtype=int), np.zeros(1, dtype=int), cause_time=0)
     except ValueError:
         print("  PASS  unhandled composite raises ValueError")
     else:
@@ -839,5 +853,37 @@ if __name__ == "__main__":
 
     m.write(np.arange(3), rng.random((3, 2)).astype(np.float32))
     assert_equal("scoped trace == full-scan trace", m.edge_cause_time, reference)
+
+    # ================================================================== TEST 34
+    # get_cause_times: slots freed by rotate must not leak a live stamp
+    print("TEST 34: get_cause_times masks free slots")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.edges[0, 0, 0] = 1;  m.edges[0, 0, 1] = 2;  m.next_free_edge[0, 0] = 2
+    m.edges[0, 1, 0] = 0;  m.next_free_edge[0, 1] = 1
+    m.edges[0, 2, 0] = 0;  m.next_free_edge[0, 2] = 1
+    m.edge_cause_time[0, 0, 0] = 3;  m.edge_cause_time[0, 0, 1] = 4
+    m.timestep = 7
+    ok = m.rotate(np.array([0]), np.array([0]), np.array([1]))  # pivot=node1, src=node2
+    assert_equal("rotate success", ok, [True])
+    assert_equal("head down to 1 edge", m.next_free_edge[0, 0], 1)
+    assert_equal("vacated slot still holds a live stamp", m.edge_cause_time[0, 0, 1], 7)
+    ct = m.get_cause_times()
+    assert_equal("occupied slot reported", ct[0, 0], 4)
+    assert_equal("vacated slot masked", ct[0, 1], -1)
+    assert_equal("never-used slot masked", ct[0, 2], -1)
+    assert_equal("underlying trace untouched by read", m.edge_cause_time[0, 0, 1], 7)
+
+    # ================================================================== TEST 35
+    # execute: every op is stamped with the caller-supplied cause_time
+    print("TEST 35: execute stamps with cause_time")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    OP = Graph_Memory_Operation_Type
+    m.execute([OP.CREATE], np.array([[1.0, 2.0]]), np.zeros(1, dtype=int), np.zeros(1, dtype=int), cause_time=5)
+    assert_equal("create stamped with cause_time", m.edge_cause_time[0, 0, 0], 5)
+    m.execute([OP.CREATE], np.array([[3.0, 4.0]]), np.zeros(1, dtype=int), np.zeros(1, dtype=int), cause_time=9)
+    assert_equal("second create stamped with its own cause_time", m.edge_cause_time[0, 0, 1], 9)
+    assert_equal("earlier stamp untouched", m.edge_cause_time[0, 0, 0], 5)
+    m.execute([OP.CREATE], np.array([[5.0, 6.0]]), np.zeros(1, dtype=int), np.zeros(1, dtype=int), cause_time=-1)
+    assert_equal("sentinel cause_time is stored verbatim", m.edge_cause_time[0, 0, 2], -1)
 
     print("\nAll tests passed.")
