@@ -269,7 +269,14 @@ class Model_77(Agent):
         self.last_dones.append([False for _ in range(batch_size)])
         self.last_truncates.append([False for _ in range(batch_size)])
 
-        return return_action, position
+        # calculate metrics per batch
+        metrics = []
+        # 1. average edge counts
+        metrics.append(self.graph_memory.total_used_edges()/self.graph_memory.total_used_nodes())
+        # 2. graph size; with (1) this gives the cycle count E - N + 1, which is 0 for a tree
+        metrics.append(self.graph_memory.total_used_nodes())
+
+        return return_action, metrics
     
 
 if __name__ == "__main__":

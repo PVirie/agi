@@ -63,7 +63,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
         elapsed_time = time.perf_counter() - start_time
         should_stop = elapsed_time > max_running_time  # run for the specified max time
 
-        actions, _ = agent.choose_action(
+        actions, metrics = agent.choose_action(
             last_idles=last_idle,
             last_dones=last_done,
             last_truncates=last_truncated,
@@ -90,9 +90,15 @@ async def run(env, agent, rollout_length=16, verbose=False):
                     session_return_update_alpha * total_returns[i]
                     + (1 - session_return_update_alpha) * total_score
                 )
-                stat_row.extend([infos[i]["episode"]["r"], infos[i]["episode"]["l"], infos[i]["episode"]["s"]])
+                stat_row.extend([
+                    infos[i]["episode"]["r"], 
+                    infos[i]["episode"]["l"], 
+                    infos[i]["episode"]["s"],
+                    metrics[0][i],
+                    metrics[1][i]
+                ])
             else:
-                stat_row.extend([None, None, None])
+                stat_row.extend([None, None, None, None, None])
         stat_recorder.record(stat_row)
 
         steps += 1
@@ -191,7 +197,7 @@ if __name__ == "__main__":
     mission_size = env.mission_max_len
     inventory_size = 3 # inventory include 1 slot for current direction and 2 slots for items
     
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "length", "success"]])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["return", "length", "success", "edges_per_node", "graph_nodes"]])
     
     if args.scale == "small":
         hidden_size = 128

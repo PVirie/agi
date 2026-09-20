@@ -98,21 +98,27 @@ class NP_Graph_Memory(Graph_Memory):
 
     def write(self, batch_indices, write_value):
         batch_indices = np.asarray(batch_indices)
-        self.nodes[batch_indices, self.head[batch_indices], :] = write_value  # write to head node
+        if len(batch_indices) == 0:
+            return np.ones(0, dtype=bool)
 
-        # update trace: for all nodes with head as edge source (head→node), update edge_cause_time
-        if len(batch_indices) > 0:
-            max_edges = self.edges.shape[2]
-            heads = self.head[batch_indices]                                    # (B,)
-            edge_vals = self.edges[batch_indices]                               # (B, num_nodes, max_edges)
-            used = self.next_free_edge[batch_indices]                           # (B, num_nodes)
-            slot_range = np.arange(max_edges)
-            occupied = slot_range[None, None, :] < used[:, :, None]            # (B, num_nodes, max_edges)
-            come_from_head = edge_vals == heads[:, None, None]                 # (B, num_nodes, max_edges)
-            update_mask = come_from_head & occupied
-            temp = self.edge_cause_time[batch_indices]
-            temp[update_mask] = self.timestep
-            self.edge_cause_time[batch_indices] = temp
+        heads = self.head[batch_indices]                                        # (B,)
+        self.nodes[batch_indices, heads, :] = write_value  # write to head node
+
+        # update trace: for all nodes with head as edge source (head→node), update edge_cause_time.
+        # edges are stored symmetrically, so those slots live only in head's own neighbours' lists
+        max_edges = self.edges.shape[2]
+        slot_range = np.arange(max_edges)
+        neighbors = self.edges[batch_indices, heads, :]                         # (B, max_edges)
+        neighbor_occupied = slot_range[None, :] < self.next_free_edge[batch_indices, heads][:, None]
+        neighbor_edges = self.edges[batch_indices[:, None], neighbors, :]       # (B, max_edges, max_edges)
+        neighbor_used = self.next_free_edge[batch_indices[:, None], neighbors]  # (B, max_edges)
+        update_mask = (
+            (neighbor_edges == heads[:, None, None])
+            & (slot_range[None, None, :] < neighbor_used[:, :, None])
+            & neighbor_occupied[:, :, None]
+        )
+        b_idx, n_idx, s_idx = np.nonzero(update_mask)
+        self.edge_cause_time[batch_indices[b_idx], neighbors[b_idx, n_idx], s_idx] = self.timestep
 
         return np.ones(len(batch_indices), dtype=bool)
 
@@ -183,7 +189,22 @@ class NP_Graph_Memory(Graph_Memory):
         # both src and dst must have a free edge slot (undirected edge stored on both ends)
         free_on_src = self.next_free_edge[batch_indices, src_nodes]
         free_on_dst = self.next_free_edge[batch_indices, dst_nodes]
-        success = valid_slots & (free_on_src < max_edges) & (free_on_dst < max_edges)
+
+        # self-loops and duplicate edges both corrupt get_node_context and waste degree budget
+        slot_range = np.arange(max_edges)
+        src_edges = self.edges[batch_indices, src_nodes, :]
+        already_linked = np.any(
+            (src_edges == dst_nodes[:, None]) & (slot_range[None, :] < free_on_src[:, None]),
+            axis=1,
+        )
+
+        success = (
+            valid_slots
+            & (src_nodes != dst_nodes)
+            & ~already_linked
+            & (free_on_src < max_edges)
+            & (free_on_dst < max_edges)
+        )
 
         write_batches = batch_indices[success]
         write_src = src_nodes[success]
@@ -246,8 +267,23 @@ class NP_Graph_Memory(Graph_Memory):
         src_nodes   = self.edges[batch_indices, heads, e2_clamped]  # node that adopts pivot
 
         # after removing head<->pivot, pivot frees one slot — only src needs a free slot checked now
+        max_edges = self.edges.shape[2]
         free_on_src = self.next_free_edge[batch_indices, src_nodes]
-        success = valid_slots & (free_on_src < self.edges.shape[2])
+
+        # self-loops and duplicate edges both corrupt get_node_context and waste degree budget
+        slot_range = np.arange(max_edges)
+        src_edges = self.edges[batch_indices, src_nodes, :]
+        already_linked = np.any(
+            (src_edges == pivot_nodes[:, None]) & (slot_range[None, :] < free_on_src[:, None]),
+            axis=1,
+        )
+
+        success = (
+            valid_slots
+            & (pivot_nodes != src_nodes)
+            & ~already_linked
+            & (free_on_src < max_edges)
+        )
 
         rotate_batches = batch_indices[success]
         if len(rotate_batches) > 0:
@@ -278,10 +314,17 @@ class NP_Graph_Memory(Graph_Memory):
         # operations is a list of Graph_Memory_Operation_Type
         # group together operations by type and execute in batches for efficiency,
         # then reassemble results in the original argument order
-        ops_arr = np.array(operations)
         batch_indices = np.arange(len(operations))
-        success = np.zeros(len(operations), dtype=bool)
-        for op in set(operations):
+        success = np.ones(len(operations), dtype=bool)
+
+        # RESET composes with every other op, so it must be peeled off before dispatch
+        reset_mask = np.array([bool(op & Graph_Memory_Operation_Type.RESET) for op in operations])
+        if reset_mask.any():
+            self.reset(batch_indices[reset_mask])
+
+        residual = [op & ~Graph_Memory_Operation_Type.RESET for op in operations]
+        ops_arr = np.array(residual)
+        for op in set(residual):
             op_indices = batch_indices[ops_arr == op]
             if op == Graph_Memory_Operation_Type.CREATE:
                 op_success = self.create(op_indices, write_value[op_indices])
@@ -297,10 +340,11 @@ class NP_Graph_Memory(Graph_Memory):
                 op_success = write_ok & move_ok
             elif op == Graph_Memory_Operation_Type.ROTATE:
                 op_success = self.rotate(op_indices, edge_1[op_indices], edge_2[op_indices])
-            elif op == Graph_Memory_Operation_Type.RESET:
-                op_success = self.reset(op_indices)
+            elif op == Graph_Memory_Operation_Type.IDLE:
+                op_success = np.ones(len(op_indices), dtype=bool)
             else:
-                op_success = np.ones(len(op_indices), dtype=bool)  # IDLE: always successful
+                # never silently degrade to IDLE: that is how RESET|WRITE went missing
+                raise ValueError(f"unhandled graph memory operation: {op!r}")
             success[op_indices] = op_success
 
         self.timestep += 1  # increment timestep for trace
@@ -696,5 +740,104 @@ if __name__ == "__main__":
     assert_equal("batch 0 head moved to node 1", m.head[0], 1)
     assert_allclose("batch 1 new node written", m.nodes[1, 1], [5.0, 5.0])
     assert_equal("batch 1 new node back-link to head", m.edges[1, 1, 0], 0)
+
+    # ================================================================== TEST 29
+    # execute: RESET composed with another op must still reset (regression)
+    print("TEST 29: RESET composed with WRITE/CREATE")
+    OP = Graph_Memory_Operation_Type
+    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    for b in range(2):
+        m.next_free_node[b] = 3
+        m.nodes[b, 0] = [9.0, 9.0]
+        m.edges[b, 0, 0] = 1;  m.next_free_edge[b, 0] = 1
+        m.edges[b, 1, 0] = 0;  m.next_free_edge[b, 1] = 1
+        m.head[b] = 1
+    ok = m.execute(
+        [OP.RESET | OP.WRITE, OP.RESET | OP.CREATE],
+        np.array([[4.0, 4.0], [6.0, 6.0]]),
+        np.zeros(2, dtype=int),
+        np.zeros(2, dtype=int),
+    )
+    assert_equal("reset+op success", ok, [True, True])
+    assert_equal("batch 0 head reset", m.head[0], 0)
+    assert_equal("batch 1 head reset", m.head[1], 0)
+    # RESET runs first, so the op applies to the fresh graph
+    assert_allclose("batch 0 write landed on fresh head", m.nodes[0, 0], [4.0, 4.0])
+    assert_equal("batch 0 node count after reset+write", m.next_free_node[0], 1)
+    assert_allclose("batch 1 create made node 1 on fresh graph", m.nodes[1, 1], [6.0, 6.0])
+    assert_equal("batch 1 node count after reset+create", m.next_free_node[1], 2)
+
+    # ================================================================== TEST 30
+    # execute: an unhandled composite must raise rather than degrade to IDLE
+    print("TEST 30: unhandled composite raises")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    OP = Graph_Memory_Operation_Type
+    try:
+        m.execute([OP.WRITE | OP.LINK], np.zeros((1, 2)), np.zeros(1, dtype=int), np.zeros(1, dtype=int))
+    except ValueError:
+        print("  PASS  unhandled composite raises ValueError")
+    else:
+        raise AssertionError("FAIL [unhandled composite] expected ValueError")
+
+    # ================================================================== TEST 31
+    # link: rejects self-loops and duplicate edges
+    print("TEST 31: link rejects self-loop and duplicate")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.edges[0, 0, 0] = 1;  m.edges[0, 0, 1] = 2;  m.next_free_edge[0, 0] = 2
+    m.edges[0, 1, 0] = 0;  m.next_free_edge[0, 1] = 1
+    m.edges[0, 2, 0] = 0;  m.next_free_edge[0, 2] = 1
+    ok = m.link(np.array([0]), np.array([0]), np.array([0]))  # node1 <-> node1
+    assert_equal("link rejects self-loop", ok, [False])
+    assert_equal("node1 edge count unchanged", m.next_free_edge[0, 1], 1)
+    ok = m.link(np.array([0]), np.array([0]), np.array([1]))  # node1 <-> node2, first time
+    assert_equal("link first time succeeds", ok, [True])
+    ok = m.link(np.array([0]), np.array([0]), np.array([1]))  # same pair again
+    assert_equal("link rejects duplicate", ok, [False])
+    assert_equal("node1 edge count after duplicate attempt", m.next_free_edge[0, 1], 2)
+    assert_equal("node2 edge count after duplicate attempt", m.next_free_edge[0, 2], 2)
+
+    # ================================================================== TEST 32
+    # rotate: rejects self-loops and duplicate edges
+    print("TEST 32: rotate rejects self-loop and duplicate")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.edges[0, 0, 0] = 1;  m.next_free_edge[0, 0] = 1
+    m.edges[0, 1, 0] = 0;  m.next_free_edge[0, 1] = 1
+    ok = m.rotate(np.array([0]), np.array([0]), np.array([0]))  # pivot == src == node1
+    assert_equal("rotate rejects self-loop", ok, [False])
+    assert_equal("head edge count unchanged", m.next_free_edge[0, 0], 1)
+
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    # head(0) ↔ node1, head(0) ↔ node2, and node1 ↔ node2 already exists
+    m.edges[0, 0, 0] = 1;  m.edges[0, 0, 1] = 2;  m.next_free_edge[0, 0] = 2
+    m.edges[0, 1, 0] = 0;  m.edges[0, 1, 1] = 2;  m.next_free_edge[0, 1] = 2
+    m.edges[0, 2, 0] = 0;  m.edges[0, 2, 1] = 1;  m.next_free_edge[0, 2] = 2
+    ok = m.rotate(np.array([0]), np.array([0]), np.array([1]))  # pivot=node1, src=node2 (already linked)
+    assert_equal("rotate rejects duplicate", ok, [False])
+    assert_equal("head edge count unchanged", m.next_free_edge[0, 0], 2)
+    assert_equal("node2 edge count unchanged", m.next_free_edge[0, 2], 2)
+
+    # ================================================================== TEST 33
+    # write: trace refresh is equivalent to a full scan over all nodes
+    print("TEST 33: write trace equals full-scan reference")
+    rng = np.random.default_rng(0)
+    m = NP_Graph_Memory(num_batches=3, num_nodes=8, max_edges_per_node=3, node_dim=2)
+    m.next_free_node[:] = 1
+    for step in range(12):
+        m.timestep = step
+        batches = np.arange(3)
+        m.create(batches, rng.random((3, 2)).astype(np.float32))
+        if step % 3 == 2:
+            m.move(batches, rng.integers(0, 2, size=3))
+
+    m.timestep = 99
+    heads = m.head.copy()
+    max_edges = m.edges.shape[2]
+    slot_range = np.arange(max_edges)
+    reference = m.edge_cause_time.copy()
+    occupied = slot_range[None, None, :] < m.next_free_edge[:, :, None]
+    reference[(m.edges == heads[:, None, None]) & occupied] = 99
+
+    m.write(np.arange(3), rng.random((3, 2)).astype(np.float32))
+    assert_equal("scoped trace == full-scan trace", m.edge_cause_time, reference)
 
     print("\nAll tests passed.")
