@@ -270,6 +270,8 @@ class Model_74(Agent):
         metrics = []
         # 1. average edge counts
         metrics.append(self.graph_memory.total_used_edges()/self.graph_memory.total_used_nodes())
+        # 2. graph size; with (1) this gives the cycle count E - N + 1, which is 0 for a tree
+        metrics.append(self.graph_memory.total_used_nodes())
 
         return return_action, metrics
     
