@@ -262,13 +262,19 @@ if __name__ == "__main__":
             unique_metrics.add(metric_name)
     num_metrics = len(unique_metrics)
 
+    styles = list(style_cycler)
+    game_styles = {
+        game_id: styles[i % len(styles)]
+        for i, game_id in enumerate(sorted(data.keys()))
+    }
+
     for metric_name in unique_metrics:
         fig, ax = plt.subplots()
-        ax.set_prop_cycle(style_cycler)
         for k, (game_id, game_data) in enumerate(data.items()):
             if metric_name not in game_data:
                 continue
             stats = game_data[metric_name]
+            style = game_styles[game_id]
             X = [i * aggregate_steps for i in range(len(stats["mean"]))]
             if args.ma_window_size > 1:
                 # apply moving average to Y and STD
@@ -292,8 +298,8 @@ if __name__ == "__main__":
                 STD = [std / (max_Y - min_Y) for std in STD]
             label = f"{game_id}"
             # ax.errorbar(X, Y, yerr=STD, markersize=3, capsize=3, label=label, elinewidth=1, markeredgewidth=1, linewidth=2)
-            ax.plot(X, Y, markersize=3, label=label, linewidth=2)
-            ax.fill_between(X, [Y[i] - STD[i] for i in range(len(Y))], [Y[i] + STD[i] for i in range(len(Y))], alpha=0.1)
+            ax.plot(X, Y, markersize=3, label=label, linewidth=2, **style)
+            ax.fill_between(X, [Y[i] - STD[i] for i in range(len(Y))], [Y[i] + STD[i] for i in range(len(Y))], color=style["color"], alpha=0.1)
 
         ax.set_xlabel('step')
         ax.set_ylabel(metric_name)
