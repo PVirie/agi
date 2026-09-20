@@ -158,7 +158,7 @@ async def eval(env, agent):
             logging.info("All environments have finished their sequences.")
             break
 
-        last_idle = [False for _ in observations]
+        last_idle = [a is None for a in actions]
         last_done = [terminations[i] or truncations[i] for i in range(len(observations))]
         last_truncated = [truncations[i] for i in range(len(observations))]
         last_reset = [False for _ in observations]

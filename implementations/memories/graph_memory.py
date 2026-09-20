@@ -198,8 +198,8 @@ class NP_Graph_Memory(Graph_Memory):
             self.edges[write_batches, write_dst, slots_dst] = write_src
             self.next_free_edge[write_batches, write_dst] += 1
             # update trace: both new edge slots
-            self.edge_update_time[write_batches, write_src, slots_src] = self.timestep
-            self.edge_update_time[write_batches, write_dst, slots_dst] = self.timestep
+            self.edge_cause_time[write_batches, write_src, slots_src] = self.timestep
+            self.edge_cause_time[write_batches, write_dst, slots_dst] = self.timestep
 
         return success
     
@@ -268,8 +268,8 @@ class NP_Graph_Memory(Graph_Memory):
             self.edges[rotate_batches, rotate_pivots, slots_pivot] = rotate_srcs
             self.next_free_edge[rotate_batches, rotate_pivots] += 1
             # and s<->pivot
-            self.edge_update_time[rotate_batches, rotate_srcs, slots_src] = self.timestep
-            self.edge_update_time[rotate_batches, rotate_pivots, slots_pivot] = self.timestep
+            self.edge_cause_time[rotate_batches, rotate_srcs, slots_src] = self.timestep
+            self.edge_cause_time[rotate_batches, rotate_pivots, slots_pivot] = self.timestep
 
         return success
     

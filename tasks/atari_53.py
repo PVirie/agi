@@ -76,7 +76,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
 
         observations, rewards, terminations, truncations, infos = env.step(actions)
 
-        last_idle = [False for _ in observations]
+        last_idle = [a is None for a in actions]
         last_done = [terminations[i] or truncations[i] for i in range(len(observations))]
         last_truncated = [truncations[i] for i in range(len(observations))]
         last_reset = [False for _ in observations]
