@@ -174,7 +174,7 @@ if __name__ == "__main__":
 
     experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
     if args.st_train:
-        experiment_path += "_stmean_aicode"
+        experiment_path += "_stmean"
     if args.sie:
         experiment_path += "_sie"
     if args.low_var:
