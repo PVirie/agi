@@ -171,7 +171,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/minigrid_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
+    experiment_path = f"{APP_ROOT}/experiments/minigrid_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_alignment"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
