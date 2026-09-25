@@ -46,6 +46,12 @@ class PPO(RL_Learner, Safe_nn_Module):
         # How causal credit received by a step is aggregated across the future steps it caused.
         # 'amax' keeps the best future return; 'mean' averages them.
         self.causal_reduce = 'mean'  # one of {'amax', 'mean'}
+        # Weight of the causal credit against the step's own GAE return. Fixed, so a step that is
+        # referenced by many descendants does not lose its own learning signal to the average.
+        self.causal_alpha = 0.2
+        # Discount applied once per causal hop; kept separate from gamma so the graph shortcut
+        # can be priced independently of the temporal discount.
+        self.causal_decay = 0.99
 
         self.all_parameters = list(self.policy_model.parameters())
         self.optimizer = optim.Adam(self.all_parameters, lr=self.lr, eps=1e-5)
@@ -134,7 +140,8 @@ class PPO(RL_Learner, Safe_nn_Module):
             #
             # Two aggregation modes are supported via self.causal_reduce:
             #   'amax' - a cause keeps the best (max) return among the future steps it caused.
-            #   'mean' - a cause keeps the average return among the future steps it caused.
+            #   'mean' - a cause blends its own return with the average over the steps it caused,
+            #            at the fixed ratio self.causal_alpha.
             # For 'amax' we keep a single running buffer initialised to -inf (the max identity).
             # For 'mean' we keep running sum/count buffers and divide on read, so that invalid
             # cause slots can be excluded from the average without corrupting it.
@@ -151,6 +158,7 @@ class PPO(RL_Learner, Safe_nn_Module):
                 use_mean = False
                 causal_returns = causal_sum = causal_count = None
             advantages = []
+            returns_list = []
             lastgaelam = torch.zeros(batch_size).to(self.device)
             for t in reversed(range(sequence_size)):
                 nextnonterminal = 1.0 - b_next_dones[:, t]
@@ -160,29 +168,29 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 standard_return = lastgaelam + values[:, t]             # (batch_size,)
 
-                # Take the best/average of the standard return and any causal credit received from
-                # future steps, then propagate that effective return back to all past causes of t.
+                # Blend the standard return with any causal credit received from future steps, then
+                # propagate that effective return back to all past causes of t.
                 # Propagating the effective (post-aggregation) value means transitive chains
                 # (c caused t, t caused t') are handled without an extra pass.
                 if b_causes is not None:
                     all_causes = b_causes[:, t, :]                              # (batch_size, cause_size)
-                    valid_mask = (all_causes >= 0) & (all_causes < sequence_size)
+                    valid_mask = (all_causes >= 0) & (all_causes < t) & b_masks[:, t].bool()[:, None]
                     safe_causes = all_causes.clamp(0, sequence_size - 1)        # prevent OOB on scatter
 
                     if use_mean:
-                        # Read aggregated causal credit for t: mean over caused future steps, or
-                        # the standard return when no future step deposited any credit yet.
+                        # Blend t's own return with the mean over the future steps it caused; fall
+                        # back to the standard return when no future step deposited any credit.
                         count_t = causal_count[:, t]
-                        mean_credit = torch.where(
+                        mean_credit = causal_sum[:, t] / count_t.clamp(min=1)
+                        effective_return = torch.where(
                             count_t > 0,
-                            causal_sum[:, t] / count_t.clamp(min=1),
+                            (1.0 - self.causal_alpha) * standard_return + self.causal_alpha * mean_credit,
                             standard_return,
                         )
-                        effective_return = torch.max(standard_return, mean_credit)
 
                         # Vectorised scatter-add of sum and count; invalid slots add 0 / 0.
                         src = effective_return[:, None].expand(-1, b_causes.shape[2])   # (batch_size, cause_size)
-                        src_val = src.masked_fill(~valid_mask, 0.0)
+                        src_val = (src * self.causal_decay).masked_fill(~valid_mask, 0.0)
                         ones = valid_mask.float()
                         causal_sum = causal_sum.scatter_add(1, safe_causes, src_val)
                         causal_count = causal_count.scatter_add(1, safe_causes, ones)
@@ -192,16 +200,19 @@ class PPO(RL_Learner, Safe_nn_Module):
                         # Vectorised scatter-max: propagate effective_return[b] to every valid
                         # cause position c for each batch item b, in one operation.
                         src = effective_return[:, None].expand(-1, b_causes.shape[2])   # (batch_size, cause_size)
-                        src = src.masked_fill(~valid_mask, float('-inf'))          # invalid slots → -inf (no-op under max)
+                        src = (src * self.causal_decay).masked_fill(~valid_mask, float('-inf'))   # invalid slots → -inf (no-op under max)
                         causal_returns = causal_returns.scatter_reduce(1, safe_causes, src, reduce='amax', include_self=True)
                 else:
                     effective_return = standard_return
 
                 advantages.append(effective_return - values[:, t])
+                # value target stays the plain GAE return; causal credit only shapes the policy gradient
+                returns_list.append(standard_return)
 
             advantages.reverse()
+            returns_list.reverse()
             advantages = torch.stack(advantages, dim=1)
-            returns = advantages + values
+            returns = torch.stack(returns_list, dim=1)
 
             if self.norm_adv:
                 adv_mean = masked_mean(advantages, b_masks)

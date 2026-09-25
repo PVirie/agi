@@ -165,7 +165,7 @@ class Model_77(Agent):
             write_value=write_content, # write value
             edge_1=position[:, 0],
             edge_2=position[:, 1],
-            cause_time=len(self.rewards) - 1, # the pending op comes from the action chosen one step back
+            cause_time=len(self.rewards) - 2, # the pending op comes from the action chosen one step back
         )
         # present context and content exclusively based on idle state:
         # idle -> only context (content zeroed), not idle -> only content (context zeroed)
@@ -237,7 +237,7 @@ class Model_77(Agent):
             self.graph_memory.reset_timestamp()
             # keep one slot so aux stays index-aligned with obs; reset_timestamp just
             # invalidated the retained entry's stamps, so they must not be reused
-            self.last_cause_times = []
+            self.last_cause_times = [np.full_like(self.last_cause_times[-1], -1)]
 
         # Choose a random action
         packed_action = self.policy_model.get_action(
