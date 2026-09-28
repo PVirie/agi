@@ -224,7 +224,7 @@ if __name__ == "__main__":
         C = 8
         layers = [32, 64, 128, 128]
         minibatch_size = 12
-        rollout_length = 128
+        rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
