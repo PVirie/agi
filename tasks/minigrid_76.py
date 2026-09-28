@@ -187,7 +187,7 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids = ["MiniGrid-Fetch-8x8-N3-v0"] * 64 + ["MiniGrid-PutNear-8x8-N3-v0"] * 64
+    game_ids = ["MiniGrid-Fetch-8x8-N3-v0"] * 64 + ["MiniGrid-PutNear-8x8-N3-v0"] * 64 + ["MiniGrid-UnlockPickup-v0"] * 128 + ["MiniGrid-BlockedUnlockPickup-v0"] * 256
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
