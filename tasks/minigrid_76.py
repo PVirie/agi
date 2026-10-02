@@ -171,7 +171,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/minigrid_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_b"
+    experiment_path = f"{APP_ROOT}/experiments/minigrid_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_u"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
@@ -187,7 +187,9 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids = ["MiniGrid-Fetch-8x8-N3-v0"] * 64 + ["MiniGrid-PutNear-8x8-N3-v0"] * 64 + ["MiniGrid-UnlockPickup-v0"] * 128 + ["MiniGrid-BlockedUnlockPickup-v0"] * 256
+    # game_ids = ["MiniGrid-Fetch-8x8-N3-v0"] * 64 + ["MiniGrid-PutNear-8x8-N3-v0"] * 64 + ["MiniGrid-UnlockPickup-v0"] * 128 + ["MiniGrid-BlockedUnlockPickup-v0"] * 256
+    game_ids = ["MiniGrid-BlockedUnlockPickup-v0"] * 512
+        
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
@@ -223,8 +225,8 @@ if __name__ == "__main__":
         embedding_dim = 32
         C = 8
         layers = [32, 64, 128, 128]
-        minibatch_size = 16
-        rollout_length = 512
+        minibatch_size = 12
+        rollout_length = 640
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
