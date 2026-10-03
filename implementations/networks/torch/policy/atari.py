@@ -185,10 +185,15 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         return int_logits, ext_logits, edge_1_logits, edge_2_logits, write_value_logits, values
     
 
+    def pack_context(self, *args, **kwargs):
+        # pixels are normalized floats, so float32 is lossless for tokens and halves the rollout buffer vs float64
+        return super().pack_context(*args, **kwargs).astype(np.float32)
+
+
     def get_action(self, context, valid_actions=None):
 
         if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.long).to(self.device)
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
         available_flags = None
         available_actions = None
@@ -231,7 +236,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         # context has shape (batch, context_size, self.packed_context_size)
 
         if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.long).to(self.device)
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
         available_flags = None
         available_actions = None
@@ -279,7 +284,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         # now context has shape (batch, context_size + 1, self.packed_context_size)
 
         if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.long).to(self.device)
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
         context_full = context
         context = context_full[:, :-1, :]  # remove last context for computing logprob
@@ -323,7 +328,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             log_prob_int, log_prob_ext, log_prob_edge_1, log_prob_edge_2, log_prob_write_value
         ], dim=-1), torch.stack([
             entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2, entropy_write_value
-        ], dim=-1), None # No auxiliary loss for flipflop task
+        ], dim=-1), None # No auxiliary loss
 
 
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
@@ -331,7 +336,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         # Return log prob will only have context_size, but value will have context_size + 1
 
         if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.long).to(self.device)
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
         available_flags = None
         available_actions = None

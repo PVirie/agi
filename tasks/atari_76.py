@@ -21,7 +21,7 @@ install("gymnasium[atari, other]")
 install("colorama")
 
 import ale_py
-from utilities.atari.environments import Multi_Atari_Environment
+from utilities.atari.environments import Multi_Atari_Environment, ATARI_ACTIONS
 from utilities.episode_recorder import Episode_Recorder
 from colorama import Fore, Back, Style
 
@@ -92,14 +92,12 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
                 )
                 stat_row.extend([
                     infos[i]["episode"]["e"],
-                    infos[i]["episode"]["r"], 
-                    infos[i]["episode"]["l"], 
-                    infos[i]["episode"]["s"],
+                    infos[i]["episode"]["r"],
                     metrics[0][i],
                     metrics[1][i],
                 ])
             else:
-                stat_row.extend([None, None, None, None, None, None])
+                stat_row.extend([None, None, None, None])
         stat_recorder.record(stat_row)
 
         steps += 1
@@ -188,8 +186,8 @@ if __name__ == "__main__":
 
     game_ids = ["ALE/Adventure-v5"] * 512
     
-    game_width = 48
-    game_height = 96
+    game_width = 32
+    game_height = 64
     vocab_size = 256
 
     env = Multi_Atari_Environment(
@@ -227,10 +225,10 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=7, ext_action_size=7,
+        int_action_size=7, ext_action_size=len(ATARI_ACTIONS),
         write_action_size=16,
         internal_state_size=1 + C,
-        width=7, height=7, channel=3,
+        width=game_width, height=game_height, channel=env.stack_num,
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path

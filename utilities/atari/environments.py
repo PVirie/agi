@@ -34,6 +34,7 @@ class Multi_Atari_Environment:
         ):
 
         self.game_ids = game_ids
+        self.stack_num = stack_num
         self.prepend_objective = prepend_objective
 
         # get num unique game_ids
@@ -95,6 +96,7 @@ class Multi_Atari_Environment:
         self.return_terminations = [False] * total
         self.return_truncations = [False] * total
         self.return_infos = [None] * total
+        self.cumulative_length = [0] * total # agent-env transitions since the run started; never reset per episode
 
 
     def prepare_observation(self, obs, env_index):
@@ -110,9 +112,11 @@ class Multi_Atari_Environment:
     def reset(self, seed=None):
             # return self.envs.reset(seed=seed)
         for i, env in enumerate(self.envs):
-            obs, info = env.reset(seed=seed)
+            # offset per env: a shared seed would make every env replay the same episode
+            obs, info = env.reset(seed=None if seed is None else seed + i)
             self.return_obs[i] = self.prepare_observation(obs, i)
             self.return_infos[i] = info
+            self.cumulative_length[i] = 0
         return self.return_obs, self.return_infos
 
 
@@ -124,14 +128,20 @@ class Multi_Atari_Environment:
                 self.return_truncations[i] = False
                 continue
             obs, reward, termination, truncation, info = env.step(actions[i])
-            self.return_rewards[i] = reward.item()
+            self.return_rewards[i] = float(reward)
             self.return_terminations[i] = termination
             self.return_truncations[i] = truncation
             self.return_infos[i] = info
+            self.cumulative_length[i] += 1
             if termination or truncation:
+                info["episode"]["e"] = self.cumulative_length[i]
                 obs, _ = env.reset() # You must manually reset!
             self.return_obs[i] = self.prepare_observation(obs, i)
         return self.return_obs, self.return_rewards, self.return_terminations, self.return_truncations, self.return_infos
+
+
+    def total_env_steps(self):
+        return sum(self.cumulative_length)
 
 
     def get_available_actions(self):
@@ -162,3 +172,4 @@ class Multi_Atari_Environment:
         self.return_terminations = None
         self.return_truncations = None
         self.return_infos = None
+        self.cumulative_length = None
