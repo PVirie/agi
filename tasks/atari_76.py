@@ -206,7 +206,7 @@ if __name__ == "__main__":
         minibatch_size = 64
         rollout_length = 512
     elif args.scale == "medium":
-        # 19GB VRAM
+        # 22GB VRAM
         hidden_size = 256
         embedding_dim = 16
         C = 8
@@ -219,7 +219,7 @@ if __name__ == "__main__":
         embedding_dim = 32
         C = 8
         layers = [16, 32, 64, 128, 128]
-        minibatch_size = 12
+        minibatch_size = 8
         rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
