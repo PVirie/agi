@@ -234,7 +234,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--step-agg",               "-sa",  type=int, default=1000, help="Number of steps to aggregate for computing mean and variance.")
     parser.add_argument("--normalize",              "-n",   action="store_true")
-    parser.add_argument("--ma-window-size",         "-m",   type=int, default=10000, help="Moving average window size for smoothing the curves")
+    parser.add_argument("--ma-window-size",         "-m",   type=int, default=100, help="Moving average window size for smoothing the curves")
     args = parser.parse_args()
 
     # print summary of arguments that are not default
