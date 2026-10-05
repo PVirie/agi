@@ -35,7 +35,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.clip_coef = 0.2
         self.norm_adv = True
         self.clip_vloss = True
-        self.ent_coef = 0.01
+        self.ent_coef = 0.05
         self.vf_coef = 0.5
         self.max_grad_norm = 0.5
         self.target_kl = None
@@ -182,7 +182,8 @@ class PPO(RL_Learner, Safe_nn_Module):
                         # back to the standard return when no future step deposited any credit.
                         count_t = causal_count[:, t]
                         mean_credit = causal_sum[:, t] / count_t.clamp(min=1)
-                        has_signal = (count_t > 0) & (causal_sum[:, t].abs() > 1e-3)
+                        # has_signal = (count_t > 0) & (causal_sum[:, t].abs() > 1e-3)
+                        has_signal = count_t > 0
                         effective_return = torch.where(
                             has_signal,
                             (1.0 - self.causal_alpha) * standard_return + self.causal_alpha * mean_credit,
@@ -207,9 +208,9 @@ class PPO(RL_Learner, Safe_nn_Module):
                     effective_return = standard_return
 
                 advantages.append(effective_return - values[:, t])
-                # # value target stays the plain GAE return; causal credit only shapes the policy gradient
-                # returns_list.append(standard_return)
-                returns_list.append(effective_return)
+                # value target stays the plain GAE return; causal credit only shapes the policy gradient
+                returns_list.append(standard_return)
+                # returns_list.append(effective_return)
 
 
             advantages.reverse()
