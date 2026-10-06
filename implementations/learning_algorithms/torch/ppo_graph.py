@@ -35,7 +35,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.clip_coef = 0.2
         self.norm_adv = True
         self.clip_vloss = True
-        self.ent_coef = 0.05
+        self.ent_coef = 0.01
         self.vf_coef = 0.5
         self.max_grad_norm = 0.5
         self.target_kl = None
@@ -48,7 +48,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.causal_reduce = 'mean'  # one of {'amax', 'mean'}
         # Weight of the causal credit against the step's own GAE return. Fixed, so a step that is
         # referenced by many descendants does not lose its own learning signal to the average.
-        self.causal_alpha = 0.2
+        self.causal_alpha = 0.8
         # Discount applied once per causal hop; kept separate from gamma so the graph shortcut
         # can be priced independently of the temporal discount.
         self.causal_decay = 0.99
