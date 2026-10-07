@@ -101,8 +101,10 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
         stat_recorder.record(stat_row)
 
         steps += 1
-        if any([r != 0 for r in rewards]) and verbose:
-            logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in rewards])}")
+        # log extrinsic rewards only; with RND the training reward is nonzero on almost every step
+        extrinsic_rewards = [infos[i]["original_reward"] if actions[i] is not None else 0 for i in range(len(observations))]
+        if any([r != 0 for r in extrinsic_rewards]) and verbose:
+            logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in extrinsic_rewards])}")
 
         # constant LR on purpose: a wall-clock anneal would give the arms different schedules
         # at the same environment step, which is the axis they are compared on
@@ -114,6 +116,7 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
             # save 
             policy_core.save()
             ppo_learner.save()
+            env.save()
 
         if steps % (rollout_length * 10) == 0:
             # compute estimated time left
@@ -145,6 +148,8 @@ if __name__ == "__main__":
     parser.add_argument("--sie",                    "-sie",   action="store_true", help="Use separate internal-external attention (model 77). Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
+    parser.add_argument("--rnd",                    "-rnd", action="store_true", help="Add Random Network Distillation intrinsic reward. Default is False.")
+    parser.add_argument("--rnd-weight",             "-rndw", type=float, default=0.1, help="Weight of the normalized RND intrinsic reward. Default is 0.1.")
     args = parser.parse_args()
 
 
@@ -176,6 +181,8 @@ if __name__ == "__main__":
         experiment_path += "_sie"
     if args.low_var:
         experiment_path += "_lv"
+    if args.rnd:
+        experiment_path += f"_rnd{args.rnd_weight:g}"
 
     if args.reset:
         # clear the experiment path
@@ -183,6 +190,8 @@ if __name__ == "__main__":
             shutil.rmtree(experiment_path)
         exit()
     os.makedirs(experiment_path, exist_ok=True)
+    parameters_path = f"{experiment_path}/parameters"
+    os.makedirs(parameters_path, exist_ok=True)
 
     game_ids = ["ALE/Adventure-v5"] * 512
     
@@ -194,6 +203,10 @@ if __name__ == "__main__":
         game_ids=game_ids,
         img_height=game_height,
         img_width=game_width,
+        rnd_reward=args.rnd,
+        rnd_weight=args.rnd_weight,
+        device=device,
+        persistence_path=parameters_path,
     )
 
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "edges_per_node", "graph_nodes"]])
@@ -211,7 +224,7 @@ if __name__ == "__main__":
         embedding_dim = 16
         C = 8
         layers = [16, 32, 64, 64]
-        minibatch_size = 16
+        minibatch_size = 10
         rollout_length = 512
     else:
         # large 30GB VRAM
@@ -222,8 +235,6 @@ if __name__ == "__main__":
         minibatch_size = 8
         rollout_length = 512
 
-    parameters_path = f"{experiment_path}/parameters"
-    os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
         int_action_size=7, ext_action_size=len(ATARI_ACTIONS),
         write_action_size=16,

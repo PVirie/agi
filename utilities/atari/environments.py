@@ -1,5 +1,6 @@
 import gymnasium as gym
 import numpy as np
+import time
 from gymnasium.wrappers import (
     RecordEpisodeStatistics,
     AtariPreprocessing,
@@ -8,6 +9,8 @@ from gymnasium.wrappers import (
     NormalizeReward,
     ClipReward
 )
+
+from .rnd import RND_Model
 
 # Standard Atari Action Set (Order matters!)
 ATARI_ACTIONS = [
@@ -30,6 +33,11 @@ class Multi_Atari_Environment:
         episodic_life=True,
         reward_clipping=True,
         prepend_objective=False,
+        rnd_reward=False,
+        rnd_weight=1.0,
+        rnd_lr=1e-4,
+        device="cpu",
+        persistence_path=None,
         render_mode=None,
         ):
 
@@ -86,6 +94,15 @@ class Multi_Atari_Environment:
                 env = FrameStackObservation(env, stack_size=stack_num, padding_type='zero')
             self.envs.append(env)
 
+        # one RND model shared by all envs: novelty is global and the predictor trains on the whole batch
+        self.rnd_weight = rnd_weight
+        self.rnd = None
+        if rnd_reward:
+            obs_dim = int(np.prod(self.envs[0].observation_space.shape))
+            if self.prepend_objective:
+                obs_dim += self.objective_size
+            self.rnd = RND_Model(obs_dim=obs_dim, lr=rnd_lr, device=device, persistence_path=persistence_path)
+
         total = len(self.envs)
         self.return_obs = [None] * total
         self.return_rewards = [0] * total
@@ -94,7 +111,10 @@ class Multi_Atari_Environment:
         self.return_infos = [None] * total
 
         self.total_return = [0] * total
+        self.total_aux_return = [0] * total
+        self.total_length = [0] * total
         self.cumulative_length = [0] * total # agent-env transitions since the run started; never reset per episode
+        self.total_duration = [0] * total # start time of the episode for each env, misnoming but consistent with other statistics
 
 
     def prepare_observation(self, obs, env_index):
@@ -116,11 +136,15 @@ class Multi_Atari_Environment:
             self.return_infos[i] = info
 
             self.total_return[i] = 0
+            self.total_aux_return[i] = 0
+            self.total_length[i] = 0
             self.cumulative_length[i] = 0
+            self.total_duration[i] = time.perf_counter()
         return self.return_obs, self.return_infos
 
 
     def step(self, actions):
+        stepped = []
         for i, env in enumerate(self.envs):
             if actions[i] is None:
                 self.return_rewards[i] = 0
@@ -128,22 +152,56 @@ class Multi_Atari_Environment:
                 self.return_truncations[i] = False
                 continue
             obs, reward, termination, truncation, info = env.step(actions[i])
-            self.return_rewards[i] = float(reward)
+            stepped.append((i, obs, reward, termination, truncation, info))
+
+        # novelty of s' is measured before any auto-reset replaces it
+        intrinsic_rewards = np.zeros((len(stepped),), dtype=np.float32)
+        if self.rnd is not None and len(stepped) > 0:
+            intrinsic_rewards = self.rnd.compute_intrinsic_rewards(
+                [self.prepare_observation(obs, i) for i, obs, *_ in stepped]
+            )
+
+        for (i, obs, reward, termination, truncation, info), r_intrinsic in zip(stepped, intrinsic_rewards):
+            env = self.envs[i]
+            extrinsic_reward = float(reward)
+            total_reward = extrinsic_reward + self.rnd_weight * float(r_intrinsic)
+
+            info["original_reward"] = extrinsic_reward
+            info["intrinsic_reward"] = float(r_intrinsic)
+
+            self.return_rewards[i] = total_reward
             self.return_terminations[i] = termination
             self.return_truncations[i] = truncation
             self.return_infos[i] = info
 
-            self.total_return[i] += info.get('original_reward', reward) if info else reward
+            self.total_return[i] += extrinsic_reward
+            self.total_aux_return[i] += total_reward
+            self.total_length[i] += 1
             self.cumulative_length[i] += 1
             if termination or truncation:
-                info["episode"]["r"] = self.total_return[i]
-                info["episode"]["e"] = self.cumulative_length[i]
+                info["episode"] = {
+                    "r": self.total_return[i],
+                    "aug_r": self.total_aux_return[i],
+                    "l": self.total_length[i],
+                    "e": self.cumulative_length[i],
+                    "t": time.perf_counter() - self.total_duration[i],
+                    # same convention as MiniGrid: an episode with positive extrinsic return counts as a success
+                    "s": 1.0 if self.total_return[i] > 0 else 0.0
+                }
                 obs, _ = env.reset() # You must manually reset!
 
                 self.total_return[i] = 0
+                self.total_aux_return[i] = 0
+                self.total_length[i] = 0
+                self.total_duration[i] = time.perf_counter()
 
             self.return_obs[i] = self.prepare_observation(obs, i)
         return self.return_obs, self.return_rewards, self.return_terminations, self.return_truncations, self.return_infos
+
+
+    def save(self):
+        if self.rnd is not None:
+            self.rnd.save()
 
 
     def total_env_steps(self):
@@ -180,4 +238,7 @@ class Multi_Atari_Environment:
         self.return_infos = None
 
         self.total_return = None
+        self.total_aux_return = None
+        self.total_length = None
         self.cumulative_length = None
+        self.total_duration = None
