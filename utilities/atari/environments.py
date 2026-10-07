@@ -77,17 +77,13 @@ class Multi_Atari_Environment:
 
             # record stats before any other wrappers to capture true episode returns and lengths
             env = RecordEpisodeStatistics(env)
-
             if img_height != 84 or img_width != 84:
                 env = ResizeObservation(env, (img_height, img_width))
-
             if reward_clipping:
                 # env = NormalizeReward(env, gamma=0.99)
                 env = ClipReward(env, min_reward=-1, max_reward=1)
-
             if stack_num > 1:
                 env = FrameStackObservation(env, stack_size=stack_num, padding_type='zero')
-
             self.envs.append(env)
 
         total = len(self.envs)
@@ -96,6 +92,8 @@ class Multi_Atari_Environment:
         self.return_terminations = [False] * total
         self.return_truncations = [False] * total
         self.return_infos = [None] * total
+
+        self.total_return = [0] * total
         self.cumulative_length = [0] * total # agent-env transitions since the run started; never reset per episode
 
 
@@ -116,6 +114,8 @@ class Multi_Atari_Environment:
             obs, info = env.reset(seed=None if seed is None else seed + i)
             self.return_obs[i] = self.prepare_observation(obs, i)
             self.return_infos[i] = info
+
+            self.total_return[i] = 0
             self.cumulative_length[i] = 0
         return self.return_obs, self.return_infos
 
@@ -132,10 +132,16 @@ class Multi_Atari_Environment:
             self.return_terminations[i] = termination
             self.return_truncations[i] = truncation
             self.return_infos[i] = info
+
+            self.total_return[i] += info.get('original_reward', reward) if info else reward
             self.cumulative_length[i] += 1
             if termination or truncation:
+                info["episode"]["r"] = self.total_return[i]
                 info["episode"]["e"] = self.cumulative_length[i]
                 obs, _ = env.reset() # You must manually reset!
+
+                self.total_return[i] = 0
+
             self.return_obs[i] = self.prepare_observation(obs, i)
         return self.return_obs, self.return_rewards, self.return_terminations, self.return_truncations, self.return_infos
 
@@ -172,4 +178,6 @@ class Multi_Atari_Environment:
         self.return_terminations = None
         self.return_truncations = None
         self.return_infos = None
+
+        self.total_return = None
         self.cumulative_length = None
