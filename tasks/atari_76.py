@@ -232,7 +232,7 @@ if __name__ == "__main__":
         embedding_dim = 32
         C = 8
         layers = [16, 32, 64, 128, 128]
-        minibatch_size = 12
+        minibatch_size = 16
         rollout_length = 512
 
     policy_core = Policy_Core(
