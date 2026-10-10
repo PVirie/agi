@@ -21,6 +21,27 @@ ATARI_ACTIONS = [
     "DOWNRIGHTFIRE", "DOWNLEFTFIRE"
 ]
 
+
+class Frame_Capture(gym.Wrapper):
+    """Keeps the latest full-resolution grayscale frame, before resizing and stacking, for the RND model."""
+
+    def _capture(self, obs):
+        frame = np.array(obs, dtype=np.uint8)
+        if frame.ndim == 3:
+            frame = (frame.astype(np.float32) @ np.array([0.299, 0.587, 0.114], dtype=np.float32)).astype(np.uint8)
+        self.frame = frame
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self._capture(obs)
+        return obs, info
+
+    def step(self, action):
+        obs, reward, termination, truncation, info = self.env.step(action)
+        self._capture(obs)
+        return obs, reward, termination, truncation, info
+
+
 class Multi_Atari_Environment:
     def __init__(self, 
         game_ids,
@@ -61,6 +82,7 @@ class Multi_Atari_Environment:
         # Structure: List[List[int]] -> [[0, 2, 3], [0, 1, 4, 5], ...]
         self.available_actions = []
         self.envs = []
+        self.frame_captures = []
         for gid in game_ids:
             # Initialize temp env with minimal action space to see what's valid
             temp_env = gym.make(gid, full_action_space=False)
@@ -73,15 +95,19 @@ class Multi_Atari_Environment:
             self.available_actions.append(game_indices)
             temp_env.close()
 
-            env = gym.make(gid, full_action_space=True, render_mode=render_mode)
+            # AtariPreprocessing max-pools the last two frames of its own skip, so ALE must not skip frames itself
+            env = gym.make(gid, full_action_space=True, render_mode=render_mode, frameskip=1 if maxpool else frameskip)
             env = AtariPreprocessing(
                 env,
-                frame_skip=1,
+                frame_skip=frameskip if maxpool else 1,
                 grayscale_obs=grayscale,
                 scale_obs=False, # returns uint8 (0-255). Ensure your Agent divides by 255.0!
                 terminal_on_life_loss=episodic_life,
                 noop_max=30
             )
+            if rnd_reward:
+                env = Frame_Capture(env)
+                self.frame_captures.append(env)
 
             # record stats before any other wrappers to capture true episode returns and lengths
             env = RecordEpisodeStatistics(env)
@@ -94,14 +120,15 @@ class Multi_Atari_Environment:
                 env = FrameStackObservation(env, stack_size=stack_num, padding_type='zero')
             self.envs.append(env)
 
-        # one RND model shared by all envs: novelty is global and the predictor trains on the whole batch
+        # one RND model shared by all envs: novelty is global. It reads the full 84x84 frame, not the policy's resized stack.
         self.rnd_weight = rnd_weight
         self.rnd = None
         if rnd_reward:
-            obs_dim = int(np.prod(self.envs[0].observation_space.shape))
-            if self.prepend_objective:
-                obs_dim += self.objective_size
-            self.rnd = RND_Model(obs_dim=obs_dim, lr=rnd_lr, device=device, persistence_path=persistence_path)
+            self.rnd = RND_Model(
+                num_envs=len(self.envs),
+                frame_shape=self.frame_captures[0].observation_space.shape[:2],
+                lr=rnd_lr, device=device, persistence_path=persistence_path
+            )
 
         total = len(self.envs)
         self.return_obs = [None] * total
@@ -154,11 +181,12 @@ class Multi_Atari_Environment:
             obs, reward, termination, truncation, info = env.step(actions[i])
             stepped.append((i, obs, reward, termination, truncation, info))
 
-        # novelty of s' is measured before any auto-reset replaces it
+        # novelty of s' is measured on its full frame, captured before any auto-reset replaces it
         intrinsic_rewards = np.zeros((len(stepped),), dtype=np.float32)
         if self.rnd is not None and len(stepped) > 0:
             intrinsic_rewards = self.rnd.compute_intrinsic_rewards(
-                [self.prepare_observation(obs, i) for i, obs, *_ in stepped]
+                np.stack([self.frame_captures[i].frame for i, *_ in stepped]),
+                [i for i, *_ in stepped]
             )
 
         for (i, obs, reward, termination, truncation, info), r_intrinsic in zip(stepped, intrinsic_rewards):

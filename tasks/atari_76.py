@@ -135,6 +135,24 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
     env.close()
 
 
+def fit_rollout_and_minibatch(max_thought_steps, target_gb):
+    """
+    Linear fit through the pivots (512 envs, max_thought_steps=2, rollout 512):
+    medium 22 GB at minibatch 10, large 30 GB at minibatch 16, i.e. 4/3 GB per minibatch env and 26/3 GB fixed
+    (mostly the rollout buffer). Both terms grow in proportion to rollout_length:
+        memory_gb = rollout_length / 512 * (26/3 + 4/3 * minibatch_size)
+    rollout_length scales with max_thought_steps + 1 so a rollout keeps the same number of game steps.
+    """
+    fixed_gb, gb_per_minibatch = 26 / 3, 4 / 3
+
+    rollout_length = int(512 * (max_thought_steps + 1) / 3)
+    # longest rollout at which minibatch 1 still fits the target
+    rollout_length = min(rollout_length, int(512 * target_gb / (fixed_gb + gb_per_minibatch)))
+
+    minibatch_size = int((target_gb * 512 / rollout_length - fixed_gb) / gb_per_minibatch)
+    return rollout_length, max(1, minibatch_size)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
@@ -149,7 +167,7 @@ if __name__ == "__main__":
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
     parser.add_argument("--rnd",                    "-rnd", action="store_true", help="Add Random Network Distillation intrinsic reward. Default is False.")
-    parser.add_argument("--rnd-weight",             "-rndw", type=float, default=0.1, help="Weight of the normalized RND intrinsic reward. Default is 0.1.")
+    parser.add_argument("--rnd-weight",             "-rndw", type=float, default=0.5, help="Weight of the normalized RND intrinsic reward. Default is 0.1.")
     args = parser.parse_args()
 
 
@@ -203,6 +221,7 @@ if __name__ == "__main__":
         game_ids=game_ids,
         img_height=game_height,
         img_width=game_width,
+        episodic_life=False,
         rnd_reward=args.rnd,
         rnd_weight=args.rnd_weight,
         device=device,
@@ -211,29 +230,25 @@ if __name__ == "__main__":
 
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "edges_per_node", "graph_nodes"]])
     
+    # target_gb leaves ~2 GB headroom on a 16 / 24 / 32 GB card
     if args.scale == "small":
         hidden_size = 128
         embedding_dim = 8
         C = 4
         layers = [16, 32, 32]
-        minibatch_size = 64
-        rollout_length = 512
+        target_gb = 12
     elif args.scale == "medium":
-        # 22GB VRAM
         hidden_size = 256
         embedding_dim = 16
         C = 8
         layers = [16, 32, 64, 64]
-        minibatch_size = 10
-        rollout_length = 512
+        target_gb = 22
     else:
-        # large 30GB VRAM
         hidden_size = 512
         embedding_dim = 32
         C = 8
         layers = [16, 32, 64, 128, 128]
-        minibatch_size = 16
-        rollout_length = 512
+        target_gb = 30
 
     policy_core = Policy_Core(
         int_action_size=7, ext_action_size=len(ATARI_ACTIONS),
@@ -244,11 +259,21 @@ if __name__ == "__main__":
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
+
+    rollout_length, minibatch_size = fit_rollout_and_minibatch(
+        max_thought_steps=args.max_thought_steps,
+        target_gb=target_gb,
+    )
+    # gamma is per agent step: spread a 0.997-per-game-step discount over up to max_thought_steps + 1 agent steps
+    gamma = 0.997 ** (1.0 / (args.max_thought_steps + 1))
+    logging.info(f"Rollout length: {rollout_length}, minibatch size: {minibatch_size}, gamma: {gamma:.5f}")
+
     if args.st_train:
         ppo_learner = PPO_Graph(
             policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
             device=device, persistence_path=parameters_path,
             lr=1e-4, minibatch_size=minibatch_size,
+            gamma=gamma,
             gae_lambda=0.95 if not args.low_var else 0.90
         )
     else:
@@ -256,6 +281,7 @@ if __name__ == "__main__":
             policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
             device=device, persistence_path=parameters_path,
             lr=1e-4, minibatch_size=minibatch_size,
+            gamma=gamma,
             gae_lambda=0.95 if not args.low_var else 0.90
         )
     memory = Graph_Memory(
