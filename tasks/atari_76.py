@@ -29,8 +29,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import model_76
 from implementations.agents import model_77
-from implementations.networks.torch.policy.minigrid import Projector
-from implementations.networks.torch.policy.atari import Policy_Core
+from implementations.networks.torch.policy.atari import Policy_Core, Projector
 from implementations.learning_algorithms.torch.ppo_combine import PPO
 from implementations.learning_algorithms.torch.ppo_graph import PPO as PPO_Graph
 from implementations.collectors.states import State_Sequence as Collector
@@ -112,6 +111,9 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
         if steps % (rollout_length * 2) == 0 or should_stop:
             logging.info(f"{steps}| Returns: {', '.join([format_float(s) for s in total_returns])}")
             logging.info(f"{steps}| Selected actions: {actions}")
+            if torch.cuda.is_available():
+                # running maxima since process start, never reset: this is the probe measurement
+                logging.info(f"{steps}| Peak VRAM: {torch.cuda.max_memory_allocated() / 1024**3:.2f} GB allocated, {torch.cuda.max_memory_reserved() / 1024**3:.2f} GB reserved")
 
             # save 
             policy_core.save()
@@ -135,15 +137,25 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
     env.close()
 
 
-def fit_rollout_and_minibatch(max_thought_steps, target_gb):
-    """
-    Linear fit through the pivots (512 envs, max_thought_steps=2, rollout 512):
-    medium 22 GB at minibatch 10, large 30 GB at minibatch 16, i.e. 4/3 GB per minibatch env and 26/3 GB fixed
-    (mostly the rollout buffer). Both terms grow in proportion to rollout_length:
-        memory_gb = rollout_length / 512 * (26/3 + 4/3 * minibatch_size)
-    rollout_length scales with max_thought_steps + 1 so a rollout keeps the same number of game steps.
-    """
-    fixed_gb, gb_per_minibatch = 26 / 3, 4 / 3
+# Peak *reserved* VRAM, measured at 512 envs and rollout_length 512 with two minibatch sizes per scale:
+#   small   16 -> 1.70 GB,  48 -> 4.42 GB
+#   medium   8 -> 2.64 GB,  24 -> 7.19 GB
+#   large    4 -> 2.99 GB,  12 -> 7.56 GB
+MEMORY_FIT = {  # scale: (fixed_gb, gb_per_minibatch), at 512 envs and rollout_length 512
+    "small":  (0.34, 0.085),
+    "medium": (0.365, 0.284),
+    "large":  (0.705, 0.571),
+}
+
+
+def fit_rollout_and_minibatch(scale, max_thought_steps, num_envs, target_gb):
+    # Linear model, both terms grow in proportion to rollout_length:
+    #     peak_gb = rollout_length / 512 * (fixed_gb * num_envs / 512 + gb_per_minibatch * minibatch_size)
+    # Scaling the whole intercept with rollout_length over-reserves a little, since the parameter and
+    # optimizer share of fixed_gb (~0.35 GB at large, ~0 at small) is constant. That errs toward not OOMing.
+    # rollout_length scales with max_thought_steps + 1 so a rollout keeps the same number of game steps.
+    fixed_gb, gb_per_minibatch = MEMORY_FIT[scale]
+    fixed_gb *= num_envs / 512
 
     rollout_length = int(512 * (max_thought_steps + 1) / 3)
     # longest rollout at which minibatch 1 still fits the target
@@ -192,7 +204,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/atari_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_b"
+    experiment_path = f"{APP_ROOT}/experiments/atari_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_u"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
@@ -211,17 +223,14 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
 
-    game_ids = ["ALE/Adventure-v5"] * 512
+    game_ids = ["ALE/MontezumaRevenge-v5"] * 512
     
-    game_width = 32
-    game_height = 64
     vocab_size = 256
 
     env = Multi_Atari_Environment(
         game_ids=game_ids,
-        img_height=game_height,
-        img_width=game_width,
         episodic_life=False,
+        prepend_objective=False,
         rnd_reward=args.rnd,
         rnd_weight=args.rnd_weight,
         device=device,
@@ -230,40 +239,45 @@ if __name__ == "__main__":
 
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "edges_per_node", "graph_nodes"]])
     
-    # target_gb leaves ~2 GB headroom on a 16 / 24 / 32 GB card
     if args.scale == "small":
+        # 12/16 GB
         hidden_size = 128
         embedding_dim = 8
         C = 4
-        layers = [16, 32, 32]
+        layers = [1, 1, 1]
         target_gb = 12
     elif args.scale == "medium":
+        # 20/24 GB
         hidden_size = 256
         embedding_dim = 16
         C = 8
-        layers = [16, 32, 64, 64]
-        target_gb = 22
+        layers = [1, 1, 1, 1]
+        target_gb = 20
     else:
+        # 28/32 GB
         hidden_size = 512
         embedding_dim = 32
         C = 8
-        layers = [16, 32, 64, 128, 128]
-        target_gb = 30
+        layers = [1, 1, 1, 1]
+        target_gb = 28
 
     policy_core = Policy_Core(
         int_action_size=7, ext_action_size=len(ATARI_ACTIONS),
         write_action_size=16,
         internal_state_size=1 + C,
-        width=game_width, height=game_height, channel=env.stack_num,
+        external_state_size=env.observation_size,
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
 
     rollout_length, minibatch_size = fit_rollout_and_minibatch(
+        scale=args.scale,
         max_thought_steps=args.max_thought_steps,
+        num_envs=len(game_ids),
         target_gb=target_gb,
     )
+
     # gamma is per agent step: spread a 0.997-per-game-step discount over up to max_thought_steps + 1 agent steps
     gamma = 0.997 ** (1.0 / (args.max_thought_steps + 1))
     logging.info(f"Rollout length: {rollout_length}, minibatch size: {minibatch_size}, gamma: {gamma:.5f}")

@@ -1,16 +1,11 @@
 import torch
 import torch.nn as nn
-from torch.distributions.normal import Normal
 from torch.distributions.categorical import Categorical
-from torch.distributions import Bernoulli
 import numpy as np
-import logging
 
 from interfaces.network import Policy_Value_Network
-from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
-from implementations.networks.torch.components.std_conv import ImpalaCNN
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
 from implementations.networks.torch.policy.base import Projector as Base_Projector
@@ -23,7 +18,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
                  int_action_size, ext_action_size,
                  write_action_size,
                  internal_state_size,
-                 width, height, channel,
+                 external_state_size,
                  dict_size, embedding_dim, pad_token_id,
                  hidden_size, layers, 
                  device=None, 
@@ -37,16 +32,14 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         self.write_action_size = write_action_size
 
         self.internal_state_size = internal_state_size
-        self.width = width
-        self.height = height
-        self.channel = channel
+        self.external_state_size = external_state_size
         self.dict_size = dict_size
         self.embedding_dim = embedding_dim
         self.pad_token_id = pad_token_id
         self.hidden_size = hidden_size
 
         self.position_size = 2
-        self.content_size = internal_state_size + width * height * channel
+        self.content_size = internal_state_size + external_state_size
         self.packed_action_size = 1 + 1 + self.position_size + 1
         self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
 
@@ -65,11 +58,19 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             max_len=internal_state_size,
         )
 
-        self.conv_layers = ImpalaCNN(
+        # each RAM address gets its own value table: byte semantics are address-specific, not shared
+        self.obs_embedding = nn.Embedding(external_state_size * dict_size, embedding_dim, padding_idx=None)  # for obs
+        self.register_buffer(
+            "obs_address_offsets",
+            torch.arange(external_state_size, dtype=torch.long) * dict_size,
+            persistent=False
+        )
+
+        self.obs_feature_extraction = ResNet(
             output_dims=hidden_size, 
-            input_channels=channel, 
-            width=width, height=height,
-            depths=layers
+            input_dims=external_state_size * embedding_dim, 
+            hidden_dims=hidden_size, 
+            layers=[hidden_size for _ in layers]
         )
 
         # internal_state, obs -> hidden
@@ -120,11 +121,9 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
     def reset_parameters(self):
         # Reset parameters of all layers
         self.internal_state_embedding.reset_parameters()
-
         self.internal_state_feature_extraction.reset_parameters()
-
-        self.conv_layers.reset_parameters()
-
+        self.obs_embedding.reset_parameters()
+        self.obs_feature_extraction.reset_parameters()
         self.backbone.reset_parameters()
 
         def init_actor_weights(m):
@@ -166,11 +165,12 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         internal_state_embedded = self.internal_state_embedding(internal_state.long())  # (batch_size, context_size, internal_state_size, embedding_dim)
         internal_state_features = self.internal_state_feature_extraction(internal_state_embedded, padding_mask)  # (batch_size, context_size, hidden_size)
 
-        image_part = torch.reshape(obs, (batch_size * context_size, self.channel, self.height, self.width))
-        image_features = self.conv_layers(image_part)  # (batch_size * context_size, hidden_size)
-        image_features = image_features.view(batch_size, context_size, self.hidden_size)  # (batch_size, context_size, hidden_size)
+        obs_indices = obs.long().clamp_(0, self.dict_size - 1) + self.obs_address_offsets  # (batch_size, context_size, external_state_size)
+        obs_embedded = self.obs_embedding(obs_indices)  # (batch_size, context_size, external_state_size, embedding_dim)
+        obs_embedded = obs_embedded.flatten(start_dim=-2)  # (batch_size, context_size, external_state_size * embedding_dim)
+        obs_features = self.obs_feature_extraction(obs_embedded)  # (batch_size, context_size, hidden_size)
 
-        base_input = torch.concat([internal_state_features, image_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        base_input = torch.concat([internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
@@ -186,7 +186,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
     
 
     def pack_context(self, *args, **kwargs):
-        # pixels are normalized floats, so float32 is lossless for tokens and halves the rollout buffer vs float64
+        # every field is a small integer (RAM bytes, token ids), so float32 is lossless and halves the rollout buffer vs float64
         return super().pack_context(*args, **kwargs).astype(np.float32)
 
 
@@ -386,4 +386,13 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         ], dim=-1), torch.stack([
             entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2, entropy_write_value
         ], dim=-1), values
+
+
+class Projector(Base_Projector):
+
+    def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy, values = self.master_core.get_log_probability_with_value(context, selected_action, valid_actions)
+        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
+        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
+        return log_probs, entropy, values
 
