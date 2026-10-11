@@ -2,59 +2,54 @@ import os
 import sys
 import time
 import numpy as np
-from PIL import Image
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-APP_ROOT = os.getenv("APP_ROOT", "/app")
-
 from utilities.package_install import install
 
-install("opencv-python-headless") 
 install("ale-py")
 install("gymnasium[atari, other]")
 
-import ale_py
 from utilities.atari.environments import Multi_Atari_Environment
 
-# Create a vector environment with 4 parallel instances of Breakout
-envs = Multi_Atari_Environment(
-    game_ids=["ALE/Pong-v5", "ALE/AirRaid-v5", "ALE/SpaceInvaders-v5", "ALE/Assault-v5"],
-    img_height=64,           # Height to resize frames to
-    img_width=32,            # Width to resize frames to
-    maxpool=True,               # 1. Solves "Invisibility" (Flickering)
-    stack_num=4,                # 2. Solves "Motion" (Velocity)
-    frameskip=4,                # 3. Standard time resolution
-    grayscale=True,             # 4. Removes noise (Color is usually irrelevant in Atari)
-    episodic_life=True,         # Recommended for harder games (Breakout/Montezuma)
-    reward_clipping=True,
-)
+game_ids = ["ALE/Pong-v5", "ALE/AirRaid-v5", "ALE/SpaceInvaders-v5", "ALE/Assault-v5"]
 
-# Reset all environments
-observations, info = envs.reset()
 
-# Measure total steps took in 1 second
-start_time = time.perf_counter()
-total_steps = 0
-for _ in range(10000):
-    # Take random actions in all environments
-    actions = envs.sample_valid_actions()
-    observations, rewards, terminations, truncations, infos = envs.step(actions)
-    total_steps += len(actions)
-    elapsed_time = time.perf_counter() - start_time
-    if elapsed_time >= 1.0:
-        break
+def run(rnd_reward, prepend_objective):
+    envs = Multi_Atari_Environment(
+        game_ids=game_ids,
+        episodic_life=False,        # True ends the episode on every lost life and restarts the game; keep False for hard-exploration games
+        reward_clipping=True,
+        prepend_objective=prepend_objective,
+        rnd_reward=rnd_reward,
+    )
 
-print(f"Throughput: {total_steps / elapsed_time:.2f} steps/second")
+    observations, info = envs.reset(seed=0)
+    for i, obs in enumerate(observations):
+        assert obs.shape == (envs.observation_size,) and obs.dtype == np.uint8, (obs.shape, obs.dtype)
+        if prepend_objective:
+            assert obs[0] == list(dict.fromkeys(game_ids)).index(game_ids[i]), (i, obs[0])
 
-# now draw one frame from each environment and save as images to /artifacts/log
-artifacts_path = f"{APP_ROOT}/log"
-os.makedirs(artifacts_path, exist_ok=True)
-for i, frame in enumerate(observations):
-    for j in range(frame.shape[0]):
-        f = frame[j, ...] * 255.0
-        img = Image.fromarray(f.astype(np.uint8), mode='L')  # 'L' mode for grayscale
-        img.save(f"{artifacts_path}/env_{i}_{j}.png")
+    # Measure throughput over 1 second of random play
+    start_time = time.perf_counter()
+    total_steps = 0
+    intrinsic = []
+    while True:
+        actions = envs.sample_valid_actions()
+        observations, rewards, terminations, truncations, infos = envs.step(actions)
+        intrinsic.extend(info["intrinsic_reward"] for info in infos)
+        total_steps += len(actions)
+        elapsed_time = time.perf_counter() - start_time
+        if elapsed_time >= 1.0:
+            break
 
-# Close the environment when done
-envs.close()
+    for obs in observations:
+        assert obs.shape == (envs.observation_size,) and obs.dtype == np.uint8, (obs.shape, obs.dtype)
+
+    print(f"rnd={rnd_reward} objective={prepend_objective} obs_size={envs.observation_size} "
+          f"throughput: {total_steps / elapsed_time:.2f} steps/second, mean intrinsic reward: {np.mean(intrinsic):.4f}")
+    envs.close()
+
+
+run(rnd_reward=False, prepend_objective=False)
+run(rnd_reward=True, prepend_objective=True)

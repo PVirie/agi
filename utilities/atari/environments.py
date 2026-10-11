@@ -1,18 +1,13 @@
+import ale_py
 import gymnasium as gym
 import numpy as np
 import time
-from gymnasium.wrappers import (
-    RecordEpisodeStatistics,
-    AtariPreprocessing,
-    FrameStackObservation,
-    ResizeObservation,
-    NormalizeReward,
-    ClipReward
-)
 
 from .rnd import RND_Model
 
-# Standard Atari Action Set (Order matters!)
+gym.register_envs(ale_py)
+
+# Full Atari action set, in ALE's action order (Order matters!)
 ATARI_ACTIONS = [
     "NOOP", "FIRE", "UP", "RIGHT", 
     "LEFT", "DOWN", "UPRIGHT", "UPLEFT", 
@@ -22,36 +17,45 @@ ATARI_ACTIONS = [
 ]
 
 
-class Frame_Capture(gym.Wrapper):
-    """Keeps the latest full-resolution grayscale frame, before resizing and stacking, for the RND model."""
+class Ram_Preprocessing(gym.Wrapper):
+    """The RAM counterpart of AtariPreprocessing, which cannot be used here because it replaces the
+    observation with the screen. Frame skipping is left to ALE (v5 default: 4 frames, sticky actions).
 
-    def _capture(self, obs):
-        frame = np.array(obs, dtype=np.uint8)
-        if frame.ndim == 3:
-            frame = (frame.astype(np.float32) @ np.array([0.299, 0.587, 0.114], dtype=np.float32)).astype(np.uint8)
-        self.frame = frame
+    - reset: a random number (1..noop_max) of NOOP steps for start-state diversity.
+    - terminal_on_life_loss: report termination when a life is lost; the next reset restarts the game.
+    """
+
+    def __init__(self, env, noop_max=30, terminal_on_life_loss=True):
+        super().__init__(env)
+        self.noop_max = noop_max
+        self.terminal_on_life_loss = terminal_on_life_loss
+        self.ale = env.unwrapped.ale
+        self.lives = 0
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        self._capture(obs)
+        if self.noop_max > 0:
+            noops = self.env.unwrapped.np_random.integers(1, self.noop_max + 1)
+            for _ in range(noops):
+                obs, _, termination, truncation, info = self.env.step(0)
+                if termination or truncation:
+                    obs, info = self.env.reset()
+        self.lives = self.ale.lives()
         return obs, info
 
     def step(self, action):
         obs, reward, termination, truncation, info = self.env.step(action)
-        self._capture(obs)
+        if self.terminal_on_life_loss:
+            lives = self.ale.lives()
+            termination = termination or lives < self.lives
+            self.lives = lives
         return obs, reward, termination, truncation, info
 
 
 class Multi_Atari_Environment:
     def __init__(self, 
         game_ids,
-        img_height=64,
-        img_width=32,
-        maxpool=True,
-        stack_num=4,
-        frameskip=4,
-        grayscale=True,
-        episodic_life=True,
+        episodic_life=False,
         reward_clipping=True,
         prepend_objective=False,
         rnd_reward=False,
@@ -63,70 +67,40 @@ class Multi_Atari_Environment:
         ):
 
         self.game_ids = game_ids
-        self.stack_num = stack_num
         self.prepend_objective = prepend_objective
+        self.reward_clipping = reward_clipping
 
-        # get num unique game_ids
-        unique_game_ids = set(game_ids)
-        self.objective_size = len(unique_game_ids)
+        # the objective is a single uint8 byte, like each RAM byte: the index of the game id in order of first appearance
+        unique_game_ids = list(dict.fromkeys(game_ids))
+        if len(unique_game_ids) > 256:
+            raise ValueError(f"At most 256 unique games fit in a uint8 objective, got {len(unique_game_ids)}")
+        self.num_objectives = len(unique_game_ids)
+        self.objective_size = 1
+        self.game_id_to_objective = {
+            gid: np.array([k], dtype=np.uint8) for k, gid in enumerate(unique_game_ids)
+        }
 
-        # now get one-hot encoding for each game_id in the order they appear in game_ids
-        self.game_id_to_objective = {}
-        for i, gid in enumerate(game_ids):
-            if gid not in self.game_id_to_objective:
-                objective = np.zeros(self.objective_size, dtype=np.float32)
-                objective[len(self.game_id_to_objective)] = 1
-                self.game_id_to_objective[gid] = objective
-
-        # 1. Generate Available Actions List
         # Structure: List[List[int]] -> [[0, 2, 3], [0, 1, 4, 5], ...]
         self.available_actions = []
         self.envs = []
-        self.frame_captures = []
         for gid in game_ids:
-            # Initialize temp env with minimal action space to see what's valid
-            temp_env = gym.make(gid, full_action_space=False)
-            valid_action_names = temp_env.unwrapped.get_action_meanings()
-            # Convert names (e.g., "UP") to indices (e.g., 2)
-            game_indices = []
-            for name in valid_action_names:
-                if name in ATARI_ACTIONS:
-                    game_indices.append(ATARI_ACTIONS.index(name))
-            self.available_actions.append(game_indices)
-            temp_env.close()
-
-            # AtariPreprocessing max-pools the last two frames of its own skip, so ALE must not skip frames itself
-            env = gym.make(gid, full_action_space=True, render_mode=render_mode, frameskip=1 if maxpool else frameskip)
-            env = AtariPreprocessing(
-                env,
-                frame_skip=frameskip if maxpool else 1,
-                grayscale_obs=grayscale,
-                scale_obs=False, # returns uint8 (0-255). Ensure your Agent divides by 255.0!
-                terminal_on_life_loss=episodic_life,
-                noop_max=30
-            )
-            if rnd_reward:
-                env = Frame_Capture(env)
-                self.frame_captures.append(env)
-
-            # record stats before any other wrappers to capture true episode returns and lengths
-            env = RecordEpisodeStatistics(env)
-            if img_height != 84 or img_width != 84:
-                env = ResizeObservation(env, (img_height, img_width))
-            if reward_clipping:
-                # env = NormalizeReward(env, gamma=0.99)
-                env = ClipReward(env, min_reward=-1, max_reward=1)
-            if stack_num > 1:
-                env = FrameStackObservation(env, stack_size=stack_num, padding_type='zero')
+            # ale-py >= 0.9 has no "-ram" ids: RAM is selected with obs_type, giving the 128-byte console RAM (uint8)
+            env = gym.make(gid, obs_type="ram", full_action_space=True, render_mode=render_mode)
+            # ALE action values are indices into the full action set, i.e. into ATARI_ACTIONS
+            self.available_actions.append([int(a) for a in env.unwrapped.ale.getMinimalActionSet()])
+            env = Ram_Preprocessing(env, noop_max=30, terminal_on_life_loss=episodic_life)
             self.envs.append(env)
 
-        # one RND model shared by all envs: novelty is global. It reads the full 84x84 frame, not the policy's resized stack.
+        self.ram_size = self.envs[0].observation_space.shape[0]
+        self.observation_size = self.ram_size + (self.objective_size if prepend_objective else 0)
+
+        # one RND model shared by all envs: novelty is global. It reads the raw RAM of s', without the objective.
         self.rnd_weight = rnd_weight
         self.rnd = None
         if rnd_reward:
             self.rnd = RND_Model(
                 num_envs=len(self.envs),
-                frame_shape=self.frame_captures[0].observation_space.shape[:2],
+                obs_size=self.ram_size,
                 lr=rnd_lr, device=device, persistence_path=persistence_path
             )
 
@@ -145,17 +119,14 @@ class Multi_Atari_Environment:
 
 
     def prepare_observation(self, obs, env_index):
-        normalized = obs.astype(np.float32) / 255.0
-        flattened = normalized.flatten()
         if self.prepend_objective:
             objective = self.game_id_to_objective[self.game_ids[env_index]]
-            return np.concatenate([objective, flattened])
+            return np.concatenate([objective, obs])
         else:
-            return normalized
+            return obs
 
 
     def reset(self, seed=None):
-            # return self.envs.reset(seed=seed)
         for i, env in enumerate(self.envs):
             # offset per env: a shared seed would make every env replay the same episode
             obs, info = env.reset(seed=None if seed is None else seed + i)
@@ -177,24 +148,28 @@ class Multi_Atari_Environment:
                 self.return_rewards[i] = 0
                 self.return_terminations[i] = False
                 self.return_truncations[i] = False
+                self.return_infos[i] = {}
                 continue
             obs, reward, termination, truncation, info = env.step(actions[i])
             stepped.append((i, obs, reward, termination, truncation, info))
 
-        # novelty of s' is measured on its full frame, captured before any auto-reset replaces it
+        # novelty of s' is measured on its RAM, before any auto-reset replaces it
         intrinsic_rewards = np.zeros((len(stepped),), dtype=np.float32)
         if self.rnd is not None and len(stepped) > 0:
             intrinsic_rewards = self.rnd.compute_intrinsic_rewards(
-                np.stack([self.frame_captures[i].frame for i, *_ in stepped]),
+                np.stack([obs for _, obs, *_ in stepped]),
                 [i for i, *_ in stepped]
             )
 
         for (i, obs, reward, termination, truncation, info), r_intrinsic in zip(stepped, intrinsic_rewards):
             env = self.envs[i]
-            extrinsic_reward = float(reward)
+            # clipping applies to the training reward only; the episode statistics keep the true game score
+            game_reward = float(reward)
+            extrinsic_reward = float(np.clip(game_reward, -1.0, 1.0)) if self.reward_clipping else game_reward
             total_reward = extrinsic_reward + self.rnd_weight * float(r_intrinsic)
 
             info["original_reward"] = extrinsic_reward
+            info["game_reward"] = game_reward
             info["intrinsic_reward"] = float(r_intrinsic)
 
             self.return_rewards[i] = total_reward
@@ -202,7 +177,7 @@ class Multi_Atari_Environment:
             self.return_truncations[i] = truncation
             self.return_infos[i] = info
 
-            self.total_return[i] += extrinsic_reward
+            self.total_return[i] += game_reward
             self.total_aux_return[i] += total_reward
             self.total_length[i] += 1
             self.cumulative_length[i] += 1
@@ -213,7 +188,7 @@ class Multi_Atari_Environment:
                     "l": self.total_length[i],
                     "e": self.cumulative_length[i],
                     "t": time.perf_counter() - self.total_duration[i],
-                    # same convention as MiniGrid: an episode with positive extrinsic return counts as a success
+                    # same convention as MiniGrid: an episode with positive game score counts as a success
                     "s": 1.0 if self.total_return[i] > 0 else 0.0
                 }
                 obs, _ = env.reset() # You must manually reset!
