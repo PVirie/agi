@@ -58,25 +58,22 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             max_len=internal_state_size,
         )
 
-        # each RAM address gets its own value table: byte semantics are address-specific, not shared
-        self.obs_embedding = nn.Embedding(external_state_size * dict_size, embedding_dim, padding_idx=None)  # for obs
-        self.register_buffer(
-            "obs_address_offsets",
-            torch.arange(external_state_size, dtype=torch.long) * dict_size,
-            persistent=False
-        )
-
-        self.obs_feature_extraction = ResNet(
-            output_dims=hidden_size, 
-            input_dims=external_state_size * embedding_dim, 
-            hidden_dims=hidden_size, 
-            layers=[hidden_size for _ in layers]
+        # RAM bytes are often bitfields (flags, inventory), so unpack each byte into 8 binary inputs plus its scaled value
+        self.register_buffer("obs_bit_shifts", torch.arange(8, dtype=torch.long), persistent=False)
+        self.obs_feature_size = hidden_size
+        self.obs_feature_extraction = nn.Sequential(
+            nn.Linear(external_state_size * 9, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, self.obs_feature_size),
+            nn.LayerNorm(self.obs_feature_size),
+            nn.SiLU(),
         )
 
         # internal_state, obs -> hidden
         self.backbone = ResNet(
             output_dims=hidden_size, 
-            input_dims=hidden_size + hidden_size, 
+            input_dims=hidden_size + self.obs_feature_size, 
             hidden_dims=hidden_size, 
             layers=[hidden_size for _ in layers]
         )
@@ -122,8 +119,9 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         # Reset parameters of all layers
         self.internal_state_embedding.reset_parameters()
         self.internal_state_feature_extraction.reset_parameters()
-        self.obs_embedding.reset_parameters()
-        self.obs_feature_extraction.reset_parameters()
+        for m in self.obs_feature_extraction:
+            if hasattr(m, "reset_parameters"):
+                m.reset_parameters()
         self.backbone.reset_parameters()
 
         def init_actor_weights(m):
@@ -165,10 +163,13 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         internal_state_embedded = self.internal_state_embedding(internal_state.long())  # (batch_size, context_size, internal_state_size, embedding_dim)
         internal_state_features = self.internal_state_feature_extraction(internal_state_embedded, padding_mask)  # (batch_size, context_size, hidden_size)
 
-        obs_indices = obs.long().clamp_(0, self.dict_size - 1) + self.obs_address_offsets  # (batch_size, context_size, external_state_size)
-        obs_embedded = self.obs_embedding(obs_indices)  # (batch_size, context_size, external_state_size, embedding_dim)
-        obs_embedded = obs_embedded.flatten(start_dim=-2)  # (batch_size, context_size, external_state_size * embedding_dim)
-        obs_features = self.obs_feature_extraction(obs_embedded)  # (batch_size, context_size, hidden_size)
+        obs_bytes = obs.long().clamp_(0, 255)  # (batch_size, context_size, external_state_size)
+        obs_bits = ((obs_bytes.unsqueeze(-1) >> self.obs_bit_shifts) & 1).float()  # (batch_size, context_size, external_state_size, 8)
+        obs_bits = obs_bits.flatten(start_dim=-2)  # (batch_size, context_size, external_state_size * 8)
+        # bits capture flags; the scaled value keeps numeric bytes (coordinates, counters) ordinal
+        obs_scalar = obs_bytes.float() / 255.0  # (batch_size, context_size, external_state_size)
+        obs_input = torch.cat([obs_bits, obs_scalar], dim=-1)  # (batch_size, context_size, external_state_size * 9)
+        obs_features = self.obs_feature_extraction(obs_input)  # (batch_size, context_size, obs_feature_size)
 
         base_input = torch.concat([internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
