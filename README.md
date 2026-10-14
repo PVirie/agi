@@ -126,7 +126,11 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [x] flipflop dataset
 - [x] Spatio-temporal learning
 - [x] Model 76: Cognitive Cartographer
-    - [x] minigrid environment
+    - [x] minigrid block-unlock-pickup
+    - [ ] babyai boss level
+        - [ ] increase model size
+    - [ ] atari montezuma's revenge
+        - [ ] test "ram" observation model
 - [ ] Simplified Cognitive map building
     - [ ] "recognized" location linking
     - [ ] External to internal action transfer
