@@ -172,7 +172,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_u"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_x"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
@@ -213,6 +213,8 @@ if __name__ == "__main__":
         embedding_dim = 8
         C = 4
         layers = [16, 32, 64]
+        cnn_channels = 64
+        cnn_blocks = 2
         minibatch_size = 64
         rollout_length = 512
     elif args.scale == "medium":
@@ -221,14 +223,18 @@ if __name__ == "__main__":
         embedding_dim = 16
         C = 8
         layers = [32, 64, 128, 128]
+        cnn_channels = 128
+        cnn_blocks = 2
         minibatch_size = 16
         rollout_length = 512
     else:
         # large 30GB VRAM
         hidden_size = 512
-        embedding_dim = 32
+        embedding_dim = 16
         C = 8
         layers = [32, 64, 128, 128]
+        cnn_channels = 128
+        cnn_blocks = 3
         minibatch_size = 12
         rollout_length = 512
 
@@ -242,6 +248,7 @@ if __name__ == "__main__":
         width=7, height=7, channel=3,
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
+        cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
         device=device, persistence_path=parameters_path
     ).to(device)
     if args.st_train:

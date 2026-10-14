@@ -11,8 +11,8 @@ from utilities.safe_torch_module import Safe_nn_Module
 # The other bytes (timers, enemy positions, ...) change on their own and would keep every state novel.
 # Games not listed here give RND the full RAM.
 RND_RAM_MASKS = {
-    "MontezumaRevenge": [3, 42, 43, 65, 66],
-    "Adventure": [10, 11, 12, 13, 31, 32, 33],
+    "MontezumaRevenge": [3, 42, 43, 57, 62],
+    "Pitfall": [97, 105],
 }
 
 

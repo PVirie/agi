@@ -164,6 +164,99 @@ class MiniGridCNN(nn.Module):
         return x
 
 
+class FiLMBlock(nn.Module):
+    """
+    Residual conv block whose features are modulated (FiLM) by a conditioning vector.
+    Spatial resolution is preserved (3x3 convs, padding=1, no pooling).
+    """
+    def __init__(self, channels, cond_dims, num_groups=8):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.norm1 = nn.GroupNorm(num_groups, channels)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        # affine comes from FiLM instead
+        self.norm2 = nn.GroupNorm(num_groups, channels, affine=False)
+        self.film = nn.Linear(cond_dims, 2 * channels)
+
+
+    def reset_parameters(self):
+        self.conv1.apply(init_weights)
+        self.norm1.apply(init_weights)
+        self.conv2.apply(init_weights)
+        # start as identity modulation: gamma = 1, beta = 0
+        nn.init.zeros_(self.film.weight)
+        with torch.no_grad():
+            self.film.bias.zero_()
+            self.film.bias[:self.film.out_features // 2].fill_(1.0)
+
+
+    def forward(self, x, cond):
+        # x: (N, C, H, W), cond: (N, cond_dims)
+        h = torch.relu(self.norm1(self.conv1(x)))
+        h = self.norm2(self.conv2(h))
+        gamma, beta = self.film(cond).chunk(2, dim=-1)
+        h = h * gamma[..., None, None] + beta[..., None, None]
+        return x + torch.relu(h)
+
+
+class FiLMMiniGridCNN(nn.Module):
+    """
+    Instruction-conditioned encoder for small symbolic grids (e.g. MiniGrid 7x7x3),
+    following the BabyAI FiLM baseline: per-channel categorical embeddings,
+    a 1x1 stem, a stack of FiLM residual blocks at full spatial resolution, then
+    flatten (keeps egocentric object positions) and project to `output_dims`.
+    """
+    def __init__(self, output_dims, cond_dims, input_channels, width, height, vocab_size=256, embedding_dim=8, channels=128, num_blocks=2):
+        super().__init__()
+
+        self.output_dims = output_dims
+        self.cond_dims = cond_dims
+        self.input_channels = input_channels
+        self.width = width
+        self.height = height
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.channels = channels
+
+        self.embeddings = nn.ModuleList([
+            nn.Embedding(vocab_size, embedding_dim) for _ in range(input_channels)
+        ])
+        feature_channels = input_channels * embedding_dim
+
+        self.stem = nn.Sequential(
+            nn.Conv2d(feature_channels, channels, kernel_size=1),
+            nn.ReLU(),
+        )
+        self.blocks = nn.ModuleList([FiLMBlock(channels, cond_dims) for _ in range(num_blocks)])
+
+        self.fc = nn.Sequential(
+            nn.Linear(channels * height * width, output_dims),
+            nn.ReLU()
+        )
+
+
+    def reset_parameters(self):
+        for embedding in self.embeddings:
+            embedding.reset_parameters()
+        self.stem.apply(init_weights)
+        for block in self.blocks:
+            block.reset_parameters()
+        self.fc.apply(init_weights)
+
+
+    def forward(self, x, cond):
+        # x: (B, H, W, C) with per-channel categorical indices, cond: (B, cond_dims)
+        embedded = [self.embeddings[c](x[..., c].long()) for c in range(self.input_channels)]
+        x = torch.cat(embedded, dim=-1)  # (B, H, W, C * embedding_dim)
+        x = x.permute(0, 3, 1, 2)  # (B, C * embedding_dim, H, W)
+        x = self.stem(x)
+        for block in self.blocks:
+            x = block(x, cond)
+        x = torch.flatten(x, start_dim=1)
+        x = self.fc(x)
+        return x
+
+
 class ImpalaBlock1D(nn.Module):
     """
     A 1D version of the IMPALA block for processing sequences.

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from implementations.networks.torch.components.std_resnet import ResNet
-from implementations.networks.torch.components.std_conv import MiniGridCNN
+from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
 from implementations.networks.torch.components.wavenet import BasicWavenet
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.policy.minigrid import Policy_Core as Minigrid_Policy_Core
@@ -20,6 +20,7 @@ class Policy_Core(Minigrid_Policy_Core):
                  width, height, channel,
                  dict_size, embedding_dim, pad_token_id,
                  hidden_size, layers, 
+                 cnn_channels=128, cnn_blocks=2,
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
@@ -65,13 +66,17 @@ class Policy_Core(Minigrid_Policy_Core):
             nhead=8, 
             num_layers=4,
             max_len=internal_state_size + goal_size + inventory_size,
+            use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
         )
 
-        self.conv_layers = MiniGridCNN(
+        # vision conditioned on the instruction/internal state features via FiLM
+        self.conv_layers = FiLMMiniGridCNN(
             output_dims=hidden_size, 
+            cond_dims=hidden_size,
             input_channels=channel, 
             width=width, height=height,
-            vocab_size=256, embedding_dim=embedding_dim
+            vocab_size=256, embedding_dim=8,
+            channels=cnn_channels, num_blocks=cnn_blocks
         )
 
         # internal_state, goal, inv, obs -> hidden
@@ -186,7 +191,8 @@ class Policy_Core(Minigrid_Policy_Core):
         internal_state_features = self.internal_state_feature_extraction(internal_state_goal_embedded, padding_mask)  # (batch_size, context_size, hidden_size)
 
         obs_features = torch.reshape(obs, (batch_size * context_size, self.height, self.width, self.channel))  # (batch_size * context_size, height, width, channel)
-        obs_features = self.conv_layers(obs_features)  # (batch_size * context_size, hidden_size)
+        cond = internal_state_features.reshape(batch_size * context_size, self.hidden_size)
+        obs_features = self.conv_layers(obs_features, cond)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
         base_input = torch.concat([internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)

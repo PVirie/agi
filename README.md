@@ -128,9 +128,10 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] Model 76: Cognitive Cartographer
     - [x] minigrid block-unlock-pickup
     - [ ] babyai boss level
-        - [ ] increase model size
+        - [x] update model
     - [ ] atari montezuma's revenge
         - [ ] test "ram" observation model
+        - [ ] crack "ram" memory type: categorical vs continuous
 - [ ] Simplified Cognitive map building
     - [ ] "recognized" location linking
     - [ ] External to internal action transfer
