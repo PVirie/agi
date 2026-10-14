@@ -87,7 +87,8 @@ class Multi_Atari_Environment:
             # ale-py >= 0.9 has no "-ram" ids: RAM is selected with obs_type, giving the 128-byte console RAM (uint8)
             env = gym.make(gid, obs_type="ram", full_action_space=True, render_mode=render_mode)
             # ALE action values are indices into the full action set, i.e. into ATARI_ACTIONS
-            self.available_actions.append([int(a) for a in env.unwrapped.ale.getMinimalActionSet()])
+            # (ale-py >= 0.12 binds Action as a plain Enum, which int() rejects)
+            self.available_actions.append([a.value for a in env.unwrapped.ale.getMinimalActionSet()])
             env = Ram_Preprocessing(env, noop_max=30, terminal_on_life_loss=episodic_life)
             self.envs.append(env)
 
