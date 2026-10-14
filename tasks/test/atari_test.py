@@ -17,22 +17,32 @@ game_ids = ["ALE/Pong-v5", "ALE/AirRaid-v5", "ALE/SpaceInvaders-v5", "ALE/Assaul
 
 
 def test_rnd_ram_mask():
-    # mixed batch: the masked games read only their selected bytes, zero-padded to the longest mask
-    mixed_ids = ["ALE/MontezumaRevenge-v5", "ALE/Adventure-v5", "ALE/MontezumaRevenge-v5"]
+    # mixed batch: every (game, byte) is its own field; each kind is padded to the longest mask of that kind
+    mixed_ids = ["ALE/MontezumaRevenge-v5", "ALE/Adventure-v5", "ALE/MontezumaRevenge-v5", "ALE/Pitfall-v5"]
     ram_mask = RAM_Mask(mixed_ids, ram_size=128)
-    assert ram_mask.feature_size == len(RND_RAM_MASKS["Adventure"])
+    montezuma, adventure, pitfall = (RND_RAM_MASKS[g] for g in ("MontezumaRevenge", "Adventure", "Pitfall"))
+    assert ram_mask.categorical_size == len(adventure["categorical"])
+    assert ram_mask.continuous_size == len(adventure["continuous"])
+    assert ram_mask.num_categorical_fields == len(montezuma["categorical"]) + len(adventure["categorical"])
 
     rams = np.random.default_rng(0).integers(0, 256, size=(len(mixed_ids), 128), dtype=np.uint8)
-    features = ram_mask(rams, [0, 1, 2])
-    assert features.shape == (3, ram_mask.feature_size) and features.dtype == np.uint8
-    montezuma = RND_RAM_MASKS["MontezumaRevenge"]
+    tokens, values, fields = ram_mask(rams, [0, 1, 2, 3])
+    assert tokens.shape == (4, ram_mask.categorical_size) and values.shape == fields.shape == (4, ram_mask.continuous_size)
     for row in (0, 2):
-        assert np.array_equal(features[row, :len(montezuma)], rams[row, montezuma])
-        assert not features[row, len(montezuma):].any()
-    assert np.array_equal(features[1], rams[1, RND_RAM_MASKS["Adventure"]])
+        n = len(montezuma["categorical"])
+        # same game, same fields: the token only depends on the byte value
+        assert np.array_equal(tokens[row, :n] % 256, rams[row, montezuma["categorical"]])
+        assert (tokens[row, n:] == ram_mask.padding_token).all()
+        assert np.array_equal(values[row, :len(montezuma["continuous"])], rams[row, montezuma["continuous"]])
+    assert np.array_equal(tokens[0] // 256, tokens[2] // 256)
+    # different games never share a field
+    assert not set(tokens[0, :len(montezuma["categorical"])] // 256) & set(tokens[1] // 256)
+    assert not set(fields[0]) & set(fields[1])
+    assert (tokens[3] == ram_mask.padding_token).all() and (fields[3] >= 0).sum() == len(pitfall["continuous"])
 
-    # unlisted games keep the full RAM
-    assert RAM_Mask(game_ids[:1], ram_size=128).feature_size == 128
+    # unlisted games read the full RAM as continuous
+    full = RAM_Mask(game_ids[:1], ram_size=128)
+    assert full.categorical_size == 0 and full.continuous_size == 128
     print("rnd ram mask: ok")
 
 

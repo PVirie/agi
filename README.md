@@ -130,8 +130,8 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [ ] babyai boss level
         - [x] update model
     - [ ] atari montezuma's revenge
-        - [ ] test "ram" observation model
-        - [ ] crack "ram" memory type: categorical vs continuous
+        - [x] crack "ram" memory type: categorical vs continuous
+        - [ ] update model
 - [ ] Simplified Cognitive map building
     - [ ] "recognized" location linking
     - [ ] External to internal action transfer
