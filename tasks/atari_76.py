@@ -223,7 +223,8 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
 
-    game_ids = ["ALE/MontezumaRevenge-v5"] * 512
+    # game_ids = ["ALE/MontezumaRevenge-v5"] * 512
+    game_ids = ["ALE/Adventure-v5"] * 512
     
     vocab_size = 256
 

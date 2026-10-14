@@ -1,9 +1,54 @@
+import logging
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
 from utilities.safe_torch_module import Safe_nn_Module
+
+
+# RAM bytes RND reads per game, keyed by the game name in the id (e.g. "ALE/MontezumaRevenge-v5" -> "MontezumaRevenge").
+# The other bytes (timers, enemy positions, ...) change on their own and would keep every state novel.
+# Games not listed here give RND the full RAM.
+RND_RAM_MASKS = {
+    "MontezumaRevenge": [3, 42, 43, 65, 66],
+    "Adventure": [10, 11, 12, 13, 31, 32, 33],
+}
+
+
+def game_name(game_id):
+    """ "ALE/MontezumaRevenge-v5" or "MontezumaRevengeNoFrameskip-v4" -> "MontezumaRevenge" """
+    name = game_id.split("/")[-1].split("-")[0]
+    for suffix in ("NoFrameskip", "Deterministic"):
+        name = name.removesuffix(suffix)
+    return name
+
+
+class RAM_Mask:
+    """Per env, the RAM bytes RND reads. Games with shorter masks are zero-padded to the longest one,
+    so envs of different games can share the RND batch."""
+
+    def __init__(self, game_ids, ram_size, ram_masks=None):
+        ram_masks = RND_RAM_MASKS if ram_masks is None else ram_masks
+        env_masks = []
+        for gid in game_ids:
+            indices = np.asarray(ram_masks.get(game_name(gid), range(ram_size)), dtype=np.int64)
+            if indices.ndim != 1 or len(indices) == 0 or indices.min() < 0 or indices.max() >= ram_size:
+                raise ValueError(f"Invalid RND RAM mask for {gid}: {indices.tolist()}")
+            env_masks.append(indices)
+
+        self.feature_size = max(len(indices) for indices in env_masks)
+        self.indices = np.zeros((len(env_masks), self.feature_size), dtype=np.int64)
+        self.valid = np.zeros((len(env_masks), self.feature_size), dtype=np.uint8)
+        for i, indices in enumerate(env_masks):
+            self.indices[i, :len(indices)] = indices
+            self.valid[i, :len(indices)] = 1
+
+
+    def __call__(self, rams, env_indices):
+        """rams: uint8 (N, ram_size) of the envs in env_indices -> uint8 (N, feature_size) masked bytes."""
+        env_indices = np.asarray(env_indices)
+        return np.take_along_axis(np.asarray(rams), self.indices[env_indices], axis=1) * self.valid[env_indices]
 
 
 class Running_Mean_Std(nn.Module):
@@ -41,8 +86,8 @@ def mlp_trunk(in_size, hidden_size):
 class RND_Model(nn.Module, Safe_nn_Module):
     """Random Network Distillation (Burda et al., 2018), after openai/random-network-distillation, shared and batched across environments.
 
-    - Input: the RAM vector of s' (uint8, 128 bytes for Atari), normalized per byte by running statistics
-      and clipped to [-5, 5].
+    - Input: the RAM of s', reduced to the bytes of its game's mask (RND_RAM_MASKS), normalized per byte by
+      running statistics and clipped to [-5, 5].
     - Target: frozen random MLP -> linear(rep_size). Predictor: same MLP -> 2 hidden ReLU layers -> linear(rep_size).
       Every layer uses orthogonal init with gain sqrt(2).
     - r_intrinsic = mean_k (predictor(s')_k - target(s')_k)^2 / running_std(per-env discounted intrinsic return)
@@ -52,8 +97,9 @@ class RND_Model(nn.Module, Safe_nn_Module):
 
     def __init__(
         self,
-        num_envs: int,
-        obs_size: int = 128,
+        game_ids,
+        ram_size: int = 128,
+        ram_masks: dict = None,
         trunk_hidden_size: int = 256,
         rep_size: int = 256,
         predictor_hidden_size: int = 256,
@@ -67,7 +113,9 @@ class RND_Model(nn.Module, Safe_nn_Module):
     ):
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="rnd_model", device=device, persistence_path=persistence_path)
-        self.obs_size = obs_size
+        num_envs = len(game_ids)
+        self.ram_mask = RAM_Mask(game_ids, ram_size, ram_masks)
+        self.obs_size = obs_size = self.ram_mask.feature_size
         self.gamma = gamma
         # the reference keeps the predictor's effective batch at that of 32 envs as the env count grows
         self.update_proportion = min(1.0, 32.0 / num_envs) if update_proportion is None else update_proportion
@@ -122,16 +170,16 @@ class RND_Model(nn.Module, Safe_nn_Module):
         return ((states - mean) / std).clamp(-5.0, 5.0)
 
 
-    def compute_intrinsic_rewards(self, states, env_indices):
+    def compute_intrinsic_rewards(self, rams, env_indices):
         """
-        states: uint8 array (N, obs_size), the RAM of s' for each env that stepped.
+        rams: uint8 array (N, ram_size), the RAM of s' for each env that stepped.
         env_indices: the env index of each state, for the per-env discounted intrinsic return.
         Returns np array (N,) of normalized intrinsic rewards and trains the predictor one step.
         """
         if len(env_indices) == 0:
             return np.zeros((0,), dtype=np.float32)
 
-        x = torch.as_tensor(np.asarray(states), device=self.device).to(torch.float32).reshape(-1, self.obs_size)
+        x = torch.as_tensor(self.ram_mask(rams, env_indices), device=self.device).to(torch.float32)
         # stats include the current batch, so the very first batch is normalized by its own statistics
         self.obs_stats.update(x)
         x = self._normalize(x)
@@ -167,3 +215,10 @@ class RND_Model(nn.Module, Safe_nn_Module):
     def load(self, override_persistence_path=None):
         Safe_nn_Module.load(self, override_persistence_path=override_persistence_path)
         self.learner.load(override_persistence_path=override_persistence_path)
+        # Adam's load_state_dict does not check shapes, so a checkpoint saved with another obs_size would
+        # only fail at the next step; the network itself then failed to load, so start the optimizer fresh too
+        for p in self.predictor_net.parameters():
+            if any(torch.is_tensor(v) and v.dim() > 0 and v.shape != p.shape for v in self.optimizer.state.get(p, {}).values()):
+                logging.warning("RND optimizer checkpoint does not match the predictor shapes, discarding it.")
+                self.optimizer.state.clear()
+                break

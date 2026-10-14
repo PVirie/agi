@@ -94,13 +94,13 @@ class Multi_Atari_Environment:
         self.ram_size = self.envs[0].observation_space.shape[0]
         self.observation_size = self.ram_size + (self.objective_size if prepend_objective else 0)
 
-        # one RND model shared by all envs: novelty is global. It reads the raw RAM of s', without the objective.
+        # one RND model shared by all envs: novelty is global. It reads the RAM of s' (masked per game), without the objective.
         self.rnd_weight = rnd_weight
         self.rnd = None
         if rnd_reward:
             self.rnd = RND_Model(
-                num_envs=len(self.envs),
-                obs_size=self.ram_size,
+                game_ids=game_ids,
+                ram_size=self.ram_size,
                 lr=rnd_lr, device=device, persistence_path=persistence_path
             )
 

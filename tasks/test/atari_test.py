@@ -11,8 +11,29 @@ install("ale-py")
 install("gymnasium[atari, other]")
 
 from utilities.atari.environments import Multi_Atari_Environment
+from utilities.atari.rnd import RAM_Mask, RND_RAM_MASKS
 
 game_ids = ["ALE/Pong-v5", "ALE/AirRaid-v5", "ALE/SpaceInvaders-v5", "ALE/Assault-v5"]
+
+
+def test_rnd_ram_mask():
+    # mixed batch: the masked games read only their selected bytes, zero-padded to the longest mask
+    mixed_ids = ["ALE/MontezumaRevenge-v5", "ALE/Adventure-v5", "ALE/MontezumaRevenge-v5"]
+    ram_mask = RAM_Mask(mixed_ids, ram_size=128)
+    assert ram_mask.feature_size == len(RND_RAM_MASKS["Adventure"])
+
+    rams = np.random.default_rng(0).integers(0, 256, size=(len(mixed_ids), 128), dtype=np.uint8)
+    features = ram_mask(rams, [0, 1, 2])
+    assert features.shape == (3, ram_mask.feature_size) and features.dtype == np.uint8
+    montezuma = RND_RAM_MASKS["MontezumaRevenge"]
+    for row in (0, 2):
+        assert np.array_equal(features[row, :len(montezuma)], rams[row, montezuma])
+        assert not features[row, len(montezuma):].any()
+    assert np.array_equal(features[1], rams[1, RND_RAM_MASKS["Adventure"]])
+
+    # unlisted games keep the full RAM
+    assert RAM_Mask(game_ids[:1], ram_size=128).feature_size == 128
+    print("rnd ram mask: ok")
 
 
 def run(rnd_reward, prepend_objective):
@@ -51,5 +72,6 @@ def run(rnd_reward, prepend_objective):
     envs.close()
 
 
+test_rnd_ram_mask()
 run(rnd_reward=False, prepend_objective=False)
 run(rnd_reward=True, prepend_objective=True)
