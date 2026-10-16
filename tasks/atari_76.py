@@ -180,6 +180,7 @@ if __name__ == "__main__":
     parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
     parser.add_argument("--rnd",                    "-rnd", action="store_true", help="Add Random Network Distillation intrinsic reward. Default is False.")
     parser.add_argument("--rnd-weight",             "-rndw", type=float, default=0.5, help="Weight of the normalized RND intrinsic reward. Default is 0.1.")
+    parser.add_argument("--rnd-lr",                 "-rndlr", type=float, default=1e-5, help="RND predictor learning rate; lower makes the intrinsic reward decay slower. Default is 1e-4.")
     args = parser.parse_args()
 
 
@@ -213,6 +214,8 @@ if __name__ == "__main__":
         experiment_path += "_lv"
     if args.rnd:
         experiment_path += f"_rnd{args.rnd_weight:g}"
+        if args.rnd_lr != parser.get_default("rnd_lr"):
+            experiment_path += f"_lr{args.rnd_lr:g}"
 
     if args.reset:
         # clear the experiment path
@@ -235,6 +238,7 @@ if __name__ == "__main__":
         prepend_objective=False,
         rnd_reward=args.rnd,
         rnd_weight=args.rnd_weight,
+        rnd_lr=args.rnd_lr,
         device=device,
         persistence_path=parameters_path,
     )

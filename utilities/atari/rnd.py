@@ -268,6 +268,9 @@ class RND_Model(nn.Module, Safe_nn_Module):
         )
 
         self.load()
+        # Adam's state_dict carries the lr it was saved with; the configured lr wins on resume
+        for group in self.optimizer.param_groups:
+            group["lr"] = lr
 
 
     def _normalize(self, values, fields):

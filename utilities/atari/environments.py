@@ -60,7 +60,7 @@ class Multi_Atari_Environment:
         prepend_objective=False,
         rnd_reward=False,
         rnd_weight=1.0,
-        rnd_lr=1e-4,
+        rnd_lr=1e-5,
         device="cpu",
         persistence_path=None,
         render_mode=None,
