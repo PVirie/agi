@@ -198,6 +198,7 @@ if __name__ == "__main__":
     parser.add_argument("--rnd-cell-bin",           "-rndcb", type=int, default=8, help="Bin size of the position bytes in an episodic RAM cell. Default is 8.")
     parser.add_argument("--rnd-stats-window",       "-rndsw", type=int, default=0, help="Agent-env steps over which the RND reward statistics are averaged; 0 keeps the whole history. Default is 0.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
+    parser.add_argument("--minibatch-size",         "-mb", type=int, default=0, help="Envs per PPO minibatch; 0 fits it to the scale's VRAM target. Default is 0.")
     args = parser.parse_args()
 
 
@@ -312,6 +313,9 @@ if __name__ == "__main__":
         num_envs=len(game_ids),
         target_gb=target_gb,
     )
+    if args.minibatch_size > 0:
+        # the fit over-reserves at long rollouts (its whole intercept scales with rollout_length), so it can be raised by hand
+        minibatch_size = args.minibatch_size
 
     # gamma is per agent step: spread a 0.997-per-game-step discount over up to max_thought_steps + 1 agent steps
     gamma = 0.997 ** (1.0 / (args.max_thought_steps + 1))
