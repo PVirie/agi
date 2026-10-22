@@ -45,6 +45,14 @@ def format_float(f):
     else:
         return "{: .1f}".format(f)
 
+# logged every 2 rollouts, see Multi_Atari_Environment.diagnostics and PPO.last_stats
+DIAGNOSTIC_KEYS = [
+    "game_reward_per_step", "rewarded_step_fraction",
+    "rnd_error", "rnd_reward", "episodic_reward", "modulator", "intrinsic_reward",
+    "cells_seen", "categorical_seen",
+    "entropy", "approx_kl", "pg_loss", "v_loss",
+]
+
 async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
     observations, info = env.reset(seed=env_seed)
@@ -111,6 +119,11 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
         if steps % (rollout_length * 2) == 0 or should_stop:
             logging.info(f"{steps}| Returns: {', '.join([format_float(s) for s in total_returns])}")
             logging.info(f"{steps}| Selected actions: {actions}")
+
+            diagnostics = {**env.diagnostics(), **ppo_learner.last_stats}
+            logging.info(f"{steps}| Diagnostics: " + ", ".join(f"{k}={diagnostics[k]:.4g}" for k in DIAGNOSTIC_KEYS if k in diagnostics))
+            diagnostic_recorder.record([env.total_env_steps()] + [diagnostics.get(k) for k in DIAGNOSTIC_KEYS])
+            diagnostic_recorder.write()
             if torch.cuda.is_available():
                 # running maxima since process start, never reset: this is the probe measurement
                 logging.info(f"{steps}| Peak VRAM: {torch.cuda.max_memory_allocated() / 1024**3:.2f} GB allocated, {torch.cuda.max_memory_reserved() / 1024**3:.2f} GB reserved")
@@ -179,8 +192,12 @@ if __name__ == "__main__":
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
     parser.add_argument("--rnd",                    "-rnd", action="store_true", help="Add Random Network Distillation intrinsic reward. Default is False.")
-    parser.add_argument("--rnd-weight",             "-rndw", type=float, default=0.5, help="Weight of the normalized RND intrinsic reward. Default is 0.1.")
-    parser.add_argument("--rnd-lr",                 "-rndlr", type=float, default=1e-5, help="RND predictor learning rate; lower makes the intrinsic reward decay slower. Default is 1e-4.")
+    parser.add_argument("--rnd-weight",             "-rndw", type=float, default=0.5, help="Weight of the intrinsic reward. Default is 0.5.")
+    parser.add_argument("--rnd-lr",                 "-rndlr", type=float, default=1e-5, help="RND predictor learning rate; lower makes the intrinsic reward decay slower. Default is 1e-5.")
+    parser.add_argument("--rnd-episodic",           "-rnde", action="store_true", help="NGU-style intrinsic reward: per-episode RAM-cell novelty, modulated by RND. Default is False.")
+    parser.add_argument("--rnd-cell-bin",           "-rndcb", type=int, default=8, help="Bin size of the position bytes in an episodic RAM cell. Default is 8.")
+    parser.add_argument("--rnd-stats-window",       "-rndsw", type=int, default=0, help="Agent-env steps over which the RND reward statistics are averaged; 0 keeps the whole history. Default is 0.")
+    parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
     args = parser.parse_args()
 
 
@@ -205,7 +222,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/atari_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_u"
+    experiment_path = f"{APP_ROOT}/experiments/atari_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_v"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
@@ -216,6 +233,14 @@ if __name__ == "__main__":
         experiment_path += f"_rnd{args.rnd_weight:g}"
         if args.rnd_lr != parser.get_default("rnd_lr"):
             experiment_path += f"_lr{args.rnd_lr:g}"
+        if args.rnd_episodic:
+            experiment_path += "_ep"
+            if args.rnd_cell_bin != parser.get_default("rnd_cell_bin"):
+                experiment_path += f"{args.rnd_cell_bin}"
+        if args.rnd_stats_window > 0:
+            experiment_path += f"_sw{args.rnd_stats_window}"
+    if args.ent_coef != parser.get_default("ent_coef"):
+        experiment_path += f"_ent{args.ent_coef:g}"
 
     if args.reset:
         # clear the experiment path
@@ -239,11 +264,15 @@ if __name__ == "__main__":
         rnd_reward=args.rnd,
         rnd_weight=args.rnd_weight,
         rnd_lr=args.rnd_lr,
+        rnd_episodic=args.rnd_episodic,
+        rnd_cell_bin_size=args.rnd_cell_bin,
+        rnd_stats_window_steps=args.rnd_stats_window if args.rnd_stats_window > 0 else None,
         device=device,
         persistence_path=parameters_path,
     )
 
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "edges_per_node", "graph_nodes"]])
+    diagnostic_recorder = Episode_Recorder(f"{experiment_path}/diagnostics", headers=["env_steps"] + DIAGNOSTIC_KEYS)
     
     if args.scale == "small":
         # 12/16 GB
@@ -294,7 +323,8 @@ if __name__ == "__main__":
             device=device, persistence_path=parameters_path,
             lr=1e-4, minibatch_size=minibatch_size,
             gamma=gamma,
-            gae_lambda=0.95 if not args.low_var else 0.90
+            gae_lambda=0.95 if not args.low_var else 0.90,
+            ent_coef=args.ent_coef,
         )
     else:
         ppo_learner = PPO(
@@ -302,7 +332,8 @@ if __name__ == "__main__":
             device=device, persistence_path=parameters_path,
             lr=1e-4, minibatch_size=minibatch_size,
             gamma=gamma,
-            gae_lambda=0.95 if not args.low_var else 0.90
+            gae_lambda=0.95 if not args.low_var else 0.90,
+            ent_coef=args.ent_coef,
         )
     memory = Graph_Memory(
         num_batches=len(game_ids),

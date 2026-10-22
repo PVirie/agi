@@ -21,7 +21,8 @@ class PPO(RL_Learner, Safe_nn_Module):
                  device, persistence_path=None, 
                  lr=3e-4, minibatch_size=8,
                  gamma=0.99,
-                 gae_lambda=None):
+                 gae_lambda=None,
+                 ent_coef=0.01):
         """
         PPO: Proximal Policy Optimization Algorithm
 
@@ -36,12 +37,13 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.clip_coef = 0.2
         self.norm_adv = True
         self.clip_vloss = True
-        self.ent_coef = 0.01
+        self.ent_coef = ent_coef
         self.vf_coef = 0.5
         self.max_grad_norm = 0.5
         self.target_kl = None
 
         self.update_epochs = 4
+        self.last_stats = {}
         self.minibatch_size = minibatch_size
 
         # How causal credit received by a step is aggregated across the future steps it caused.
@@ -226,6 +228,10 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         self.policy_model.train()
 
+        # averaged over the minibatch updates of this call, for diagnostics (last_stats)
+        stat_sums = {"entropy": 0.0, "approx_kl": 0.0, "pg_loss": 0.0, "v_loss": 0.0}
+        num_updates = 0
+
         # Optimizing the policy and value network
         b_inds = np.arange(batch_size)
         for epoch in range(self.update_epochs):
@@ -286,6 +292,12 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
 
+                stat_sums["entropy"] += entropy_loss.detach()
+                stat_sums["approx_kl"] += approx_kl
+                stat_sums["pg_loss"] += pg_loss.detach()
+                stat_sums["v_loss"] += v_loss.detach()
+                num_updates += 1
+
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.all_parameters, self.max_grad_norm)
@@ -294,5 +306,7 @@ class PPO(RL_Learner, Safe_nn_Module):
             if self.target_kl is not None and approx_kl > self.target_kl:
                 break
 
+        if num_updates > 0:
+            self.last_stats = {k: float(v) / num_updates for k, v in stat_sums.items()}
         self.policy_model.eval()
 
