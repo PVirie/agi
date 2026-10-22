@@ -170,7 +170,7 @@ def fit_rollout_and_minibatch(scale, max_thought_steps, num_envs, target_gb):
     fixed_gb, gb_per_minibatch = MEMORY_FIT[scale]
     fixed_gb *= num_envs / 512
 
-    rollout_length = int(512 * (max_thought_steps + 1) / 3)
+    rollout_length = int(512 * (max_thought_steps + 1) * 4 / 3)
     # longest rollout at which minibatch 1 still fits the target
     rollout_length = min(rollout_length, int(512 * target_gb / (fixed_gb + gb_per_minibatch)))
 
