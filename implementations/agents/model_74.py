@@ -173,8 +173,8 @@ class Model_74(Agent):
         )
         self.last_cause_times.append(self.graph_memory.get_cause_times())
 
-        # update reward by mem_op_results (0 for True, -1 for False)
-        reward += np.array([0 if res else -1 for res in mem_op_results])
+        # update reward by mem_op_results (0 for True, -0.1 for False)
+        reward += np.array([0 if res else -0.1 for res in mem_op_results])
 
         context = self.graph_memory.get_node_context()
         context = context.reshape(batch_size, -1) # reshape to (batch_size, context_size)
