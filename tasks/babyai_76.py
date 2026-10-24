@@ -225,8 +225,8 @@ if __name__ == "__main__":
         layers = [32, 64, 128, 128]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 16
-        rollout_length = 512
+        minibatch_size = 8
+        rollout_length = 1024
     else:
         # large 30GB VRAM
         hidden_size = 512
@@ -235,8 +235,8 @@ if __name__ == "__main__":
         layers = [32, 64, 128, 128]
         cnn_channels = 128
         cnn_blocks = 3
-        minibatch_size = 12
-        rollout_length = 512
+        minibatch_size = 6
+        rollout_length = 1024
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -256,14 +256,16 @@ if __name__ == "__main__":
             policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
             device=device, persistence_path=parameters_path,
             lr=1e-4, minibatch_size=minibatch_size,
-            gae_lambda=0.95 if not args.low_var else 0.90
+            gamma=0.995,
+            gae_lambda=0.95 if not args.low_var else 0.90,
         )
     else:
         ppo_learner = PPO(
             policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
             device=device, persistence_path=parameters_path,
             lr=1e-4, minibatch_size=minibatch_size,
-            gae_lambda=0.95 if not args.low_var else 0.90
+            gamma=0.995,
+            gae_lambda=0.95 if not args.low_var else 0.90,
         )
     memory = Graph_Memory(
         num_batches=len(game_ids),

@@ -126,7 +126,7 @@ class Model_74(Agent):
             self.last_truncates.append([True for _ in range(batch_size)])
         
         content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
-        reward = np.array([r for r in rewards])
+        reward = np.array([r for r in rewards], dtype=np.float32)
 
         # get last action's position
         last_action = self.actions.get_last()
