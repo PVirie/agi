@@ -18,20 +18,21 @@ from utilities.package_install import install
 install("datasets")
 install("colorama")
 
-from utilities.flipflop.environments import FlipFlop_Environment, NUM_TOKENS
+from utilities.flipflop.environments import FlipFlop_Environment, NUM_TOKENS, TOKEN_PAD
 from utilities.episode_recorder import Episode_Recorder
 from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from implementations.agents import model_74
+from implementations.agents import model_76
 from implementations.networks.torch.policy.flipflop import Projector
 from implementations.networks.torch.policy.flipflop import Policy_Core
 from implementations.learning_algorithms.torch.ppo_graph import PPO
+from implementations.learning_algorithms.torch.ppo_graph import PPO as PPO_Graph
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(False)
 
 def format_float(f):
     if f > 0:
@@ -58,7 +59,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
         elapsed_time = time.perf_counter() - start_time
         should_stop = elapsed_time > max_running_time  # run for the specified max time
 
-        actions, _ = agent.choose_action(
+        actions, metrics = agent.choose_action(
             last_idles=last_idle,
             last_dones=last_done,
             last_truncates=last_truncated,
@@ -72,7 +73,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
 
         observations, rewards, terminations, truncations, infos = env.step(actions)
 
-        last_idle = [False for _ in observations]
+        last_idle = [a is None for a in actions]
         last_done = [terminations[i] or truncations[i] for i in range(len(observations))]
         last_truncated = [truncations[i] for i in range(len(observations))]
         last_reset = [terminations[i] or truncations[i] for i in range(len(observations))]
@@ -208,7 +209,7 @@ if __name__ == "__main__":
     np.random.seed(20260628)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/flipflop_74_size_{args.scale}_scheme_{args.scheme}_b"
+    experiment_path = f"{APP_ROOT}/experiments/flipflop_76_size_{args.scale}_scheme_{args.scheme}_u"
     if args.reset:
         # clear the experiment path
         if os.path.exists(experiment_path):
@@ -226,7 +227,7 @@ if __name__ == "__main__":
         hidden_size = 32
         embedding_dim = 4
         C = 3
-        layers = [16, 32, 32] # basic impala
+        layers = [1, 1, 1]
         minibatch_size = 32
         rollout_length = 128
         WORDS = NUM_TOKENS + 2
@@ -234,7 +235,7 @@ if __name__ == "__main__":
         hidden_size = 32
         embedding_dim = 8
         C = 3
-        layers = [16, 32, 64, 64] # medium impala
+        layers = [1, 1, 1, 1]
         minibatch_size = 32
         rollout_length = 128
         WORDS = NUM_TOKENS + 4
@@ -242,7 +243,7 @@ if __name__ == "__main__":
         hidden_size = 32
         embedding_dim = 8
         C = 3
-        layers = [16, 32, 64, 128, 128] # large impala
+        layers = [1, 1, 1, 1, 1, 1]
         minibatch_size = 32
         rollout_length = 128
         WORDS = NUM_TOKENS + 4
@@ -250,15 +251,15 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=7, ext_action_size=WORDS,
-        position_size=2,
-        content_size=1 + C,
-        dict_size=WORDS, embedding_dim=embedding_dim, pad_token_id=0,
+        int_action_size=7, ext_action_size=NUM_TOKENS,
+        write_action_size=WORDS,
+        internal_state_size=1 + C,
+        dict_size=WORDS, embedding_dim=embedding_dim, pad_token_id=TOKEN_PAD,
         hidden_size=hidden_size, layers=layers,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1, 2, 3]),
+        policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
         device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
     )
     memory = Graph_Memory(
@@ -266,9 +267,11 @@ if __name__ == "__main__":
         num_nodes=4096,
         max_edges_per_node=C,
         node_dim=1,
-        start_node_value=0
+        start_node_value=TOKEN_PAD
     )
-    agent = model_74.Model_74(
+    model_module = model_76
+    agent_class = model_76.Model_76
+    agent = agent_class(
         policy_model=policy_core,
         trainer=ppo_learner,
         context_collector=Collector(max_history=0),
@@ -277,7 +280,7 @@ if __name__ == "__main__":
         graph_memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=False,
-        scheme=model_74.Scheme(args.scheme)
+        scheme=model_module.Scheme(args.scheme)
     )
 
     if not args.eval:

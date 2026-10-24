@@ -19,9 +19,9 @@ from utilities.safe_torch_module import Safe_nn_Module
 class Policy_Core(Base_Policy_Core, Policy_Value_Network):
 
     def __init__(self, 
-                 int_action_size, ext_action_size, 
-                 position_size,
-                 content_size,
+                 int_action_size, ext_action_size,
+                 write_action_size,
+                 internal_state_size,
                  dict_size, embedding_dim, pad_token_id,
                  hidden_size, layers, 
                  device=None, 
@@ -30,24 +30,32 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         Safe_nn_Module.__init__(self, name="flipflop_core", device=device, persistence_path=persistence_path)
         self.device = device
 
+        self.int_action_size = int_action_size  # num classes for flag
+        self.ext_action_size = ext_action_size
+        self.write_action_size = write_action_size
+
+        self.internal_state_size = internal_state_size
         self.hidden_size = hidden_size
         self.embedding_dim = embedding_dim
 
-        self.int_action_size = int_action_size  # num classes for flag
-        self.ext_action_size = ext_action_size
-        self.position_size = position_size
-        self.content_size = content_size
-        self.packed_action_size = 1 + 1 + self.position_size + self.content_size
+        self.position_size = 2
+        self.content_size = internal_state_size + 1
+        self.packed_action_size = 1 + 1 + self.position_size + 1
         self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
 
+        self.internal_state_pos = 1 + 1 + 1 + self.position_size
+        self.obs_pos = self.internal_state_pos + self.internal_state_size
+
         self.pad_token_id = pad_token_id
-        self.embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
+
+        self.embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)
         self.feature_extraction = InstructionTransformer(
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=8, 
             num_layers=2, 
-            max_len=content_size
+            max_len=self.content_size,
+            use_pe=True
         )
 
         # goal, inv, obs -> hidden
@@ -71,12 +79,17 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         self.head_edge_1 = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, content_size - 1)
+            nn.Linear(hidden_size, internal_state_size - 1)
         )
         self.head_edge_2 = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, content_size - 1)
+            nn.Linear(hidden_size, internal_state_size - 1)
+        )
+        self.head_write_value = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, self.write_action_size)
         )
 
         self.head_value = nn.Sequential(
@@ -110,8 +123,8 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         self.head_ext.apply(init_actor_weights)
         self.head_edge_1.apply(init_actor_weights)
         self.head_edge_2.apply(init_actor_weights)
+        self.head_write_value.apply(init_actor_weights)
 
-        
         def init_value_weights(m):
             if isinstance(m, nn.Linear):
                 nn.init.orthogonal_(m.weight, gain=1.0)
@@ -126,11 +139,8 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         batch_size = context.size(0)
         context_size = context.size(1)
 
-        reward = context[:, :, 0:1]  # (batch_size, context_size, 1)
-        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
-        action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
-        content = context[:, :, 1 + 1 + 1 + self.position_size: ]  # (batch_size, context_size, content_size)
-                          
+        content = context[:, :, self.internal_state_pos: ]  # (batch_size, context_size, internal_state_size + 1)
+
         padding_mask = get_padding_mask(content, self.pad_token_id)  # (batch_size, context_size, goal_size)
         embedded = self.embedding(content.long())  # (batch_size, context_size, goal_size, embedding_dim)
         features = self.feature_extraction(embedded, padding_mask)  # (batch_size, context_size, hidden_size)
@@ -144,11 +154,12 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
         edge_1_logits = self.head_edge_1(base_output)  # (batch_size, context_size, content_size - 1)
         edge_2_logits = self.head_edge_2(base_output)  # (batch_size, context_size, content_size - 1)
+        write_value_logits = self.head_write_value(base_output)  # (batch_size, context_size, write_action_size)
 
         values = self.head_value(base_output)  # (batch_size, context_size, 1)
         values = values.squeeze(-1)  # (batch_size, context_size)
 
-        return int_logits, ext_logits, edge_1_logits, edge_2_logits, values
+        return int_logits, ext_logits, edge_1_logits, edge_2_logits, write_value_logits, values
     
 
     def get_action(self, context, valid_actions=None):
@@ -165,12 +176,13 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, edge_1_logits, edge_2_logits, values = self.compute(context)
+        logits_int, logits_ext, edge_1_logits, edge_2_logits, write_value_logits, _ = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
         probs_edge_1 = Categorical(logits=edge_1_logits)
         probs_edge_2 = Categorical(logits=edge_2_logits)
+        probs_write_value = Categorical(logits=write_value_logits)
 
         batch_size = context.size(0)
         context_size = context.size(1)
@@ -179,14 +191,14 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         action_ext = probs_ext.sample()
         edge_1 = probs_edge_1.sample()
         edge_2 = probs_edge_2.sample()
-        action_content = np.zeros((batch_size, context_size, self.content_size), dtype=np.float32)
+        write_value = probs_write_value.sample()
 
         action = np.concatenate([
             action_int.unsqueeze(-1).cpu().numpy(),
             action_ext.unsqueeze(-1).cpu().numpy(),
             edge_1.unsqueeze(-1).cpu().numpy(),
             edge_2.unsqueeze(-1).cpu().numpy(),
-            action_content
+            write_value.unsqueeze(-1).cpu().numpy()
         ], axis=-1)
 
         return action.astype(float)
@@ -207,32 +219,36 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, edge_1_logits, edge_2_logits, values = self.compute(context)
+        logits_int, logits_ext, edge_1_logits, edge_2_logits, write_value_logits, _ = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
         probs_edge_1 = Categorical(logits=edge_1_logits)
         probs_edge_2 = Categorical(logits=edge_2_logits)
+        probs_write_value = Categorical(logits=write_value_logits)
 
         action_int = selected_action[:, :, 0]
         action_ext = selected_action[:, :, 1]
         action_edge_1 = selected_action[:, :, 1 + 1 + 0]
         action_edge_2 = selected_action[:, :, 1 + 1 + 1]
+        action_write_value = selected_action[:, :, 1 + 1 + 2]
 
         log_prob_int = probs_int.log_prob(action_int)
         log_prob_ext = probs_ext.log_prob(action_ext)
         log_prob_edge_1 = probs_edge_1.log_prob(action_edge_1)
         log_prob_edge_2 = probs_edge_2.log_prob(action_edge_2)
+        log_prob_write_value = probs_write_value.log_prob(action_write_value)
         
         entropy_int = probs_int.entropy()
         entropy_ext = probs_ext.entropy()
         entropy_edge_1 = probs_edge_1.entropy()
         entropy_edge_2 = probs_edge_2.entropy()
+        entropy_write_value = probs_write_value.entropy()
 
         return torch.stack([
-            log_prob_int, log_prob_ext, log_prob_edge_1, log_prob_edge_2
+            log_prob_int, log_prob_ext, log_prob_edge_1, log_prob_edge_2, log_prob_write_value
         ], dim=-1), torch.stack([
-            entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2
+            entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2, entropy_write_value
         ], dim=-1)
 
 
@@ -254,32 +270,36 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, edge_1_logits, edge_2_logits, values = self.compute(context)
+        logits_int, logits_ext, edge_1_logits, edge_2_logits, write_value_logits, _ = self.compute(context)
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
         probs_edge_1 = Categorical(logits=edge_1_logits)
         probs_edge_2 = Categorical(logits=edge_2_logits)
+        probs_write_value = Categorical(logits=write_value_logits)
 
         action_int = selected_action[:, :, 0]
         action_ext = selected_action[:, :, 1]
         action_edge_1 = selected_action[:, :, 1 + 1 + 0]
         action_edge_2 = selected_action[:, :, 1 + 1 + 1]
+        action_write_value = selected_action[:, :, 1 + 1 + 2]
 
         log_prob_int = probs_int.log_prob(action_int)
         log_prob_ext = probs_ext.log_prob(action_ext)
         log_prob_edge_1 = probs_edge_1.log_prob(action_edge_1)
         log_prob_edge_2 = probs_edge_2.log_prob(action_edge_2)
+        log_prob_write_value = probs_write_value.log_prob(action_write_value)
         
         entropy_int = probs_int.entropy()
         entropy_ext = probs_ext.entropy()
         entropy_edge_1 = probs_edge_1.entropy()
         entropy_edge_2 = probs_edge_2.entropy()
+        entropy_write_value = probs_write_value.entropy()
 
         return torch.stack([
-            log_prob_int, log_prob_ext, log_prob_edge_1, log_prob_edge_2
+            log_prob_int, log_prob_ext, log_prob_edge_1, log_prob_edge_2, log_prob_write_value
         ], dim=-1), torch.stack([
-            entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2
+            entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2, entropy_write_value
         ], dim=-1), None # No auxiliary loss for flipflop task
 
 
@@ -299,39 +319,44 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
             available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
 
-        logits_int, logits_ext, edge_1_logits, edge_2_logits, values = self.compute(context)
+        logits_int, logits_ext, edge_1_logits, edge_2_logits, write_value_logits, values = self.compute(context)
 
         # remove last context for computing logprob and value, since it corresponds to the next observation after taking the last action
         logits_int = logits_int[:, :-1, :]
         logits_ext = logits_ext[:, :-1, :]
         edge_1_logits = edge_1_logits[:, :-1, :]
         edge_2_logits = edge_2_logits[:, :-1, :]
+        write_value_logits = write_value_logits[:, :-1, :]
         # but maintain values for all contexts, since we need the bootstrap value for the last context
 
         probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
         probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
         probs_edge_1 = Categorical(logits=edge_1_logits)
         probs_edge_2 = Categorical(logits=edge_2_logits)
+        probs_write_value = Categorical(logits=write_value_logits)
 
         action_int = selected_action[:, :, 0]
         action_ext = selected_action[:, :, 1]
         action_edge_1 = selected_action[:, :, 1 + 1 + 0]
         action_edge_2 = selected_action[:, :, 1 + 1 + 1]
+        action_write_value = selected_action[:, :, 1 + 1 + 2]
 
         log_prob_int = probs_int.log_prob(action_int)
         log_prob_ext = probs_ext.log_prob(action_ext)
         log_prob_edge_1 = probs_edge_1.log_prob(action_edge_1)
         log_prob_edge_2 = probs_edge_2.log_prob(action_edge_2)
+        log_prob_write_value = probs_write_value.log_prob(action_write_value)
         
         entropy_int = probs_int.entropy()
         entropy_ext = probs_ext.entropy()
         entropy_edge_1 = probs_edge_1.entropy()
         entropy_edge_2 = probs_edge_2.entropy()
+        entropy_write_value = probs_write_value.entropy()
 
         return torch.stack([
-            log_prob_int, log_prob_ext, log_prob_edge_1, log_prob_edge_2
+            log_prob_int, log_prob_ext, log_prob_edge_1, log_prob_edge_2, log_prob_write_value
         ], dim=-1), torch.stack([
-            entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2
+            entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2, entropy_write_value
         ], dim=-1), values
 
 
