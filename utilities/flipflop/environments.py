@@ -45,8 +45,8 @@ class FlipFlop_Environment:
     Observation: np.array([token_id], dtype=int64), token_id in 0..4
                  (w=0, r=1, i=2, 0=3, 1=4)
     Action:      integer token_id in 0..4
-    Reward:      +0.1 if prev obs was TOKEN_R and action == current obs
-                 -0.1 if prev obs was TOKEN_R and action != current obs
+    Reward:      +1.0 if prev obs was TOKEN_R and action == current obs
+                 -1.0 if prev obs was TOKEN_R and action != current obs
                   0.0 otherwise
     Termination: True at the final token of each sequence.
     Auto-reset:  On termination, each env advances to
@@ -115,9 +115,9 @@ class FlipFlop_Environment:
                 self._episode_eval_count[i] += 1.0
                 if int(actions[i]) == current_token:
                     self._episode_correct_count[i] += 1
-                    reward = np.float32(0.1)
+                    reward = np.float32(1.0)
                 else:
-                    reward = np.float32(-0.1)
+                    reward = np.float32(-1.0)
             else:
                 reward = np.float32(0.0)
 
