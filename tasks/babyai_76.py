@@ -21,6 +21,7 @@ install("colorama")
 
 from utilities import scatter
 from utilities.minigrid.environments import Multi_Environment
+from utilities.minigrid.babyai_language import shorten_mission
 from utilities.tokenizer import Text_Tokenizer
 from utilities.episode_recorder import Episode_Recorder
 from colorama import Fore, Back, Style
@@ -194,13 +195,15 @@ if __name__ == "__main__":
     # game_ids = ["BabyAI-MiniBossLevel-v0"] * 256 + ["BabyAI-GoToLocalS8N7-v0"] * 128 + ["BabyAI-UnlockPickupDist-v0"] * 128
     # game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
     game_ids = ["BabyAI-BossLevel-v0"] * 512
+    # compact missions: longest possible BossLevel mission is 27 tokens, total vocab ~58 words
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
-        mission_max_len=96,
+        mission_max_len=32,
         full_mdp=False,
         include_inventory=False,
-        position_bonus=False
+        position_bonus=False,
+        mission_translator=shorten_mission
     )
 
     mission_size = env.mission_max_len
@@ -225,7 +228,7 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 6
+        minibatch_size = 8
         rollout_length = 512
     else:
         # large 30GB VRAM
@@ -235,7 +238,7 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 10
+        minibatch_size = 12
         rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
