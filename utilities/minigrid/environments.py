@@ -19,10 +19,12 @@ class Multi_Environment:
         full_mdp_width=64,
         full_mdp_height=64,
         include_inventory=True,
-        position_bonus=False
+        position_bonus=False,
+        mission_translator=None
         ):
 
         self.mission_max_len = mission_max_len
+        self.mission_translator = mission_translator
         self.full_mdp = full_mdp
         self.full_mdp_width = full_mdp_width
         self.full_mdp_height = full_mdp_height
@@ -162,6 +164,8 @@ class Multi_Environment:
         # and the rest is 0, then flattened and concatenated with mission tokens
 
         mission = obs['mission']  # string
+        if self.mission_translator is not None:
+            mission = self.mission_translator(mission)
         mission_tokens = np.array(self.tokenizer([mission])[0], dtype=np.int32)
         # now padd to mission_max_len
         if len(mission_tokens) > self.mission_max_len:

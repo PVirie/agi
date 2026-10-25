@@ -126,7 +126,7 @@ class Model_74(Agent):
             self.last_truncates.append([True for _ in range(batch_size)])
         
         content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
-        reward = np.array([r for r in rewards])
+        reward = np.array([r for r in rewards], dtype=np.float32)
 
         # get last action's position
         last_action = self.actions.get_last()
@@ -136,13 +136,13 @@ class Model_74(Agent):
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
             flag = int_action[i].item()
             if r:
-                memory_action[i] |= Graph_Memory_Operation_Type.RESET
-            if not idle:
+                memory_action[i] = Graph_Memory_Operation_Type.RESET
+            elif not idle:
                 if flag == 1:
                     memory_action[i] |= Graph_Memory_Operation_Type.WRITE
                 if flag == 2:
                     memory_action[i] |= Graph_Memory_Operation_Type.CREATE
-            if idle:
+            elif idle:
                 # if idle, use content and reward from last thought
                 content[i, :] = last_content[i, :]
                 reward[i] = 0

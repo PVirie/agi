@@ -35,7 +35,7 @@ from implementations.learning_algorithms.torch.ppo_graph import PPO as PPO_Graph
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(False)
 
 def format_float(f):
     if f > 0:

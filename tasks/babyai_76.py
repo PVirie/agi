@@ -21,6 +21,7 @@ install("colorama")
 
 from utilities import scatter
 from utilities.minigrid.environments import Multi_Environment
+from utilities.minigrid.babyai_language import shorten_mission
 from utilities.tokenizer import Text_Tokenizer
 from utilities.episode_recorder import Episode_Recorder
 from colorama import Fore, Back, Style
@@ -36,7 +37,7 @@ from implementations.learning_algorithms.torch.ppo_graph import PPO as PPO_Graph
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
-torch.autograd.set_detect_anomaly(True)
+torch.autograd.set_detect_anomaly(False)
 
 def format_float(f):
     if f > 0:
@@ -194,13 +195,15 @@ if __name__ == "__main__":
     # game_ids = ["BabyAI-MiniBossLevel-v0"] * 256 + ["BabyAI-GoToLocalS8N7-v0"] * 128 + ["BabyAI-UnlockPickupDist-v0"] * 128
     # game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
     game_ids = ["BabyAI-BossLevel-v0"] * 512
+    # compact missions: longest possible BossLevel mission is 27 tokens, total vocab ~58 words
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
-        mission_max_len=24,
+        mission_max_len=32,
         full_mdp=False,
         include_inventory=False,
-        position_bonus=False
+        position_bonus=False,
+        mission_translator=shorten_mission
     )
 
     mission_size = env.mission_max_len
@@ -209,33 +212,33 @@ if __name__ == "__main__":
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "success", "edges_per_node", "graph_nodes"]])
     
     if args.scale == "small":
-        hidden_size = 128
-        embedding_dim = 8
+        hidden_size = 256
+        embedding_dim = 32
         C = 4
-        layers = [16, 32, 64]
+        layers = [1, 1, 1]
         cnn_channels = 64
         cnn_blocks = 2
-        minibatch_size = 64
+        minibatch_size = 2
         rollout_length = 512
     elif args.scale == "medium":
         # 19GB VRAM
         hidden_size = 256
-        embedding_dim = 16
+        embedding_dim = 32
         C = 8
-        layers = [32, 64, 128, 128]
+        layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 16
+        minibatch_size = 8
         rollout_length = 512
     else:
-        # large 30GB VRAM
+        # large 25GB VRAM
         hidden_size = 512
-        embedding_dim = 16
+        embedding_dim = 32
         C = 8
-        layers = [32, 64, 128, 128]
+        layers = [1, 1, 1, 1]
         cnn_channels = 128
-        cnn_blocks = 3
-        minibatch_size = 12
+        cnn_blocks = 2
+        minibatch_size = 8
         rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
@@ -256,14 +259,16 @@ if __name__ == "__main__":
             policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
             device=device, persistence_path=parameters_path,
             lr=1e-4, minibatch_size=minibatch_size,
-            gae_lambda=0.95 if not args.low_var else 0.90
+            gamma=0.995,
+            gae_lambda=0.95 if not args.low_var else 0.90,
         )
     else:
         ppo_learner = PPO(
             policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
             device=device, persistence_path=parameters_path,
             lr=1e-4, minibatch_size=minibatch_size,
-            gae_lambda=0.95 if not args.low_var else 0.90
+            gamma=0.995,
+            gae_lambda=0.95 if not args.low_var else 0.90,
         )
     memory = Graph_Memory(
         num_batches=len(game_ids),
