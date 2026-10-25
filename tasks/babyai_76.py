@@ -231,14 +231,14 @@ if __name__ == "__main__":
         minibatch_size = 8
         rollout_length = 512
     else:
-        # large 30GB VRAM
+        # large 25GB VRAM
         hidden_size = 512
         embedding_dim = 32
         C = 8
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 12
+        minibatch_size = 8
         rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
