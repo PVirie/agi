@@ -209,34 +209,34 @@ if __name__ == "__main__":
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "success", "edges_per_node", "graph_nodes"]])
     
     if args.scale == "small":
-        hidden_size = 128
-        embedding_dim = 8
+        hidden_size = 512
+        embedding_dim = 32
         C = 4
-        layers = [16, 32, 64]
+        layers = [1, 1, 1]
         cnn_channels = 64
         cnn_blocks = 2
         minibatch_size = 64
         rollout_length = 512
     elif args.scale == "medium":
         # 19GB VRAM
-        hidden_size = 256
-        embedding_dim = 16
+        hidden_size = 512
+        embedding_dim = 64
         C = 8
-        layers = [32, 64, 128, 128]
+        layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 8
-        rollout_length = 1024
+        minibatch_size = 16
+        rollout_length = 512
     else:
         # large 30GB VRAM
         hidden_size = 512
-        embedding_dim = 16
+        embedding_dim = 128
         C = 8
-        layers = [32, 64, 128, 128]
+        layers = [1, 1, 1, 1]
         cnn_channels = 128
-        cnn_blocks = 3
-        minibatch_size = 6
-        rollout_length = 1024
+        cnn_blocks = 2
+        minibatch_size = 16
+        rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)

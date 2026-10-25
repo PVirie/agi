@@ -134,13 +134,13 @@ class Model_76(Agent):
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
             flag = int_action[i].item()
             if r:
-                memory_action[i] |= Graph_Memory_Operation_Type.RESET
-            if not idle:
+                memory_action[i] = Graph_Memory_Operation_Type.RESET
+            elif not idle:
                 if flag == 1:
                     memory_action[i] |= Graph_Memory_Operation_Type.WRITE
                 if flag == 2:
                     memory_action[i] |= Graph_Memory_Operation_Type.CREATE
-            if idle:
+            elif idle:
                 reward[i] = 0
                 if flag == 3:
                     memory_action[i] |= Graph_Memory_Operation_Type.LINK
