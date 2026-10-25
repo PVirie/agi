@@ -197,7 +197,7 @@ if __name__ == "__main__":
     env = Multi_Environment(
         game_ids=game_ids,
         tokenizer=tokenizer,
-        mission_max_len=24,
+        mission_max_len=96,
         full_mdp=False,
         include_inventory=False,
         position_bonus=False
@@ -209,33 +209,33 @@ if __name__ == "__main__":
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "success", "edges_per_node", "graph_nodes"]])
     
     if args.scale == "small":
-        hidden_size = 512
+        hidden_size = 256
         embedding_dim = 32
         C = 4
         layers = [1, 1, 1]
         cnn_channels = 64
         cnn_blocks = 2
-        minibatch_size = 64
+        minibatch_size = 2
         rollout_length = 512
     elif args.scale == "medium":
         # 19GB VRAM
-        hidden_size = 512
-        embedding_dim = 64
+        hidden_size = 256
+        embedding_dim = 32
         C = 8
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 16
+        minibatch_size = 6
         rollout_length = 512
     else:
         # large 30GB VRAM
         hidden_size = 512
-        embedding_dim = 128
+        embedding_dim = 32
         C = 8
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 16
+        minibatch_size = 10
         rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"

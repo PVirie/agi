@@ -64,7 +64,7 @@ class Policy_Core(Minigrid_Policy_Core):
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=16,
-            num_layers=2,
+            num_layers=4,
             max_len=internal_state_size + goal_size + inventory_size,
             use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
         )
