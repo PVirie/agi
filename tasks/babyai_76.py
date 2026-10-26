@@ -173,7 +173,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_x"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_y"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
@@ -261,9 +261,9 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path,
         lr=1e-4, minibatch_size=minibatch_size,
         gamma=0.995,
-        gamma_intrinsic=0.995,
+        gamma_intrinsic=0.985,
         ext_coef=1.0,
-        int_coef=1.0,
+        int_coef=0.1,
         gae_lambda=0.95 if not args.low_var else 0.90,
         use_graph=args.st_train,
     )

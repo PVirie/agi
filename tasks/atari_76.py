@@ -330,7 +330,7 @@ if __name__ == "__main__":
         gamma=gamma,
         # rnd_weight is already applied by the env, and with equal discounts and 1:1 coefficients the combined
         # advantage matches the previous single-stream (extrinsic + rnd_weight * intrinsic) reward
-        gamma_intrinsic=gamma,
+        gamma_intrinsic=0.99,
         ext_coef=1.0,
         int_coef=1.0,
         gae_lambda=0.95 if not args.low_var else 0.90,
