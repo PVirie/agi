@@ -12,6 +12,7 @@ from utilities.safe_torch_module import Safe_nn_Module
 
 from .base import convert_list_of_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, convert_list_of_np_array_to_int_tensor, convert_np_array_to_bool_tensor
 from .base import masked_mean, masked_std
+from .graph_credit import compute_graph_gae
 
 
 class PPO(RL_Learner, Safe_nn_Module):
@@ -167,73 +168,19 @@ class PPO(RL_Learner, Safe_nn_Module):
 
             values = values_with_last[:, :-1, :]  # (batch_size, context_length, 2)
 
-            # Same backward pass as ppo_graph, vectorised over the trailing stream dimension: each
-            # stream runs its own GAE with its own discount, and causal credit is propagated per
-            # stream independently (buffers carry the stream dimension).
-            if b_causes is not None:
-                use_mean = (self.causal_reduce == 'mean')
-                if use_mean:
-                    causal_sum = torch.zeros((batch_size, sequence_size, num_streams), device=self.device)
-                    causal_count = torch.zeros((batch_size, sequence_size, num_streams), device=self.device)
-                    causal_returns = None
-                else:
-                    causal_returns = torch.full((batch_size, sequence_size, num_streams), float('-inf'), device=self.device)
-                    causal_sum = causal_count = None
-            else:
-                use_mean = False
-                causal_returns = causal_sum = causal_count = None
-            advantages = []
-            returns_list = []
-            lastgaelam = torch.zeros((batch_size, num_streams), device=self.device)
-            for t in reversed(range(sequence_size)):
-                nextnonterminal = (1.0 - b_next_dones[:, t])[:, None]          # (batch_size, 1)
-                nextvalues = values_with_last[:, t + 1]                         # (batch_size, 2)
-                delta = b_rewards[:, t] + gammas * nextvalues * nextnonterminal - values_with_last[:, t]
-                lastgaelam = delta + gammas * self.gae_lambda * nextnonterminal * lastgaelam
-
-                standard_return = lastgaelam + values[:, t]                     # (batch_size, 2)
-
-                if b_causes is not None:
-                    all_causes = b_causes[:, t, :]                              # (batch_size, cause_size)
-                    valid_mask = (all_causes >= 0) & (all_causes < t) & b_masks[:, t].bool()[:, None]
-                    valid_mask = valid_mask[:, :, None].expand(-1, -1, num_streams)                 # (batch_size, cause_size, 2)
-                    safe_causes = all_causes.clamp(0, sequence_size - 1)        # prevent OOB on scatter
-                    safe_causes = safe_causes[:, :, None].expand(-1, -1, num_streams)               # (batch_size, cause_size, 2)
-
-                    if use_mean:
-                        count_t = causal_count[:, t]                            # (batch_size, 2)
-                        mean_credit = causal_sum[:, t] / count_t.clamp(min=1)
-                        has_signal = count_t > 0
-                        effective_return = torch.where(
-                            has_signal,
-                            (1.0 - self.causal_alpha) * standard_return + self.causal_alpha * mean_credit,
-                            standard_return,
-                        )
-
-                        src = effective_return[:, None, :].expand(-1, b_causes.shape[2], -1)       # (batch_size, cause_size, 2)
-                        src_val = (src * self.causal_decay).masked_fill(~valid_mask, 0.0)
-                        ones = valid_mask.float()
-                        causal_sum = causal_sum.scatter_add(1, safe_causes, src_val)
-                        causal_count = causal_count.scatter_add(1, safe_causes, ones)
-                    else:
-                        effective_return = torch.max(standard_return, causal_returns[:, t])
-
-                        src = effective_return[:, None, :].expand(-1, b_causes.shape[2], -1)       # (batch_size, cause_size, 2)
-                        src = (src * self.causal_decay).masked_fill(~valid_mask, float('-inf'))
-                        causal_returns = causal_returns.scatter_reduce(1, safe_causes, src, reduce='amax', include_self=True)
-
-                    advantages.append(effective_return - values[:, t])
-                else:
-                    # Plain GAE: use lastgaelam directly to avoid (x + v) - v rounding.
-                    advantages.append(lastgaelam)
-
-                # value targets stay the plain GAE returns; causal credit only shapes the policy gradient
-                returns_list.append(standard_return)
-
-            advantages.reverse()
-            returns_list.reverse()
-            advantages = torch.stack(advantages, dim=1)     # (batch_size, context_length, 2)
-            returns = torch.stack(returns_list, dim=1)      # (batch_size, context_length, 2)
+            # each stream runs its own GAE with its own discount; causal credit is propagated per stream independently
+            advantages, returns = compute_graph_gae(
+                rewards=b_rewards,
+                values_with_last=values_with_last,
+                next_dones=b_next_dones,
+                gamma=gammas,
+                gae_lambda=self.gae_lambda,
+                causes=b_causes,
+                masks=b_masks,
+                causal_reduce=self.causal_reduce,
+                causal_alpha=self.causal_alpha,
+                causal_decay=self.causal_decay,
+            )                                       # both (batch_size, context_length, 2)
 
             # combine the per-stream advantages into the single policy advantage, then normalise
             advantages = (advantages * stream_coefs).sum(dim=-1)   # (batch_size, context_length)
