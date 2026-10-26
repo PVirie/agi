@@ -92,11 +92,12 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
                 stat_row.extend([
                     infos[i]["episode"]["e"],
                     infos[i]["episode"]["r"],
+                    infos[i]["episode"]["l"],
                     metrics[0][i],
                     metrics[1][i],
                 ])
             else:
-                stat_row.extend([None, None, None, None])
+                stat_row.extend([None, None, None, None, None])
         stat_recorder.record(stat_row)
 
         steps += 1
@@ -243,7 +244,7 @@ if __name__ == "__main__":
         persistence_path=parameters_path,
     )
 
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "edges_per_node", "graph_nodes"]])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "edges_per_node", "graph_nodes"]])
     
     if args.scale == "small":
         # 12/16 GB
