@@ -91,7 +91,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         """
         obs: np array of shape (batch_size, context_length + 1, ...)
         last_actions: np array of shape (batch_size, context_length + 1, ...)
-        rewards: list (context_length) of np array of shape (batch_size)
+        rewards: list (context_length) of np array of shape (batch_size,) or (batch_size, 1)
         next_dones: list (context_length) of bools of length batch_size
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
@@ -107,6 +107,10 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_obs = convert_np_array_to_float_tensor(obs, self.device)
         b_actions = convert_np_array_to_float_tensor(last_actions, self.device)
         b_rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)
+        if b_rewards.dim() == 3:
+            if b_rewards.shape[2] != 1:
+                raise ValueError(f"single-value PPO expects one reward stream; got stacked shape {tuple(b_rewards.shape)}")
+            b_rewards = b_rewards.squeeze(2)
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
         b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)

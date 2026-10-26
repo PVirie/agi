@@ -48,7 +48,7 @@ def format_float(f):
 async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
     observations, info = env.reset(seed=env_seed)
-    rewards = [np.float32(0) for _ in observations]
+    rewards = [np.zeros(env.reward_size, dtype=np.float32) for _ in observations]
     last_idle = [False for _ in observations]
     last_done = [False for _ in observations]
     last_truncated = [False for _ in observations]
@@ -68,7 +68,7 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=observations,
-            rewards=[r for r in rewards],
+            rewards=rewards,
             next_available_actions=env.get_available_actions(),
             force_train=steps % rollout_length == 0 or should_stop,
         )
@@ -102,8 +102,8 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
         stat_recorder.record(stat_row)
 
         steps += 1
-        if any([r != 0 for r in rewards]) and verbose:
-            logging.info(f"{steps}| Rewards: {', '.join([format_float(r) for r in rewards])}")
+        if any([r[0] != 0 for r in rewards]) and verbose:
+            logging.info(f"{steps}| Rewards: {', '.join([format_float(r[0]) for r in rewards])}")
 
         # constant LR on purpose: a wall-clock anneal would give the arms different schedules
         # at the same environment step, which is the axis they are compared on
@@ -262,7 +262,8 @@ if __name__ == "__main__":
         graph_memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=False,
-        scheme=model_module.Scheme(args.scheme)
+        scheme=model_module.Scheme(args.scheme),
+        has_intrinsic_reward=env.has_intrinsic_reward
     )
 
     asyncio.run(run(env, agent, rollout_length, verbose=not args.silent, env_seed=seed))

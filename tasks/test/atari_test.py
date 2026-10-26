@@ -53,6 +53,7 @@ def run(rnd_reward, prepend_objective):
         reward_clipping=True,
         prepend_objective=prepend_objective,
         rnd_reward=rnd_reward,
+        has_intrinsic_reward=rnd_reward,
     )
 
     observations, info = envs.reset(seed=0)
@@ -68,6 +69,7 @@ def run(rnd_reward, prepend_objective):
     while True:
         actions = envs.sample_valid_actions()
         observations, rewards, terminations, truncations, infos = envs.step(actions)
+        assert all(r.shape == (envs.reward_size,) for r in rewards), [r.shape for r in rewards]
         intrinsic.extend(info["intrinsic_reward"] for info in infos)
         total_steps += len(actions)
         elapsed_time = time.perf_counter() - start_time

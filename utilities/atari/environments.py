@@ -64,10 +64,20 @@ class Multi_Atari_Environment:
         rnd_episodic=False,
         rnd_cell_bin_size=8,
         rnd_stats_window_steps=None,
+        has_intrinsic_reward=False,
         device="cpu",
         persistence_path=None,
         render_mode=None,
         ):
+        """
+        has_intrinsic_reward: if True, step() returns each reward as [extrinsic, rnd_weight * intrinsic];
+                              otherwise as [extrinsic]. The intrinsic channel is 0 when rnd_reward is off.
+                              rnd_reward requires has_intrinsic_reward, so RND never leaks into the extrinsic reward.
+        """
+        if rnd_reward and not has_intrinsic_reward:
+            raise ValueError("rnd_reward is an intrinsic reward; set has_intrinsic_reward=True")
+        self.has_intrinsic_reward = has_intrinsic_reward
+        self.reward_size = 2 if has_intrinsic_reward else 1
 
         self.game_ids = game_ids
         self.prepend_objective = prepend_objective
@@ -112,7 +122,7 @@ class Multi_Atari_Environment:
 
         total = len(self.envs)
         self.return_obs = [None] * total
-        self.return_rewards = [0] * total
+        self.return_rewards = [np.zeros(self.reward_size, dtype=np.float32) for _ in range(total)]
         self.return_terminations = [False] * total
         self.return_truncations = [False] * total
         self.return_infos = [None] * total
@@ -158,7 +168,7 @@ class Multi_Atari_Environment:
         stepped = []
         for i, env in enumerate(self.envs):
             if actions[i] is None:
-                self.return_rewards[i] = 0
+                self.return_rewards[i] = np.zeros(self.reward_size, dtype=np.float32)
                 self.return_terminations[i] = False
                 self.return_truncations[i] = False
                 self.return_infos[i] = {}
@@ -179,13 +189,17 @@ class Multi_Atari_Environment:
             # clipping applies to the training reward only; the episode statistics keep the true game score
             game_reward = float(reward)
             extrinsic_reward = float(np.clip(game_reward, -1.0, 1.0)) if self.reward_clipping else game_reward
-            total_reward = extrinsic_reward + self.rnd_weight * float(r_intrinsic)
+            weighted_intrinsic_reward = self.rnd_weight * float(r_intrinsic)
+            total_reward = extrinsic_reward + weighted_intrinsic_reward
 
             info["original_reward"] = extrinsic_reward
             info["game_reward"] = game_reward
             info["intrinsic_reward"] = float(r_intrinsic)
 
-            self.return_rewards[i] = total_reward
+            if self.has_intrinsic_reward:
+                self.return_rewards[i] = np.array([extrinsic_reward, weighted_intrinsic_reward], dtype=np.float32)
+            else:
+                self.return_rewards[i] = np.array([extrinsic_reward], dtype=np.float32)
             self.return_terminations[i] = termination
             self.return_truncations[i] = truncation
             self.return_infos[i] = info

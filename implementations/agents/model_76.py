@@ -58,8 +58,16 @@ class Model_76(Agent):
                  graph_memory: Graph_Memory,
                  max_num_thought_steps: int = 2,
                  do_supervision: bool = False,
-                 scheme: Scheme = Scheme.FULL
+                 scheme: Scheme = Scheme.FULL,
+                 has_intrinsic_reward: bool = False
                  ):
+        """
+        has_intrinsic_reward: if False, each env reward passed to choose_action is a scalar (extrinsic);
+                              if True, each is a pair [extrinsic, intrinsic].
+                              Rewards are always stored as (batch_size, reward_size) arrays with
+                              reward_size = 2 if has_intrinsic_reward else 1, and handed to the trainer
+                              as a list (context_length) of such arrays.
+        """
         self.policy_model = policy_model
         self.trainer = trainer
         self.obs = context_collector
@@ -69,6 +77,8 @@ class Model_76(Agent):
 
         self.max_num_thought_steps = max_num_thought_steps
         self.do_supervision = do_supervision
+        self.has_intrinsic_reward = has_intrinsic_reward
+        self.reward_size = 2 if has_intrinsic_reward else 1
 
         # 0 obs
         # 1 thought for write then move
@@ -117,14 +127,14 @@ class Model_76(Agent):
                 np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
             )
             self.rewards.append(
-                np.zeros((batch_size,), dtype=np.float32)
+                np.zeros((batch_size, self.reward_size), dtype=np.float32)
             )
             self.last_idles.append([False for _ in range(batch_size)])
             self.last_dones.append([False for _ in range(batch_size)])
             self.last_truncates.append([True for _ in range(batch_size)])
         
         content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
-        reward = np.array([r for r in rewards], dtype=np.float32)
+        reward = np.asarray(rewards, dtype=np.float32).reshape(batch_size, self.reward_size)   # (batch_size, reward_size); [:, 0] extrinsic
 
         # get last action's position
         last_action = self.actions.get_last()
@@ -169,8 +179,8 @@ class Model_76(Agent):
         )
         self.last_cause_times.append(self.graph_memory.get_cause_times())
 
-        # update reward by mem_op_results (0 for True, -0.1 for False)
-        reward += np.array([0 if res else -0.1 for res in mem_op_results])
+        # update extrinsic reward by mem_op_results (0 for True, -0.1 for False)
+        reward[:, 0] += np.array([0 if res else -0.1 for res in mem_op_results])
 
         context = self.graph_memory.get_node_context()
         context = context.reshape(batch_size, -1) # reshape to (batch_size, context_size)
@@ -178,7 +188,7 @@ class Model_76(Agent):
         # replace the reward and content
         self.obs.update_last(
             self.policy_model.pack_context(
-                b_reward=reward,
+                b_reward=reward[:, 0],   # the policy observes the extrinsic reward only
                 b_int=int_action,
                 b_ext=ext_action,
                 b_position=position,
@@ -257,7 +267,7 @@ class Model_76(Agent):
             np.ones((batch_size, self.policy_model.int_action_size), dtype=bool),
             np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
         )
-        self.rewards.append(np.zeros((batch_size, ), dtype=np.float32))
+        self.rewards.append(np.zeros((batch_size, self.reward_size), dtype=np.float32))
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         self.last_dones.append([False for _ in range(batch_size)])
         self.last_truncates.append([False for _ in range(batch_size)])

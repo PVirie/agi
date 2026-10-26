@@ -107,7 +107,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         self.head_value = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, 1)
+            nn.Linear(hidden_size, 2)
         )
 
         self.reset_parameters()
@@ -180,8 +180,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         edge_2_logits = self.head_edge_2(base_output)  # (batch_size, context_size, C)
         write_value_logits = self.head_write_value(base_output)  # (batch_size, context_size, write_action_size)
 
-        values = self.head_value(base_output)  # (batch_size, context_size, 1)
-        values = values.squeeze(-1)  # (batch_size, context_size)
+        values = self.head_value(base_output)  # (batch_size, context_size, 2)
 
         return int_logits, ext_logits, edge_1_logits, edge_2_logits, write_value_logits, values
     

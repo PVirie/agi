@@ -30,7 +30,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from implementations.agents import model_76
 from implementations.agents import model_77
 from implementations.networks.torch.policy.atari import Policy_Core, Projector
-from implementations.learning_algorithms.torch.ppo_graph import PPO
+from implementations.learning_algorithms.torch.ppo_graph_dual import PPO
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
@@ -55,7 +55,7 @@ DIAGNOSTIC_KEYS = [
 async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
     observations, info = env.reset(seed=env_seed)
-    rewards = [np.float32(0) for _ in observations]
+    rewards = [np.zeros(env.reward_size, dtype=np.float32) for _ in observations]
     last_idle = [False for _ in observations]
     last_done = [False for _ in observations]
     last_truncated = [False for _ in observations]
@@ -75,7 +75,7 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=observations,
-            rewards=[r for r in rewards],
+            rewards=rewards,
             next_available_actions=env.get_available_actions(),
             force_train=steps % rollout_length == 0 or should_stop,
         )
@@ -268,6 +268,8 @@ if __name__ == "__main__":
         rnd_episodic=args.rnd_episodic,
         rnd_cell_bin_size=args.rnd_cell_bin,
         rnd_stats_window_steps=args.rnd_stats_window if args.rnd_stats_window > 0 else None,
+        # always split [extrinsic, rnd_weight * intrinsic]: the atari policy has a dual value head (intrinsic is 0 without --rnd)
+        has_intrinsic_reward=True,
         device=device,
         persistence_path=parameters_path,
     )
@@ -326,6 +328,11 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path,
         lr=1e-4, minibatch_size=minibatch_size,
         gamma=gamma,
+        # rnd_weight is already applied by the env, and with equal discounts and 1:1 coefficients the combined
+        # advantage matches the previous single-stream (extrinsic + rnd_weight * intrinsic) reward
+        gamma_intrinsic=gamma,
+        ext_coef=1.0,
+        int_coef=1.0,
         gae_lambda=0.95 if not args.low_var else 0.90,
         ent_coef=args.ent_coef,
         use_graph=args.st_train
@@ -348,7 +355,8 @@ if __name__ == "__main__":
         graph_memory=memory,
         max_num_thought_steps=args.max_thought_steps,
         do_supervision=False,
-        scheme=model_module.Scheme(args.scheme)
+        scheme=model_module.Scheme(args.scheme),
+        has_intrinsic_reward=env.has_intrinsic_reward
     )
 
     asyncio.run(run(env, agent, rollout_length, verbose=not args.silent, env_seed=seed))

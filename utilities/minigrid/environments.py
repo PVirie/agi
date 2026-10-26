@@ -20,8 +20,18 @@ class Multi_Environment:
         full_mdp_height=64,
         include_inventory=True,
         position_bonus=False,
+        has_intrinsic_reward=False,
         mission_translator=None
         ):
+        """
+        has_intrinsic_reward: if True, step() returns each reward as [extrinsic, intrinsic]; otherwise as [extrinsic].
+                              The intrinsic channel carries the position bonus (0 when position_bonus is off).
+                              position_bonus requires has_intrinsic_reward, so the bonus never leaks into the extrinsic reward.
+        """
+        if position_bonus and not has_intrinsic_reward:
+            raise ValueError("position_bonus is an intrinsic reward; set has_intrinsic_reward=True")
+        self.has_intrinsic_reward = has_intrinsic_reward
+        self.reward_size = 2 if has_intrinsic_reward else 1
 
         self.mission_max_len = mission_max_len
         self.mission_translator = mission_translator
@@ -52,7 +62,7 @@ class Multi_Environment:
 
         total = len(self.envs)
         self.return_obs = [None] * total
-        self.return_rewards = [0] * total
+        self.return_rewards = [np.zeros(self.reward_size, dtype=np.float32) for _ in range(total)]
         self.return_terminations = [False] * total
         self.return_truncations = [False] * total
         self.return_infos = [None] * total
@@ -83,17 +93,23 @@ class Multi_Environment:
     def step(self, actions):
         for i, env in enumerate(self.envs):
             if actions[i] is None:
-                self.return_rewards[i] = 0
+                self.return_rewards[i] = np.zeros(self.reward_size, dtype=np.float32)
                 self.return_terminations[i] = False
                 self.return_truncations[i] = False
                 continue
             obs, reward, termination, truncation, info = env.step(actions[i])
-            self.return_rewards[i] = reward
+            # OriginalRewardWrapper records the pre-bonus reward; whatever PositionBonus added on top is intrinsic
+            extrinsic_reward = float(info.get('original_reward', reward)) if info else float(reward)
+            intrinsic_reward = float(reward) - extrinsic_reward
+            if self.has_intrinsic_reward:
+                self.return_rewards[i] = np.array([extrinsic_reward, intrinsic_reward], dtype=np.float32)
+            else:
+                self.return_rewards[i] = np.array([extrinsic_reward], dtype=np.float32)
             self.return_terminations[i] = termination
             self.return_truncations[i] = truncation
             self.return_infos[i] = None
 
-            self.total_return[i] += info.get('original_reward', reward) if info else reward
+            self.total_return[i] += extrinsic_reward
             self.total_aux_return[i] += reward
             self.total_length[i] += 1
             self.cumulative_length[i] += 1

@@ -64,7 +64,7 @@ async def run(env, agent, rollout_length=16, verbose=False):
             last_truncates=last_truncated,
             last_resets=last_reset,
             latest_frames=observations,
-            rewards=[r for r in rewards],
+            rewards=rewards,
             next_available_actions=env.get_available_actions(),
             force_train=steps % rollout_length == 0 or should_stop,
         )
