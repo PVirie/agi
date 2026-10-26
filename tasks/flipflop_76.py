@@ -28,7 +28,6 @@ from implementations.agents import model_76
 from implementations.networks.torch.policy.flipflop import Projector
 from implementations.networks.torch.policy.flipflop import Policy_Core
 from implementations.learning_algorithms.torch.ppo_graph import PPO
-from implementations.learning_algorithms.torch.ppo_graph import PPO as PPO_Graph
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
@@ -260,7 +259,8 @@ if __name__ == "__main__":
     ).to(device)
     ppo_learner = PPO(
         policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
-        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size
+        device=device, persistence_path=parameters_path, minibatch_size=minibatch_size,
+        use_graph=True
     )
     memory = Graph_Memory(
         num_batches=env.batch_size,

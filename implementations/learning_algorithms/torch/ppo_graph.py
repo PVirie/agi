@@ -21,9 +21,13 @@ class PPO(RL_Learner, Safe_nn_Module):
                  device, persistence_path=None, 
                  lr=3e-4, minibatch_size=8,
                  gamma=0.99,
-                 gae_lambda=None):
+                 gae_lambda=None,
+                 use_graph=False):
         """
         PPO: Proximal Policy Optimization Algorithm
+
+        use_graph: if True, `aux` passed to learn() is interpreted as causal links and used for
+                   graph-based credit assignment; otherwise `aux` is ignored and standard GAE is used.
 
         Issue: NaN when the sample actions are not on-policy.
         """
@@ -44,6 +48,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.update_epochs = 4
         self.minibatch_size = minibatch_size
 
+        self.use_graph = use_graph
         # How causal credit received by a step is aggregated across the future steps it caused.
         # 'amax' keeps the best future return; 'mean' averages them.
         self.causal_reduce = 'mean'  # one of {'amax', 'mean'}
@@ -88,12 +93,12 @@ class PPO(RL_Learner, Safe_nn_Module):
         next_dones: list (context_length) of bools of length batch_size
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
-        aux: np array of shape (batch_size, context_length + 1, cause_size)
+        aux: np array of shape (batch_size, context_length + 1, cause_size); only used when use_graph is True
 
         Note that obs and last_actions include the context length + 1 items.
         This corresponds to the observations after taking the last actions.
 
-        causes is a list of previous context indices that cause the current one.
+        In graph mode, aux (causes) is a list of previous context indices that cause the current one.
         All return values from the current context index should be propagated to the cause context indices as well, not just the previous step.
         """
         # Use dim 0 as context length dimension
@@ -103,7 +108,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
         b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
-        b_causes = convert_list_of_np_array_to_int_tensor(aux, self.device) if aux is not None else None
+        b_causes = convert_list_of_np_array_to_int_tensor(aux, self.device) if (self.use_graph and aux is not None) else None
 
         batch_size = b_rewards.shape[0]
         sequence_size = b_rewards.shape[1]
@@ -205,10 +210,12 @@ class PPO(RL_Learner, Safe_nn_Module):
                         src = effective_return[:, None].expand(-1, b_causes.shape[2])   # (batch_size, cause_size)
                         src = (src * self.causal_decay).masked_fill(~valid_mask, float('-inf'))   # invalid slots → -inf (no-op under max)
                         causal_returns = causal_returns.scatter_reduce(1, safe_causes, src, reduce='amax', include_self=True)
-                else:
-                    effective_return = standard_return
 
-                advantages.append(effective_return - values[:, t])
+                    advantages.append(effective_return - values[:, t])
+                else:
+                    # Plain GAE: use lastgaelam directly to avoid (x + v) - v rounding.
+                    advantages.append(lastgaelam)
+
                 # value target stays the plain GAE return; causal credit only shapes the policy gradient
                 returns_list.append(standard_return)
                 # returns_list.append(effective_return)

@@ -32,8 +32,7 @@ from implementations.agents import model_76
 from implementations.agents import model_77
 from implementations.networks.torch.policy.minigrid import Projector
 from implementations.networks.torch.policy.babyai import Policy_Core
-from implementations.learning_algorithms.torch.ppo_combine import PPO
-from implementations.learning_algorithms.torch.ppo_graph import PPO as PPO_Graph
+from implementations.learning_algorithms.torch.ppo_graph import PPO
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
@@ -254,22 +253,14 @@ if __name__ == "__main__":
         cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
         device=device, persistence_path=parameters_path
     ).to(device)
-    if args.st_train:
-        ppo_learner = PPO_Graph(
-            policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
-            device=device, persistence_path=parameters_path,
-            lr=1e-4, minibatch_size=minibatch_size,
-            gamma=0.995,
-            gae_lambda=0.95 if not args.low_var else 0.90,
-        )
-    else:
-        ppo_learner = PPO(
-            policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
-            device=device, persistence_path=parameters_path,
-            lr=1e-4, minibatch_size=minibatch_size,
-            gamma=0.995,
-            gae_lambda=0.95 if not args.low_var else 0.90,
-        )
+    ppo_learner = PPO(
+        policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
+        device=device, persistence_path=parameters_path,
+        lr=1e-4, minibatch_size=minibatch_size,
+        gamma=0.995,
+        gae_lambda=0.95 if not args.low_var else 0.90,
+        use_graph=args.st_train,
+    )
     memory = Graph_Memory(
         num_batches=len(game_ids),
         num_nodes=4096,
