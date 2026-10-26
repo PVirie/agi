@@ -61,6 +61,9 @@ class Multi_Atari_Environment:
         rnd_reward=False,
         rnd_weight=1.0,
         rnd_lr=1e-5,
+        rnd_episodic=False,
+        rnd_cell_bin_size=8,
+        rnd_stats_window_steps=None,
         device="cpu",
         persistence_path=None,
         render_mode=None,
@@ -102,7 +105,9 @@ class Multi_Atari_Environment:
             self.rnd = RND_Model(
                 game_ids=game_ids,
                 ram_size=self.ram_size,
-                lr=rnd_lr, device=device, persistence_path=persistence_path
+                lr=rnd_lr, episodic=rnd_episodic, cell_bin_size=rnd_cell_bin_size,
+                stats_window_steps=rnd_stats_window_steps,
+                device=device, persistence_path=persistence_path
             )
 
         total = len(self.envs)
@@ -117,6 +122,11 @@ class Multi_Atari_Environment:
         self.total_length = [0] * total
         self.cumulative_length = [0] * total # agent-env transitions since the run started; never reset per episode
         self.total_duration = [0] * total # start time of the episode for each env, misnoming but consistent with other statistics
+
+        # game-reward counters since the last diagnostics() call
+        self.diagnostic_steps = 0
+        self.diagnostic_rewarded_steps = 0
+        self.diagnostic_game_reward = 0.0
 
 
     def prepare_observation(self, obs, env_index):
@@ -139,6 +149,8 @@ class Multi_Atari_Environment:
             self.total_length[i] = 0
             self.cumulative_length[i] = 0
             self.total_duration[i] = time.perf_counter()
+            if self.rnd is not None:
+                self.rnd.reset_episode(i)
         return self.return_obs, self.return_infos
 
 
@@ -182,6 +194,9 @@ class Multi_Atari_Environment:
             self.total_aux_return[i] += total_reward
             self.total_length[i] += 1
             self.cumulative_length[i] += 1
+            self.diagnostic_steps += 1
+            self.diagnostic_rewarded_steps += int(game_reward != 0)
+            self.diagnostic_game_reward += game_reward
             if termination or truncation:
                 info["episode"] = {
                     "r": self.total_return[i],
@@ -193,6 +208,8 @@ class Multi_Atari_Environment:
                     "s": 1.0 if self.total_return[i] > 0 else 0.0
                 }
                 obs, _ = env.reset() # You must manually reset!
+                if self.rnd is not None:
+                    self.rnd.reset_episode(i)
 
                 self.total_return[i] = 0
                 self.total_aux_return[i] = 0
@@ -210,6 +227,22 @@ class Multi_Atari_Environment:
 
     def total_env_steps(self):
         return sum(self.cumulative_length)
+
+
+    def diagnostics(self):
+        """Since the last call: game reward per step and the fraction of steps with a nonzero game reward,
+        plus the RND means and exploration progress (RND_Model.pop_diagnostics) when RND is on. Resets the counters."""
+        steps = max(self.diagnostic_steps, 1)
+        out = {
+            "game_reward_per_step": self.diagnostic_game_reward / steps,
+            "rewarded_step_fraction": self.diagnostic_rewarded_steps / steps,
+        }
+        self.diagnostic_steps = 0
+        self.diagnostic_rewarded_steps = 0
+        self.diagnostic_game_reward = 0.0
+        if self.rnd is not None:
+            out.update(self.rnd.pop_diagnostics())
+        return out
 
 
     def get_available_actions(self):
