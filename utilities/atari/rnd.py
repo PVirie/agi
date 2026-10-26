@@ -246,7 +246,7 @@ class RND_Model(nn.Module, Safe_nn_Module):
                 nn.Linear(predictor_hidden_size, predictor_hidden_size), nn.ReLU(),
                 nn.Linear(predictor_hidden_size, rep_size),
             ))
-            # self.modules is shadowed by Safe_nn_Module's checkpoint dict, so walk the networks directly
+            # Walk the networks directly
             for m in list(self.target_net.modules()) + list(self.predictor_net.modules()):
                 if isinstance(m, nn.Linear):
                     nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
