@@ -12,7 +12,7 @@ class Safe_nn_Module:
         self.device = device
         self.persistence_path = persistence_path
         # can save multiple modules with a dict of name: module
-        self.modules = modules if modules is not None else {self.name: self}
+        self.saved_modules = modules if modules is not None else {self.name: self}
 
 
     def save(self, num_to_keep=2, override_persistence_path=None):
@@ -22,7 +22,7 @@ class Safe_nn_Module:
             logging.info(f"Saving to override path: {override_persistence_path}")
             save_path = override_persistence_path
 
-        for name, module_to_save in self.modules.items():
+        for name, module_to_save in self.saved_modules.items():
             if save_path is not None:
                 stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 torch.save({
@@ -50,7 +50,7 @@ class Safe_nn_Module:
         if load_path is None:
             return
 
-        for name, module_to_save in self.modules.items():
+        for name, module_to_save in self.saved_modules.items():
             # first load all checkpoints and find the latest one
             all_checkpoints = [f for f in os.listdir(load_path) if f.startswith(name) and f.endswith(".pth")]
             if len(all_checkpoints) == 0:
