@@ -220,7 +220,7 @@ if __name__ == "__main__":
         layers = [1, 1, 1]
         cnn_channels = 64
         cnn_blocks = 2
-        minibatch_size = 2
+        minibatch_size = 4
         rollout_length = 1024
     elif args.scale == "medium":
         # 19GB VRAM
@@ -230,7 +230,7 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 4
+        minibatch_size = 6
         rollout_length = 1024
     else:
         # large 25GB VRAM
@@ -240,7 +240,7 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 6
+        minibatch_size = 8
         rollout_length = 1024
 
     parameters_path = f"{experiment_path}/parameters"
