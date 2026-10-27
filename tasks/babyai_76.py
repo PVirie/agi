@@ -20,7 +20,7 @@ install("gymnasium[other]")
 install("colorama")
 
 from utilities import scatter
-from utilities.minigrid.environments import Multi_Environment
+from utilities.minigrid.environments import Multi_Environment, BonusType
 from utilities.minigrid.babyai_language import shorten_mission
 from utilities.tokenizer import Text_Tokenizer
 from utilities.episode_recorder import Episode_Recorder
@@ -173,7 +173,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_y"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_z"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
@@ -202,7 +202,7 @@ if __name__ == "__main__":
         mission_max_len=32,
         full_mdp=False,
         include_inventory=False,
-        position_bonus=True,
+        bonus_type=BonusType.ACTION,
         # always split [extrinsic, intrinsic]: the babyai policy has a dual value head (intrinsic is 0 without the position bonus)
         has_intrinsic_reward=True,
         mission_translator=shorten_mission

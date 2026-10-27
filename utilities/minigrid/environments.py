@@ -1,13 +1,20 @@
 import gymnasium as gym
-from minigrid.wrappers import FullyObsWrapper, PositionBonus
+from minigrid.wrappers import FullyObsWrapper, PositionBonus, ActionBonus
 import numpy as np
 import time
+from enum import Enum
 
 from .custom_wrappers import InventoryWrapper, OriginalRewardWrapper
 
 MINIGRID_ACTIONS = [
     "left", "right", "forward", "pickup", "drop", "toggle", "done"
 ]
+
+
+class BonusType(Enum):
+    NONE = 0
+    POSITION = 1
+    ACTION = 2
 
 
 class Multi_Environment:
@@ -19,7 +26,7 @@ class Multi_Environment:
         full_mdp_width=64,
         full_mdp_height=64,
         include_inventory=True,
-        position_bonus=False,
+        bonus_type=BonusType.NONE,
         has_intrinsic_reward=False,
         mission_translator=None
         ):
@@ -28,8 +35,8 @@ class Multi_Environment:
                               The intrinsic channel carries the position bonus (0 when position_bonus is off).
                               position_bonus requires has_intrinsic_reward, so the bonus never leaks into the extrinsic reward.
         """
-        if position_bonus and not has_intrinsic_reward:
-            raise ValueError("position_bonus is an intrinsic reward; set has_intrinsic_reward=True")
+        if bonus_type != BonusType.NONE and not has_intrinsic_reward:
+            raise ValueError("bonus is an intrinsic reward; set has_intrinsic_reward=True")
         self.has_intrinsic_reward = has_intrinsic_reward
         self.reward_size = 2 if has_intrinsic_reward else 1
 
@@ -55,9 +62,12 @@ class Multi_Environment:
                 env = InventoryWrapper(env)
             if full_mdp:
                 env = FullyObsWrapper(env)
-            if position_bonus:
+            if bonus_type == BonusType.POSITION:
                 env = OriginalRewardWrapper(env)
                 env = PositionBonus(env)
+            elif bonus_type == BonusType.ACTION:
+                env = OriginalRewardWrapper(env)
+                env = ActionBonus(env)
             self.envs.append(env)
 
         total = len(self.envs)
@@ -98,7 +108,7 @@ class Multi_Environment:
                 self.return_truncations[i] = False
                 continue
             obs, reward, termination, truncation, info = env.step(actions[i])
-            # OriginalRewardWrapper records the pre-bonus reward; whatever PositionBonus added on top is intrinsic
+            # OriginalRewardWrapper records the pre-bonus reward; whatever Bonus added on top is intrinsic
             extrinsic_reward = float(info.get('original_reward', reward)) if info else float(reward)
             intrinsic_reward = float(reward) - extrinsic_reward
             if self.has_intrinsic_reward:
