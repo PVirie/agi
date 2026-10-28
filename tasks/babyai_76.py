@@ -173,7 +173,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_z"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_0"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
@@ -234,13 +234,13 @@ if __name__ == "__main__":
         rollout_length = 1024
     else:
         # large 25GB VRAM
-        hidden_size = 256
+        hidden_size = 512
         embedding_dim = 32
         C = 8
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 8
+        minibatch_size = 6
         rollout_length = 1024
 
     parameters_path = f"{experiment_path}/parameters"
