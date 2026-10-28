@@ -173,7 +173,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_0"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_1"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
@@ -202,7 +202,7 @@ if __name__ == "__main__":
         mission_max_len=32,
         full_mdp=False,
         include_inventory=False,
-        bonus_type=BonusType.ACTION,
+        bonus_type=BonusType.POSITION,
         # always split [extrinsic, intrinsic]: the babyai policy has a dual value head (intrinsic is 0 without the position bonus)
         has_intrinsic_reward=True,
         mission_translator=shorten_mission
@@ -221,7 +221,7 @@ if __name__ == "__main__":
         cnn_channels = 64
         cnn_blocks = 2
         minibatch_size = 4
-        rollout_length = 1024
+        rollout_length = 512
     elif args.scale == "medium":
         # 19GB VRAM
         hidden_size = 256
@@ -230,18 +230,18 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 6
-        rollout_length = 1024
+        minibatch_size = 8
+        rollout_length = 512
     else:
         # large 25GB VRAM
-        hidden_size = 512
+        hidden_size = 768
         embedding_dim = 32
         C = 8
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 5
-        rollout_length = 1024
+        minibatch_size = 8
+        rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
