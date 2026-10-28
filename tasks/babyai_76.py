@@ -240,7 +240,7 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 6
+        minibatch_size = 5
         rollout_length = 1024
 
     parameters_path = f"{experiment_path}/parameters"
