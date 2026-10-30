@@ -64,9 +64,11 @@ class Policy_Core(Minigrid_Policy_Core):
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=8,
-            num_layers=4,
+            num_layers=2,
+            dropout=0.0,
             max_len=internal_state_size + goal_size + inventory_size,
             use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
+            pooling="cls",  # mean pooling dilutes order-dependent structure ("A then B" vs "B then A")
         )
 
         # vision conditioned on the instruction/internal state features via FiLM
@@ -80,9 +82,10 @@ class Policy_Core(Minigrid_Policy_Core):
         )
 
         # internal_state, goal, inv, obs -> hidden
+        vec_dim = int_action_size + ext_action_size + hidden_size + hidden_size 
         self.backbone = ResNet(
             output_dims=hidden_size, 
-            input_dims=hidden_size + hidden_size, 
+            input_dims=vec_dim, 
             hidden_dims=hidden_size, 
             layers=[hidden_size for _ in layers]
         )
@@ -195,7 +198,7 @@ class Policy_Core(Minigrid_Policy_Core):
         obs_features = self.conv_layers(obs_features, cond)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
-        base_input = torch.concat([internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        base_input = torch.concat([flag_onehot, action_onehot, internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
