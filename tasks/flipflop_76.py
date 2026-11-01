@@ -270,7 +270,7 @@ if __name__ == "__main__":
         start_node_value=TOKEN_PAD
     )
     model_module = model_76
-    agent_class = model_76.Model_76
+    agent_class = model_76.Model
     agent = agent_class(
         policy_model=policy_core,
         trainer=ppo_learner,
