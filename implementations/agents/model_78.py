@@ -189,8 +189,8 @@ class Model_78(Agent):
         )
         self.last_cause_times.append(self.graph_memory.get_cause_times())
 
-        # update extrinsic reward by mem_op_results (0 for True, -0.1 for False)
-        reward[:, 0] += np.array([0 if res else -0.1 for res in mem_op_results])
+        # update extrinsic reward by mem_op_results (0 for True, -0.001 for False)
+        reward[:, 0] += np.array([0 if res else -0.001 for res in mem_op_results])
 
         # exploration bonus for internal actions: novelty of the graph state each thought step led to.
         # a reset graph starts a new episode for the episodic counts, and its fresh state earns no bonus

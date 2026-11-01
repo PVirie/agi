@@ -149,6 +149,7 @@ if __name__ == "__main__":
     parser.add_argument("--sie",                    "-sie",   action="store_true", help="Use separate internal-external attention (model 77). Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
+    parser.add_argument("--ent-coef",               "-ent", type=float, default=0.05, help="PPO entropy coefficient. Default is 0.05.")
     args = parser.parse_args()
 
 
@@ -173,7 +174,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_2"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_3"
     if args.st_train:
         experiment_path += "_stmean"
     if args.sie:
@@ -264,6 +265,7 @@ if __name__ == "__main__":
         gamma_intrinsic=0.98,
         ext_coef=1.0,
         int_coef=0.1,
+        ent_coef=args.ent_coef,
         gae_lambda=0.95 if not args.low_var else 0.90,
         use_graph=args.st_train,
     )
