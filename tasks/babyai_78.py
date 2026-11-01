@@ -290,7 +290,7 @@ if __name__ == "__main__":
             seed=seed,
         )
     model_module = model_78
-    agent_class = model_78.Model_78
+    agent_class = model_78.Model
     agent = agent_class(
         policy_model=policy_core,
         trainer=ppo_learner,

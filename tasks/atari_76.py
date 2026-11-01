@@ -28,7 +28,6 @@ from colorama import Fore, Back, Style
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import model_76
-from implementations.agents import model_77
 from implementations.networks.torch.policy.atari import Policy_Core, Projector
 from implementations.learning_algorithms.torch.ppo_graph_dual import PPO
 from implementations.collectors.states import State_Sequence as Collector
@@ -188,7 +187,6 @@ if __name__ == "__main__":
     parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
     parser.add_argument("--scheme",                 "-sch", type=str, default="full", help="The scheme to use for the agent's decision making. Default is 'full'.")
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
-    parser.add_argument("--sie",                    "-sie",   action="store_true", help="Use separate internal-external attention (model 77). Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
     parser.add_argument("--rnd",                    "-rnd", action="store_true", help="Add Random Network Distillation intrinsic reward. Default is False.")
@@ -226,8 +224,6 @@ if __name__ == "__main__":
     experiment_path = f"{APP_ROOT}/experiments/atari_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_v"
     if args.st_train:
         experiment_path += "_stmean"
-    if args.sie:
-        experiment_path += "_sie"
     if args.low_var:
         experiment_path += "_lv"
     if args.rnd:
@@ -344,8 +340,8 @@ if __name__ == "__main__":
         node_dim=1,
         start_node_value=vocab_size - 1
     )
-    model_module = model_77 if args.sie else model_76
-    agent_class = model_77.Model_77 if args.sie else model_76.Model_76
+    model_module = model_76
+    agent_class = model_76.Model
     agent = agent_class(
         policy_model=policy_core,
         trainer=ppo_learner,
