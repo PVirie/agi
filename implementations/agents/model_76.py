@@ -47,6 +47,24 @@ class Scheme(str, Enum):
     FULL = "full"
 
 
+# int-action flag -> graph memory op; external flags also act in the env, thought flags do not
+EXTERNAL_FLAG_OPS = {
+    1: Graph_Memory_Operation_Type.WRITE,
+    2: Graph_Memory_Operation_Type.CREATE,
+}
+THOUGHT_FLAG_OPS = {
+    3: Graph_Memory_Operation_Type.LINK,
+    4: Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.MOVE,
+    5: Graph_Memory_Operation_Type.CREATE,
+    6: Graph_Memory_Operation_Type.ROTATE,
+}
+# flags whose op consumes the action's write value
+WRITE_VALUE_FLAGS = tuple(sorted(
+    flag for flag, op in {**EXTERNAL_FLAG_OPS, **THOUGHT_FLAG_OPS}.items()
+    if op & (Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.CREATE)
+))
+
+
 class Model(Agent):
     
     def __init__(self, 
@@ -80,11 +98,6 @@ class Model(Agent):
         self.has_intrinsic_reward = has_intrinsic_reward
         self.reward_size = 2 if has_intrinsic_reward else 1
 
-        # 0 obs
-        # 1 thought for write then move
-        # 2 thought create
-        # 3 thought for link
-        # 4 thought for rotate edge
         if scheme == Scheme.FULL:
             self.valid_int_actions = [0, 1, 2, 3, 4, 5, 6]
             self.observe_external_int_actions = [0, 1, 2]
@@ -146,21 +159,10 @@ class Model(Agent):
             if r:
                 memory_action[i] = Graph_Memory_Operation_Type.RESET
             elif not idle:
-                if flag == 1:
-                    memory_action[i] |= Graph_Memory_Operation_Type.WRITE
-                if flag == 2:
-                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
+                memory_action[i] |= EXTERNAL_FLAG_OPS.get(flag, Graph_Memory_Operation_Type.IDLE)
             elif idle:
                 reward[i] = 0
-                if flag == 3:
-                    memory_action[i] |= Graph_Memory_Operation_Type.LINK
-                if flag == 4:
-                    memory_action[i] |= Graph_Memory_Operation_Type.WRITE
-                    memory_action[i] |= Graph_Memory_Operation_Type.MOVE
-                if flag == 5:
-                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
-                if flag == 6:
-                    memory_action[i] |= Graph_Memory_Operation_Type.ROTATE
+                memory_action[i] |= THOUGHT_FLAG_OPS.get(flag, Graph_Memory_Operation_Type.IDLE)
             if d or t:
                 self.thought_steps[i] = 0
                 # reset position

@@ -344,9 +344,37 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
 
 
 class Projector(Base_Projector):
+
+    def __init__(self, master_core, selected_indices=[0, 1], component_flags=None):
+        """
+        component_flags: {component_index: int-action flags} -- that component's log-prob and entropy
+                         only count on steps whose int-action flag is listed; omitted components always count.
+        """
+        super().__init__(master_core, selected_indices)
+        self.component_flags = component_flags or {}
+
+    def _screen(self, all_logprobs, all_entropy, selected_action):
+        if not self.component_flags:
+            return all_logprobs, all_entropy
+        flag = torch.as_tensor(selected_action[:, :, 0], device=all_logprobs.device).long()
+        scale = torch.ones_like(all_logprobs)
+        for index, flags in self.component_flags.items():
+            scale[:, :, index] = torch.isin(flag, torch.tensor(flags, device=flag.device)).to(scale.dtype)
+        return all_logprobs * scale, all_entropy * scale
+
+    def get_log_probability(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy = self.master_core.get_log_probability(context, selected_action, valid_actions)
+        all_logprobs, all_entropy = self._screen(all_logprobs, all_entropy, selected_action)
+        return all_logprobs[:, :, self.selected_indices].sum(dim=-1), all_entropy[:, :, self.selected_indices].sum(dim=-1)
+
+    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy, aux_loss = self.master_core.get_log_probability_with_aux_loss(context, selected_action, valid_actions)
+        all_logprobs, all_entropy = self._screen(all_logprobs, all_entropy, selected_action)
+        return all_logprobs[:, :, self.selected_indices].sum(dim=-1), all_entropy[:, :, self.selected_indices].sum(dim=-1), aux_loss
     
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
         all_logprobs, all_entropy, values = self.master_core.get_log_probability_with_value(context, selected_action, valid_actions)
+        all_logprobs, all_entropy = self._screen(all_logprobs, all_entropy, selected_action)
         log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
         entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
         return log_probs, entropy, values

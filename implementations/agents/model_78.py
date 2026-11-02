@@ -6,6 +6,7 @@ from interfaces.network import Policy_Network, Value_Network
 from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
 from implementations.memories.graph_state_rnd import Graph_State_RND
+from implementations.agents.model_76 import EXTERNAL_FLAG_OPS, THOUGHT_FLAG_OPS, WRITE_VALUE_FLAGS
 
 
 def make_valid_mask(valid_actions, action_size):
@@ -90,11 +91,6 @@ class Model(Agent):
         self.graph_rnd = graph_rnd
         self.graph_rnd_weight = graph_rnd_weight
 
-        # 0 obs
-        # 1 thought for write then move
-        # 2 thought create
-        # 3 thought for link
-        # 4 thought for rotate edge
         if scheme == Scheme.FULL:
             self.valid_int_actions = [0, 1, 2, 3, 4, 5, 6]
             self.observe_external_int_actions = [0, 1, 2]
@@ -156,21 +152,10 @@ class Model(Agent):
             if r:
                 memory_action[i] = Graph_Memory_Operation_Type.RESET
             elif not idle:
-                if flag == 1:
-                    memory_action[i] |= Graph_Memory_Operation_Type.WRITE
-                if flag == 2:
-                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
+                memory_action[i] |= EXTERNAL_FLAG_OPS.get(flag, Graph_Memory_Operation_Type.IDLE)
             elif idle:
                 reward[i] = 0
-                if flag == 3:
-                    memory_action[i] |= Graph_Memory_Operation_Type.LINK
-                if flag == 4:
-                    memory_action[i] |= Graph_Memory_Operation_Type.WRITE
-                    memory_action[i] |= Graph_Memory_Operation_Type.MOVE
-                if flag == 5:
-                    memory_action[i] |= Graph_Memory_Operation_Type.CREATE
-                if flag == 6:
-                    memory_action[i] |= Graph_Memory_Operation_Type.ROTATE
+                memory_action[i] |= THOUGHT_FLAG_OPS.get(flag, Graph_Memory_Operation_Type.IDLE)
             if d or t:
                 self.thought_steps[i] = 0
                 # reset position
