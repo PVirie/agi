@@ -21,11 +21,13 @@ except ImportError:
 
 class NP_Graph_Memory(Graph_Memory):
 
-    def __init__(self, num_batches, num_nodes, max_edges_per_node, node_dim, start_node_value=1):
+    def __init__(self, num_batches, num_nodes, max_edges_per_node, node_dim, start_node_value=1, empty_value=0.0):
 
         self.C = 1 + max_edges_per_node
 
         self.start_value = start_node_value
+        # value reported for unused neighbor slots; must lie outside the node value range
+        self.empty_value = empty_value
         self.nodes = np.full((num_batches, num_nodes, node_dim), start_node_value, dtype=np.float32)
         self.edges = np.zeros((num_batches, num_nodes, max_edges_per_node), dtype=np.int32) # store the source node index for each edge slot
 
@@ -65,7 +67,7 @@ class NP_Graph_Memory(Graph_Memory):
         used_edges = self.next_free_edge[batch_idx, self.head]  # (batch_size,)
         slot_indices = np.arange(max_edges_per_node)  # (max_edges_per_node,)
         valid_mask = slot_indices[None, :] < used_edges[:, None]  # (batch_size, max_edges_per_node)
-        context[:, 1:, :] *= valid_mask[:, :, None]
+        context[:, 1:, :] = np.where(valid_mask[:, :, None], context[:, 1:, :], self.empty_value)
 
         return context
     
