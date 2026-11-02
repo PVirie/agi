@@ -147,6 +147,7 @@ if __name__ == "__main__":
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
+    parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.05.")
     args = parser.parse_args()
 
 
