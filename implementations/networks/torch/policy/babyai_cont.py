@@ -74,6 +74,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             max_len=goal_size + inventory_size,
             use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
             pooling="cls",  # mean pooling dilutes order-dependent structure ("A then B" vs "B then A")
+            cond_dim=hidden_size,  # internal state token lets memory select which mission clause to attend
         )
 
         self.internal_state_feature_extraction = ResNet(
@@ -83,10 +84,10 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
             layers=[hidden_size for _ in layers]
         )
 
-        # vision conditioned on the instruction and internal state features via FiLM
+        # vision conditioned via FiLM on the internal-state-aware instruction features
         self.conv_layers = FiLMMiniGridCNN(
             output_dims=hidden_size, 
-            cond_dims=hidden_size + hidden_size,
+            cond_dims=hidden_size,
             input_channels=channel, 
             width=width, height=height,
             vocab_size=256, embedding_dim=8,
@@ -187,22 +188,19 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
         obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
 
+        internal_state_features = self.internal_state_feature_extraction(internal_state)  # (batch_size, context_size, hidden_size)
+
         goal_inv = torch.concat([goal, inv], dim=-1)  # (batch_size, context_size, goal_size + inventory_size)
         padding_mask = get_padding_mask(goal_inv, self.pad_token_id)  # (batch_size, context_size, goal_size + inventory_size)
         
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         inv_embedded = self.inv_embedding(inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
 
-        goal_inv_embedded = torch.concat([goal_embedded, inv_embedded], dim=2)  # (batch_size, context_size, internal_state_size + goal_size + inventory_size, embedding_dim)
-        goal_inv_features = self.goal_feature_extraction(goal_inv_embedded, padding_mask)  # (batch_size, context_size, hidden_size)
+        goal_inv_embedded = torch.concat([goal_embedded, inv_embedded], dim=2)  # (batch_size, context_size, goal_size + inventory_size, embedding_dim)
+        goal_inv_features = self.goal_feature_extraction(goal_inv_embedded, padding_mask, cond=internal_state_features)  # (batch_size, context_size, hidden_size)
 
-        # Extract features from the internal state
-        internal_state_features = self.internal_state_feature_extraction(internal_state)  # (batch_size, context_size, hidden_size)
-
-        cond = torch.concat([goal_inv_features, internal_state_features], dim=-1)  # (batch_size, context_size, hidden_size * 2)
-    
         obs_features = torch.reshape(obs, (batch_size * context_size, self.height, self.width, self.channel))  # (batch_size * context_size, height, width, channel)
-        cond = cond.reshape(batch_size * context_size, 2 * self.hidden_size)
+        cond = goal_inv_features.reshape(batch_size * context_size, self.hidden_size)
         obs_features = self.conv_layers(obs_features, cond)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 

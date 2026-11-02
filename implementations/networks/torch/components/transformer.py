@@ -7,11 +7,13 @@ from implementations.networks.torch.components.base import init_weights
 
 
 class InstructionTransformer(nn.Module):
-    def __init__(self, input_dim, d_model, nhead, num_layers, max_len, mlp_ratio=2, dropout=0.01, use_pe=False, norm_first=True, pooling="mean"):
+    def __init__(self, input_dim, d_model, nhead, num_layers, max_len, mlp_ratio=2, dropout=0.01, use_pe=False, norm_first=True, pooling="mean", cond_dim=None):
         """
         pooling: "mean" averages the real (non-padding) tokens;
                  "cls" prepends a learned token and returns its encoding, so the summary is
                  attention-weighted and can depend on token order beyond what the PE leaves after averaging.
+        cond_dim: if set, forward() takes a (Batch, Seq, cond_dim) condition that is projected to an extra
+                  always-attendable token; it is excluded from mean pooling.
         """
         super().__init__()
         if pooling not in ("mean", "cls"):
@@ -19,9 +21,13 @@ class InstructionTransformer(nn.Module):
         self.d_model = d_model
         self.use_pe = use_pe
         self.pooling = pooling
+        self.cond_dim = cond_dim
 
         if self.pooling == "cls":
             self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
+
+        if self.cond_dim is not None:
+            self.cond_projection = nn.Linear(cond_dim, d_model)
         
         # 1. Positional Encoding: A learned parameter for each position up to max_len
         # Shape: (1, max_len, d_model) for easy broadcasting
@@ -59,14 +65,18 @@ class InstructionTransformer(nn.Module):
             trunc_normal_(self.cls_token, std=0.02)
 
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, cond=None):
         """
         Args:
             x: Input tensor of shape (Batch, Seq, L, E)
             mask: Binary mask (1 for real, 0 for padding) of shape (Batch, Seq, L)
+            cond: (Batch, Seq, cond_dim); required iff cond_dim was set
         Returns:
             pooled_output: (Batch, Seq, E)
         """
+        if (cond is None) != (self.cond_dim is None):
+            raise ValueError("cond must be given exactly when the transformer was built with cond_dim")
+
         B, S, L, E = x.shape
         
         x_reshaped = x.view(B * S, L, E)
@@ -79,10 +89,17 @@ class InstructionTransformer(nn.Module):
         # Prepare Mask (Convert 1/0 to True/False for PyTorch)
         flat_mask = mask.view(B * S, L)
 
+        prefix = []
         if self.pooling == "cls":
-            # the CLS token is always attendable, so all-padding sequences need no guard
-            x_reshaped = torch.cat([self.cls_token.expand(B * S, -1, -1), x_reshaped], dim=1)
-            attn_mask = torch.cat([torch.ones_like(flat_mask[:, :1]), flat_mask], dim=1)
+            prefix.append(self.cls_token.expand(B * S, -1, -1))
+        if cond is not None:
+            prefix.append(self.cond_projection(cond.reshape(B * S, -1)).unsqueeze(1))
+        num_prefix = len(prefix)
+
+        if num_prefix > 0:
+            # prefix tokens are always attendable, so all-padding sequences need no guard
+            x_reshaped = torch.cat(prefix + [x_reshaped], dim=1)
+            attn_mask = torch.cat([flat_mask.new_ones(B * S, num_prefix), flat_mask], dim=1)
         else:
             # Guard against all-padding sequences: softmax over all-masked keys produces
             # NaN (0/0), which poisons LayerNorm gradients. Force at least one token to
@@ -104,7 +121,7 @@ class InstructionTransformer(nn.Module):
 
         # --- MASKED MEAN POOLING ---
         # Ensure we don't include padding in our feature average
-        masked_encoded = encoded * flat_mask.unsqueeze(-1)
+        masked_encoded = encoded[:, num_prefix:, :] * flat_mask.unsqueeze(-1)
         sum_encoded = torch.sum(masked_encoded, dim=1)
         token_counts = torch.sum(flat_mask, dim=1, keepdim=True).clamp(min=1e-9)
         
