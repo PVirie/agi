@@ -60,18 +60,27 @@ class Policy_Core(Minigrid_Policy_Core):
 
         # self.goal_wavenet = BasicWavenet(d_model=embedding_dim, num_layers=2)
 
-        self.internal_state_feature_extraction = InstructionTransformer(
+        self.goal_feature_extraction = InstructionTransformer(
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=8,
             num_layers=2,
             dropout=0.0,
-            max_len=internal_state_size + goal_size + inventory_size,
+            max_len=goal_size + inventory_size,
             use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
             pooling="cls",  # mean pooling dilutes order-dependent structure ("A then B" vs "B then A")
+            cond_dim=hidden_size,  # internal state token lets memory select which mission clause to attend
         )
 
-        # vision conditioned on the instruction/internal state features via FiLM
+        # flattened slot embeddings keep slot identity (edge heads address slots by position)
+        self.internal_state_feature_extraction = ResNet(
+            output_dims=hidden_size,
+            input_dims=internal_state_size * embedding_dim,
+            hidden_dims=hidden_size,
+            layers=[hidden_size for _ in layers]
+        )
+
+        # vision conditioned via FiLM on the internal-state-aware instruction features
         self.conv_layers = FiLMMiniGridCNN(
             output_dims=hidden_size, 
             cond_dims=hidden_size,
@@ -82,7 +91,7 @@ class Policy_Core(Minigrid_Policy_Core):
         )
 
         # internal_state, goal, inv, obs -> hidden
-        vec_dim = int_action_size + ext_action_size + hidden_size + hidden_size 
+        vec_dim = int_action_size + ext_action_size + hidden_size + hidden_size + hidden_size 
         self.backbone = ResNet(
             output_dims=hidden_size, 
             input_dims=vec_dim, 
@@ -135,8 +144,8 @@ class Policy_Core(Minigrid_Policy_Core):
 
         # self.goal_wavenet.reset_parameters()
 
+        self.goal_feature_extraction.reset_parameters()
         self.internal_state_feature_extraction.reset_parameters()
-
         self.conv_layers.reset_parameters()
 
         self.backbone.reset_parameters()
@@ -178,27 +187,25 @@ class Policy_Core(Minigrid_Policy_Core):
         inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
         obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
 
-        internal_state_goal_inv = torch.concat([internal_state, goal, inv], dim=-1)  # (batch_size, context_size, internal_state_size + goal_size + inventory_size)
-        padding_mask = get_padding_mask(internal_state_goal_inv, self.pad_token_id)  # (batch_size, context_size, internal_state_size + goal_size + inventory_size)
-        
         internal_state_embedded = self.internal_state_embedding(internal_state.long())  # (batch_size, context_size, internal_state_size, embedding_dim)
+        internal_state_embedded = internal_state_embedded.reshape(batch_size, context_size, self.internal_state_size * self.embedding_dim)
+        internal_state_features = self.internal_state_feature_extraction(internal_state_embedded)  # (batch_size, context_size, hidden_size)
+
+        goal_inv = torch.concat([goal, inv], dim=-1)  # (batch_size, context_size, goal_size + inventory_size)
+        padding_mask = get_padding_mask(goal_inv, self.pad_token_id)  # (batch_size, context_size, goal_size + inventory_size)
+
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         inv_embedded = self.inv_embedding(inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
 
-        # # run wavenet on goal to get a better representation of the goal sequence
-        # goal_embedded = goal_embedded.view(batch_size * context_size, self.goal_size, self.embedding_dim)  # (batch_size * context_size, goal_size, embedding_dim)
-        # goal_embedded = self.goal_wavenet(goal_embedded)  # (batch_size * context_size, goal_size, embedding_dim)
-        # goal_embedded = goal_embedded.view(batch_size, context_size, self.goal_size, self.embedding_dim)  # (batch_size, context_size, goal_size, embedding_dim)
-
-        internal_state_goal_embedded = torch.concat([internal_state_embedded, goal_embedded, inv_embedded], dim=2)  # (batch_size, context_size, internal_state_size + goal_size + inventory_size, embedding_dim)
-        internal_state_features = self.internal_state_feature_extraction(internal_state_goal_embedded, padding_mask)  # (batch_size, context_size, hidden_size)
+        goal_inv_embedded = torch.concat([goal_embedded, inv_embedded], dim=2)  # (batch_size, context_size, goal_size + inventory_size, embedding_dim)
+        goal_inv_features = self.goal_feature_extraction(goal_inv_embedded, padding_mask, cond=internal_state_features)  # (batch_size, context_size, hidden_size)
 
         obs_features = torch.reshape(obs, (batch_size * context_size, self.height, self.width, self.channel))  # (batch_size * context_size, height, width, channel)
-        cond = internal_state_features.reshape(batch_size * context_size, self.hidden_size)
+        cond = goal_inv_features.reshape(batch_size * context_size, self.hidden_size)
         obs_features = self.conv_layers(obs_features, cond)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
-        base_input = torch.concat([flag_onehot, action_onehot, internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        base_input = torch.concat([flag_onehot, action_onehot, goal_inv_features, internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
