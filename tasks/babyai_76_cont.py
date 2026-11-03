@@ -199,7 +199,7 @@ if __name__ == "__main__":
         mission_max_len=32,
         full_mdp=False,
         include_inventory=False,
-        bonus_type=BonusType.POSITION,
+        bonus_type=BonusType.NONE,
         # always split [extrinsic, intrinsic]: the babyai policy has a dual value head (intrinsic is 0 without the position bonus)
         has_intrinsic_reward=True,
         mission_translator=shorten_mission
