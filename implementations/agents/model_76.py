@@ -5,42 +5,7 @@ from interfaces.agent import Agent
 from interfaces.network import Policy_Network, Value_Network
 from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
-
-
-def make_valid_mask(valid_actions, action_size):
-    """
-    valid_actions: a list (batch) of list of int
-    action_size: int
-    """
-    valid_mask = np.zeros((len(valid_actions), action_size), dtype=bool)
-    for i, va in enumerate(valid_actions):
-        valid_mask[i, va] = True
-    return valid_mask
-
-
-def apply_cascading_masks(masks, *stop_conditions):
-    """
-    Updates masks by zeroing out elements where ANY stop_condition is True.
-    
-    Args:
-        masks (np.array): The initial mask array.
-        *stop_conditions (list): Variable number of lists/arrays to stack and filter by.
-                                 (e.g., last_idles, last_truncates)
-    """
-    combined_stop_flags = None
-
-    for cond in stop_conditions:
-        current_flags = np.stack(cond, axis=1).astype(bool)
-        if combined_stop_flags is None:
-            combined_stop_flags = current_flags
-        else:
-            # In-place logical_or is memory efficient and fast
-            np.logical_or(combined_stop_flags, current_flags, out=combined_stop_flags)
-
-    # ~combined_stop_flags turns True (stop) into False.
-    # .astype(float) turns False into 0.0, True into 1.0.
-    keep_factor = (~combined_stop_flags).astype(np.float32)
-    return masks * keep_factor
+from implementations.agents.model_base import make_valid_mask, apply_cascading_masks
 
 
 class Scheme(str, Enum):
@@ -286,32 +251,4 @@ class Model(Agent):
 
 if __name__ == "__main__":
     # test mask
-
-    masks = np.ones((2, 5), dtype=np.float32)
-    last_idles = [
-        [False, True],
-        [False, False],
-        [True, False],
-        [False, False],
-        [False, True],
-    ]
-    last_dones = [
-        [False, False],
-        [False, True],
-        [False, False],
-        [True, True],
-        [False, False],
-    ] 
-    last_truncates = [
-        [False, False],
-        [True, False],
-        [False, False],
-        [True, False],
-        [False, False],
-    ]  
-    updated_masks = apply_cascading_masks(masks, last_idles, last_dones, last_truncates)
-    manual_masks = masks.copy()
-    manual_masks = manual_masks * (1.0 - np.stack(last_idles, axis=1).astype(np.float32))
-    manual_masks = manual_masks * (1.0 - np.stack(last_dones, axis=1).astype(np.float32))
-    manual_masks = manual_masks * (1.0 - np.stack(last_truncates, axis=1).astype(np.float32))
-    assert np.allclose(updated_masks, manual_masks), "Cascading mask application failed!"
+    pass

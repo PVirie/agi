@@ -39,6 +39,7 @@ class NP_Graph_Memory(Graph_Memory):
         # update trace for training
         self.timestep = 0  # sequence index the current op is attributed to; set by execute()
         self.edge_cause_time = np.full((num_batches, num_nodes, max_edges_per_node), -1, dtype=np.int32)  # store time index from which the edge was last affected. -1 means never updated
+        self.head_track = []  # list (T) of (num_batches,) head node indices, one per execute()
 
 
     def total_used_nodes(self):
@@ -87,8 +88,17 @@ class NP_Graph_Memory(Graph_Memory):
         return cause_times
 
 
+    def get_head_track(self):
+        # return shape: (batch_size, T)
+        if len(self.head_track) == 0:
+            return np.zeros((self.head.shape[0], 0), dtype=np.int32)
+        return np.stack(self.head_track, axis=1)
+
+
     def reset_timestamp(self):
         self.edge_cause_time.fill(-1)
+        # keep the current head so the track stays index-aligned with the caller's retained slot
+        self.head_track = self.head_track[-1:]
 
 
     def reset(self, batch_indices):
@@ -350,6 +360,13 @@ class NP_Graph_Memory(Graph_Memory):
                 write_ok = self.write(op_indices, write_value[op_indices])
                 move_ok = self.move(op_indices, edge_1[op_indices])
                 op_success = write_ok & move_ok
+            elif op == (Graph_Memory_Operation_Type.CREATE | Graph_Memory_Operation_Type.MOVE):
+                create_ok = self.create(op_indices, write_value[op_indices])
+                created = op_indices[create_ok]
+                # the new node is always the last occupied slot on the head
+                new_slots = self.next_free_edge[created, self.head[created]] - 1
+                self.move(created, new_slots)
+                op_success = create_ok
             elif op == Graph_Memory_Operation_Type.ROTATE:
                 op_success = self.rotate(op_indices, edge_1[op_indices], edge_2[op_indices])
             elif op == Graph_Memory_Operation_Type.IDLE:
@@ -358,6 +375,8 @@ class NP_Graph_Memory(Graph_Memory):
                 # never silently degrade to IDLE: that is how RESET|WRITE went missing
                 raise ValueError(f"unhandled graph memory operation: {op!r}")
             success[op_indices] = op_success
+
+        self.head_track.append(self.head.copy())
 
         return success
 

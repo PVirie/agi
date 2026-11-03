@@ -49,5 +49,8 @@ class Graph_Memory:
     def get_cause_times(self):
         pass
 
+    def get_head_track(self):
+        pass
+
     def reset_timestamp(self):
         pass
