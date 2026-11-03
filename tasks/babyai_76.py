@@ -172,7 +172,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_5"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
     if args.st_train:
         experiment_path += "_stmean"
     if args.low_var:
@@ -190,7 +190,7 @@ if __name__ == "__main__":
     tokenizer.load(f"{experiment_path}/parameters")
 
     # game_ids = ["BabyAI-BossLevel-v0"] * 512
-    game_ids = ["BabyAI-BossLevelNoUnlock-v0"] * 512
+    game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
     # compact missions: longest possible BossLevel mission is 27 tokens, total vocab ~58 words
     env = Multi_Environment(
         game_ids=game_ids,
@@ -198,7 +198,7 @@ if __name__ == "__main__":
         mission_max_len=32,
         full_mdp=False,
         include_inventory=False,
-        bonus_type=BonusType.POSITION,
+        bonus_type=BonusType.NONE,
         # always split [extrinsic, intrinsic]: the babyai policy has a dual value head (intrinsic is 0 without the position bonus)
         has_intrinsic_reward=True,
         mission_translator=shorten_mission

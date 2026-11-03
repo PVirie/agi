@@ -191,7 +191,7 @@ if __name__ == "__main__":
 
     # game_ids = ["BabyAI-MiniBossLevel-v0"] * 256 + ["BabyAI-GoToLocalS8N7-v0"] * 128 + ["BabyAI-UnlockPickupDist-v0"] * 128
     # game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
-    game_ids = ["BabyAI-BossLevel-v0"] * 512
+    game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
     # compact missions: longest possible BossLevel mission is 27 tokens, total vocab ~58 words
     env = Multi_Environment(
         game_ids=game_ids,
