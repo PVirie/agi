@@ -40,3 +40,55 @@ def compact_vocabulary():
     words += [t for t in TYPES.values()] + [c + "-" + t for c in COLORS.values() for t in TYPES.values()]
     words += list(LOCATIONS.values()) + ["then", "after", "and"]
     return words
+
+
+_expand_table = {}
+_expand_table.update({v + d: lv + " " + ld for lv, v in VERBS.items() for ld, d in DETERMINERS.items()})
+_expand_table.update({t: lt for lt, t in TYPES.items()})
+_expand_table.update({c + "-" + t: lc + " " + lt for lc, c in COLORS.items() for lt, t in TYPES.items()})
+_expand_table.update({s: l for l, s in LOCATIONS.items()})
+_expand_table.update({s.strip(): l.strip() for l, s in CONNECTIVES.items()})
+
+
+def expand_mission(short_mission):
+    # Inverse of shorten_mission; unknown tokens pass through unchanged.
+    mission = " ".join(_expand_table.get(w, w) for w in short_mission.split())
+    return mission.replace(" , then", ", then")
+
+
+if __name__ == "__main__":
+    import io
+    import sys
+    import contextlib
+    import gymnasium as gym
+    import minigrid  # noqa: F401  (registers BabyAI envs)
+
+    seeds_per_env = int(sys.argv[1]) if len(sys.argv) > 1 else 50
+    vocabulary = set(compact_vocabulary())
+    env_ids = sorted(e for e in gym.registry if e.startswith("BabyAI-"))
+
+    checked, failures, oov = 0, [], set()
+    seen = set()
+    for env_id in env_ids:
+        env = gym.make(env_id)
+        for seed in range(seeds_per_env):
+            with contextlib.redirect_stdout(io.StringIO()):
+                obs, _ = env.reset(seed=seed)
+            mission = obs["mission"]
+            if mission in seen:
+                continue
+            seen.add(mission)
+            short = shorten_mission(mission)
+            restored = expand_mission(short)
+            checked += 1
+            oov.update(w for w in short.split() if w not in vocabulary)
+            if restored != mission:
+                failures.append((env_id, mission, short, restored))
+        env.close()
+
+    print(f"\nchecked {checked} unique missions from {len(env_ids)} envs")
+    print(f"out-of-vocabulary short tokens: {sorted(oov) if oov else 'none'}")
+    for env_id, mission, short, restored in failures[:20]:
+        print(f"[FAIL] {env_id}\n  original: {mission}\n  short:    {short}\n  restored: {restored}")
+    print(f"round-trip failures: {len(failures)}")
+    sys.exit(1 if failures else 0)
