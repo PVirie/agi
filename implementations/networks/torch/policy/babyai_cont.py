@@ -28,6 +28,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
                  dict_size, embedding_dim, pad_token_id,
                  hidden_size, layers, 
                  cnn_channels=128, cnn_blocks=2,
+                 value_size=1,
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
@@ -47,6 +48,8 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         self.node_dim = node_dim
         self.pad_token_id = pad_token_id
         self.hidden_size = hidden_size
+        # 1 for single-stream PPO (values squeezed to (batch, context)); 2 for ppo_graph_dual [extrinsic, intrinsic]
+        self.value_size = value_size
         # keeps Beta log-probs finite for samples that round to the support boundary
         self.write_eps = 1e-4
 
@@ -132,7 +135,7 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         self.head_value = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, 2)
+            nn.Linear(hidden_size, value_size)
         )
 
         self.reset_parameters()
@@ -213,7 +216,9 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         edge_2_logits = self.head_edge_2(base_output)  # (batch_size, context_size, C)
         write_value_params = self.head_write_value(base_output)  # (batch_size, context_size, 2 * node_dim)
 
-        values = self.head_value(base_output)  # (batch_size, context_size, 2)
+        values = self.head_value(base_output)  # (batch_size, context_size, value_size)
+        if self.value_size == 1:
+            values = values.squeeze(-1)  # (batch_size, context_size)
 
         return int_logits, ext_logits, edge_1_logits, edge_2_logits, write_value_params, values
 

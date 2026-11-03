@@ -21,6 +21,7 @@ class Policy_Core(Minigrid_Policy_Core):
                  dict_size, embedding_dim, pad_token_id,
                  hidden_size, layers, 
                  cnn_channels=128, cnn_blocks=2,
+                 value_size=1,
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
@@ -41,6 +42,8 @@ class Policy_Core(Minigrid_Policy_Core):
         self.embedding_dim = embedding_dim
         self.pad_token_id = pad_token_id
         self.hidden_size = hidden_size
+        # 1 for single-stream PPO (values squeezed to (batch, context)); 2 for ppo_graph_dual [extrinsic, intrinsic]
+        self.value_size = value_size
 
         self.position_size = 2
         self.content_size = internal_state_size + goal_size + inventory_size + width * height * channel
@@ -119,7 +122,7 @@ class Policy_Core(Minigrid_Policy_Core):
         self.head_value = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, 2)
+            nn.Linear(hidden_size, value_size)
         )
 
         self.reset_parameters()
@@ -207,7 +210,9 @@ class Policy_Core(Minigrid_Policy_Core):
         edge_2_logits = self.head_edge_2(base_output)  # (batch_size, context_size, C)
         write_value_logits = self.head_write_value(base_output)  # (batch_size, context_size, write_action_size)
 
-        values = self.head_value(base_output)  # (batch_size, context_size, 2)
+        values = self.head_value(base_output)  # (batch_size, context_size, value_size)
+        if self.value_size == 1:
+            values = values.squeeze(-1)  # (batch_size, context_size)
 
         return int_logits, ext_logits, edge_1_logits, edge_2_logits, write_value_logits, values
     

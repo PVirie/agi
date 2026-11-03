@@ -200,7 +200,7 @@ if __name__ == "__main__":
         full_mdp=False,
         include_inventory=False,
         bonus_type=BonusType.NONE,
-        # always split [extrinsic, intrinsic]: the babyai policy has a dual value head (intrinsic is 0 without the position bonus)
+        # extrinsic only: single-stream ppo_graph with a single value head (policy value_size=1)
         has_intrinsic_reward=False,
         mission_translator=shorten_mission
     )
