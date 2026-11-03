@@ -31,7 +31,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from implementations.agents import model_76
 from implementations.networks.torch.policy.minigrid import Projector
 from implementations.networks.torch.policy.babyai import Policy_Core
-from implementations.learning_algorithms.torch.ppo_graph_dual import PPO
+from implementations.learning_algorithms.torch.ppo_graph import PPO
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
@@ -200,7 +200,7 @@ if __name__ == "__main__":
         include_inventory=False,
         bonus_type=BonusType.NONE,
         # always split [extrinsic, intrinsic]: the babyai policy has a dual value head (intrinsic is 0 without the position bonus)
-        has_intrinsic_reward=True,
+        has_intrinsic_reward=False,
         mission_translator=shorten_mission
     )
 
@@ -257,11 +257,8 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path,
         lr=1e-4, minibatch_size=minibatch_size,
         gamma=0.985,
-        gamma_intrinsic=0.98,
-        ext_coef=1.0,
-        int_coef=0.1,
-        ent_coef=args.ent_coef,
         gae_lambda=0.95 if not args.low_var else 0.90,
+        ent_coef=args.ent_coef,
         use_graph=args.st_train,
     )
     memory = Graph_Memory(
