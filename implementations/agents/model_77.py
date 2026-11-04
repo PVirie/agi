@@ -5,7 +5,7 @@ from interfaces.agent import Agent
 from interfaces.network import Policy_Network, Value_Network
 from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
-from implementations.agents.model_base import make_valid_mask, apply_cascading_masks
+from implementations.agents.model_base import make_valid_mask, apply_cascading_masks, make_component_flags
 
 
 # int-action flag -> graph memory op; every step also acts in the env
@@ -14,6 +14,8 @@ INT_FLAG_OPS = {
     1: Graph_Memory_Operation_Type.CREATE | Graph_Memory_Operation_Type.MOVE,  # create a node from write_value, move onto it
     2: Graph_Memory_Operation_Type.BRIDGE | Graph_Memory_Operation_Type.MOVE | Graph_Memory_Operation_Type.WRITE, # link head to the node visited at window step edge_1, move onto it, write value
 }
+# policy component index (int, ext, edge_1, edge_2, write) -> flags on which that component is used
+COMPONENT_FLAGS = make_component_flags(INT_FLAG_OPS, external_flags=INT_FLAG_OPS.keys())
 
 
 class Model(Agent):

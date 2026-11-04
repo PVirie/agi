@@ -4,6 +4,39 @@ from interfaces.learning import RL_Learner
 from interfaces.agent import Agent
 from interfaces.network import Policy_Network, Value_Network
 from interfaces.data_structure import Context_Collector
+from interfaces.memory import Graph_Memory_Operation_Type
+
+
+def op_uses_write_value(op):
+    return bool(op & (Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.CREATE))
+
+
+def op_uses_edge_1(op):
+    # CREATE|MOVE moves to the newly created node itself, so it ignores edge_1
+    if op & (Graph_Memory_Operation_Type.LINK | Graph_Memory_Operation_Type.ROTATE | Graph_Memory_Operation_Type.BRIDGE):
+        return True
+    return bool(op & Graph_Memory_Operation_Type.MOVE) and not (op & Graph_Memory_Operation_Type.CREATE)
+
+
+def op_uses_edge_2(op):
+    return bool(op & (Graph_Memory_Operation_Type.LINK | Graph_Memory_Operation_Type.ROTATE))
+
+
+def make_component_flags(flag_ops, external_flags):
+    """
+    flag_ops: {int-action flag: Graph_Memory_Operation_Type}
+    external_flags: flags whose step acts in the env (consumes the ext action)
+    returns {policy component index (int=0, ext=1, edge_1=2, edge_2=3, write=4): flags on which that component is used};
+    int (0) is always used, so it is omitted
+    """
+    def flags_where(uses):
+        return tuple(sorted(flag for flag, op in flag_ops.items() if uses(op)))
+    return {
+        1: tuple(sorted(external_flags)),
+        2: flags_where(op_uses_edge_1),
+        3: flags_where(op_uses_edge_2),
+        4: flags_where(op_uses_write_value),
+    }
 
 
 def make_valid_mask(valid_actions, action_size):

@@ -5,7 +5,7 @@ from interfaces.agent import Agent
 from interfaces.network import Policy_Network, Value_Network
 from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
-from implementations.agents.model_base import make_valid_mask, apply_cascading_masks
+from implementations.agents.model_base import make_valid_mask, apply_cascading_masks, make_component_flags
 
 
 class Scheme(str, Enum):
@@ -28,6 +28,10 @@ WRITE_VALUE_FLAGS = tuple(sorted(
     flag for flag, op in {**EXTERNAL_FLAG_OPS, **THOUGHT_FLAG_OPS}.items()
     if op & (Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.CREATE)
 ))
+# flags whose step acts in the env (consumes the ext action); flag 0 is the external no-op
+EXTERNAL_FLAGS = (0, *sorted(EXTERNAL_FLAG_OPS))
+# policy component index (int, ext, edge_1, edge_2, write) -> flags on which that component is used
+COMPONENT_FLAGS = make_component_flags({**EXTERNAL_FLAG_OPS, **THOUGHT_FLAG_OPS}, EXTERNAL_FLAGS)
 
 
 class Model(Agent):

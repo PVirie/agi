@@ -27,7 +27,7 @@ from utilities.episode_recorder import Episode_Recorder
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import model_77
-from implementations.networks.torch.policy.minigrid import Projector
+from implementations.networks.torch.policy.babyai_77_core import Projector
 from implementations.networks.torch.policy.babyai_77_core import Policy_Core
 from implementations.learning_algorithms.torch.ppo_graph import PPO
 from implementations.collectors.states import State_Sequence as Collector
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
         int_action_size=3, ext_action_size=7,
-        write_action_size=32,
+        write_action_size=128,
         internal_state_size=1 + C,
         goal_size=mission_size, 
         inventory_size=inventory_size,
@@ -238,7 +238,10 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(policy_core, [0, 1, 2, 3, 4]),
+        policy_model=Projector(
+            policy_core, [0, 1, 2, 3, 4],
+            component_flags=model_77.COMPONENT_FLAGS,
+        ),
         device=device, persistence_path=parameters_path,
         lr=1e-4, minibatch_size=minibatch_size,
         gamma=0.985,
