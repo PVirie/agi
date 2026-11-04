@@ -16,11 +16,10 @@ APP_ROOT = os.getenv("APP_ROOT", "/app")
 from utilities.package_install import install
 
 install("datasets")
-install("colorama")
 
 from utilities.flipflop.environments import FlipFlop_Environment, NUM_TOKENS, TOKEN_PAD
 from utilities.episode_recorder import Episode_Recorder
-from colorama import Fore, Back, Style
+from utilities import format_float
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -32,14 +31,6 @@ from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
 torch.autograd.set_detect_anomaly(False)
-
-def format_float(f):
-    if f > 0:
-        return Fore.GREEN + "{: .1f}".format(f) + Style.RESET_ALL
-    elif f < 0:
-        return Fore.RED + "{: .1f}".format(f) + Style.RESET_ALL
-    else:
-        return "{: .1f}".format(f)
 
 async def run(env, agent, rollout_length=16, verbose=False):
 

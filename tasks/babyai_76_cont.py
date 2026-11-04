@@ -17,14 +17,12 @@ from utilities.package_install import install
 
 install("minigrid")
 install("gymnasium[other]")
-install("colorama")
 
-from utilities import scatter
+from utilities import scatter, format_float
 from utilities.minigrid.environments import Multi_Environment, BonusType
 from utilities.minigrid.babyai_language import shorten_mission
 from utilities.tokenizer import Text_Tokenizer
 from utilities.episode_recorder import Episode_Recorder
-from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -36,14 +34,6 @@ from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
 torch.autograd.set_detect_anomaly(False)
-
-def format_float(f):
-    if f > 0:
-        return Fore.GREEN + "{: .1f}".format(f) + Style.RESET_ALL
-    elif f < 0:
-        return Fore.RED + "{: .1f}".format(f) + Style.RESET_ALL
-    else:
-        return "{: .1f}".format(f)
 
 async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 

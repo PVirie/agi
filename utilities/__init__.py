@@ -16,6 +16,30 @@ def get_datetime_from_string(date_string):
     return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S")
 
 
+_FLOAT_COLOR_STOPS = [
+    (-1.0, (255, 0, 0)),     # red
+    (-0.5, (255, 255, 0)),   # yellow
+    (0.0, (0, 0, 0)),        # black
+    (0.5, (0, 0, 255)),      # blue
+    (1.0, (0, 255, 0)),      # green
+]
+
+
+def float_to_rgb(f):
+    """Piecewise-linear gradient over _FLOAT_COLOR_STOPS, clamped to [-1, 1]."""
+    f = max(-1.0, min(1.0, float(f)))
+    for (x0, c0), (x1, c1) in zip(_FLOAT_COLOR_STOPS, _FLOAT_COLOR_STOPS[1:]):
+        if f <= x1:
+            t = (f - x0) / (x1 - x0)
+            return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1))
+    return _FLOAT_COLOR_STOPS[-1][1]
+
+
+def format_float(f):
+    r, g, b = float_to_rgb(f)
+    return f"\033[38;2;{r};{g};{b}m{f: .1f}\033[0m"
+
+
 def scatter(data_list, indices, ops='list'):
     """
     Scatter data from a list of data into a new list based on provided indices and an operation.

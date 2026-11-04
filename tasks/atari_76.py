@@ -18,12 +18,11 @@ from utilities.package_install import install
 install("opencv-python-headless") 
 install("ale-py")
 install("gymnasium[atari, other]")
-install("colorama")
 
 import ale_py
 from utilities.atari.environments import Multi_Atari_Environment, ATARI_ACTIONS
 from utilities.episode_recorder import Episode_Recorder
-from colorama import Fore, Back, Style
+from utilities import format_float
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -34,14 +33,6 @@ from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
 torch.autograd.set_detect_anomaly(False)
-
-def format_float(f):
-    if f > 0:
-        return Fore.GREEN + "{: .1f}".format(f) + Style.RESET_ALL
-    elif f < 0:
-        return Fore.RED + "{: .1f}".format(f) + Style.RESET_ALL
-    else:
-        return "{: .1f}".format(f)
 
 # logged every 2 rollouts, see Multi_Atari_Environment.diagnostics and PPO.last_stats
 DIAGNOSTIC_KEYS = [

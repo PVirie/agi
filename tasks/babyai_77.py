@@ -17,14 +17,12 @@ from utilities.package_install import install
 
 install("minigrid")
 install("gymnasium[other]")
-install("colorama")
 
-from utilities import scatter
+from utilities import scatter, format_float
 from utilities.minigrid.environments import Multi_Environment, BonusType
 from utilities.minigrid.babyai_language import shorten_mission
 from utilities.tokenizer import Text_Tokenizer
 from utilities.episode_recorder import Episode_Recorder
-from colorama import Fore, Back, Style
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -36,14 +34,6 @@ from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
 
 torch.autograd.set_detect_anomaly(False)
-
-def format_float(f):
-    if f > 0:
-        return Fore.GREEN + "{: .1f}".format(f) + Style.RESET_ALL
-    elif f < 0:
-        return Fore.RED + "{: .1f}".format(f) + Style.RESET_ALL
-    else:
-        return "{: .1f}".format(f)
 
 async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
@@ -184,7 +174,7 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    game_ids = ["BabyAI-BossLevel-v0"] * 512
+    game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
     # compact missions: longest possible BossLevel mission is 27 tokens, total vocab ~58 words
     env = Multi_Environment(
         game_ids=game_ids,
@@ -237,7 +227,7 @@ if __name__ == "__main__":
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
         int_action_size=3, ext_action_size=7,
-        write_action_size=16,
+        write_action_size=32,
         internal_state_size=1 + C,
         goal_size=mission_size, 
         inventory_size=inventory_size,
