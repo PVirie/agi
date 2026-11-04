@@ -16,23 +16,35 @@ def get_datetime_from_string(date_string):
     return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S")
 
 
-_FLOAT_COLOR_STOPS = [
-    (-1.0, (255, 0, 0)),     # red
-    (-0.5, (255, 255, 0)),   # yellow
-    (0.0, (0, 0, 0)),        # black
-    (0.5, (0, 0, 255)),      # blue
-    (1.0, (0, 255, 0)),      # green
+# One color per 0.1 step, index 0 -> -1.0, index 10 -> 0.0, index 20 -> 1.0.
+_FLOAT_PALETTE = [
+    (255, 0, 0),      # -1.0 red
+    (255, 51, 0),     # -0.9
+    (255, 102, 0),    # -0.8
+    (255, 153, 0),    # -0.7
+    (255, 204, 0),    # -0.6
+    (255, 255, 0),    # -0.5 yellow
+    (215, 215, 0),    # -0.4
+    (175, 175, 0),    # -0.3
+    (135, 135, 0),    # -0.2
+    (95, 95, 0),      # -0.1
+    (0, 0, 0),        #  0.0 black
+    (0, 0, 95),       #  0.1
+    (0, 0, 135),      #  0.2
+    (0, 0, 175),      #  0.3
+    (0, 0, 215),      #  0.4
+    (0, 0, 255),      #  0.5 blue
+    (0, 51, 204),     #  0.6
+    (0, 102, 153),    #  0.7
+    (0, 153, 102),    #  0.8
+    (0, 204, 51),     #  0.9
+    (0, 255, 0),      #  1.0 green
 ]
 
 
 def float_to_rgb(f):
-    """Piecewise-linear gradient over _FLOAT_COLOR_STOPS, clamped to [-1, 1]."""
     f = max(-1.0, min(1.0, float(f)))
-    for (x0, c0), (x1, c1) in zip(_FLOAT_COLOR_STOPS, _FLOAT_COLOR_STOPS[1:]):
-        if f <= x1:
-            t = (f - x0) / (x1 - x0)
-            return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1))
-    return _FLOAT_COLOR_STOPS[-1][1]
+    return _FLOAT_PALETTE[round(f * 10) + 10]
 
 
 def format_float(f):
