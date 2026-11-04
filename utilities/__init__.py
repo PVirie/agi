@@ -16,40 +16,40 @@ def get_datetime_from_string(date_string):
     return datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S")
 
 
-# One color per 0.1 step, index 0 -> -1.0, index 10 -> 0.0, index 20 -> 1.0.
+# xterm-256 color index per 0.1 step (truecolor is often stripped by cloud log viewers).
+# index 0 -> -1.0, index 10 -> 0.0, index 20 -> 1.0.
 _FLOAT_PALETTE = [
-    (255, 0, 0),      # -1.0 red
-    (255, 51, 0),     # -0.9
-    (255, 102, 0),    # -0.8
-    (255, 153, 0),    # -0.7
-    (255, 204, 0),    # -0.6
-    (255, 255, 0),    # -0.5 yellow
-    (215, 215, 0),    # -0.4
-    (175, 175, 0),    # -0.3
-    (135, 135, 0),    # -0.2
-    (95, 95, 0),      # -0.1
-    (0, 0, 0),        #  0.0 black
-    (0, 0, 95),       #  0.1
-    (0, 0, 135),      #  0.2
-    (0, 0, 175),      #  0.3
-    (0, 0, 215),      #  0.4
-    (0, 0, 255),      #  0.5 blue
-    (0, 51, 204),     #  0.6
-    (0, 102, 153),    #  0.7
-    (0, 153, 102),    #  0.8
-    (0, 204, 51),     #  0.9
-    (0, 255, 0),      #  1.0 green
+    196,  # -1.0 red
+    202,  # -0.9
+    208,  # -0.8
+    214,  # -0.7
+    220,  # -0.6
+    226,  # -0.5 yellow
+    184,  # -0.4
+    142,  # -0.3
+    100,  # -0.2
+    58,   # -0.1
+    16,   #  0.0 black
+    17,   #  0.1
+    18,   #  0.2
+    19,   #  0.3
+    20,   #  0.4
+    21,   #  0.5 blue
+    26,   #  0.6
+    31,   #  0.7
+    36,   #  0.8
+    41,   #  0.9
+    46,   #  1.0 green
 ]
 
 
-def float_to_rgb(f):
+def float_to_color_index(f):
     f = max(-1.0, min(1.0, float(f)))
     return _FLOAT_PALETTE[round(f * 10) + 10]
 
 
 def format_float(f):
-    r, g, b = float_to_rgb(f)
-    return f"\033[38;2;{r};{g};{b}m{f: .1f}\033[0m"
+    return f"\033[38;5;{float_to_color_index(f)}m{f: .1f}\033[0m"
 
 
 def scatter(data_list, indices, ops='list'):
