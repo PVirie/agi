@@ -10,8 +10,9 @@ from implementations.agents.model_base import make_valid_mask, apply_cascading_m
 
 # int-action flag -> graph memory op; every step also acts in the env
 INT_FLAG_OPS = {
-    0: Graph_Memory_Operation_Type.CREATE | Graph_Memory_Operation_Type.MOVE,  # create a node from write_value, move onto it
-    1: Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.MOVE,   # overwrite head with write_value, move via edge_1
+    0: Graph_Memory_Operation_Type.WRITE,
+    1: Graph_Memory_Operation_Type.CREATE | Graph_Memory_Operation_Type.MOVE,  # create a node from write_value, move onto it
+    2: Graph_Memory_Operation_Type.BRIDGE | Graph_Memory_Operation_Type.MOVE | Graph_Memory_Operation_Type.WRITE, # link head to node edge_1 (graph node index), move onto it, write value
 }
 
 
@@ -117,7 +118,7 @@ class Model(Agent):
             operations=memory_action,
             write_value=write_content, # write value
             edge_1=position[:, 0],
-            edge_2=position[:, 1],
+            edge_2=np.zeros_like(position[:, 0]),
             cause_time=len(self.rewards) - 2, # the pending op comes from the action chosen one step back
         )
         self.last_cause_times.append(self.graph_memory.get_cause_times())

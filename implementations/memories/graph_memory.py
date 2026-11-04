@@ -14,6 +14,7 @@ except ImportError:
         MOVE = auto()
         LINK = auto()
         ROTATE = auto()
+        BRIDGE = auto()
 
     class Graph_Memory:
         pass
@@ -241,6 +242,57 @@ class NP_Graph_Memory(Graph_Memory):
             self.edge_cause_time[write_batches, write_dst, slots_dst] = self.timestep
 
         return success
+
+
+    def bridge(self, batch_indices, target_nodes):
+        # target_nodes are node indices in the whole graph (not edge slots on the head)
+        # ensures head <-> target exists; an existing edge counts as connected and is not duplicated
+        # fails on: unallocated target, target == head, or a missing edge that cannot fit on either end
+        max_edges = self.edges.shape[2]
+        batch_indices = np.asarray(batch_indices)
+        target_nodes = np.asarray(target_nodes, dtype=np.int32)
+
+        heads = self.head[batch_indices]
+        valid_target = (
+            (target_nodes >= 0)
+            & (target_nodes < self.next_free_node[batch_indices])
+            & (target_nodes != heads)
+        )
+        safe_targets = np.where(valid_target, target_nodes, 0)
+
+        free_on_head = self.next_free_edge[batch_indices, heads]
+        free_on_target = self.next_free_edge[batch_indices, safe_targets]
+
+        slot_range = np.arange(max_edges)
+        already_linked = np.any(
+            (self.edges[batch_indices, heads, :] == safe_targets[:, None]) & (slot_range[None, :] < free_on_head[:, None]),
+            axis=1,
+        )
+
+        need_link = (
+            valid_target
+            & ~already_linked
+            & (free_on_head < max_edges)
+            & (free_on_target < max_edges)
+        )
+        success = valid_target & (already_linked | need_link)
+
+        link_batches = batch_indices[need_link]
+        if len(link_batches) > 0:
+            link_heads = heads[need_link]
+            link_targets = safe_targets[need_link]
+            # target → head (stored at head's edge list)
+            slots_head = self.next_free_edge[link_batches, link_heads]
+            self.edges[link_batches, link_heads, slots_head] = link_targets
+            self.next_free_edge[link_batches, link_heads] += 1
+            # head → target (stored at target's edge list)
+            slots_target = self.next_free_edge[link_batches, link_targets]
+            self.edges[link_batches, link_targets, slots_target] = link_heads
+            self.next_free_edge[link_batches, link_targets] += 1
+            self.edge_cause_time[link_batches, link_heads, slots_head] = self.timestep
+            self.edge_cause_time[link_batches, link_targets, slots_target] = self.timestep
+
+        return success
     
 
     def _remove_edge(self, batches, src_nodes, dst_nodes):
@@ -367,6 +419,14 @@ class NP_Graph_Memory(Graph_Memory):
                 new_slots = self.next_free_edge[created, self.head[created]] - 1
                 self.move(created, new_slots)
                 op_success = create_ok
+            elif op == (Graph_Memory_Operation_Type.BRIDGE | Graph_Memory_Operation_Type.MOVE | Graph_Memory_Operation_Type.WRITE):
+                # edge_1 is a node index in the whole graph, not an edge slot on the head
+                # atomic: on bridge failure the head stays put and nothing is written
+                bridge_ok = self.bridge(op_indices, edge_1[op_indices])
+                bridged = op_indices[bridge_ok]
+                self.head[bridged] = np.asarray(edge_1[bridged], dtype=np.int32)
+                self.write(bridged, write_value[bridged])
+                op_success = bridge_ok
             elif op == Graph_Memory_Operation_Type.ROTATE:
                 op_success = self.rotate(op_indices, edge_1[op_indices], edge_2[op_indices])
             elif op == Graph_Memory_Operation_Type.IDLE:
@@ -906,5 +966,115 @@ if __name__ == "__main__":
     assert_equal("earlier stamp untouched", m.edge_cause_time[0, 0, 0], 5)
     m.execute([OP.CREATE], np.array([[5.0, 6.0]]), np.zeros(1, dtype=int), np.zeros(1, dtype=int), cause_time=-1)
     assert_equal("sentinel cause_time is stored verbatim", m.edge_cause_time[0, 0, 2], -1)
+
+    # ================================================================== TEST 36
+    # bridge: links head to a non-neighbor node by graph index (bidirectional)
+    print("TEST 36: bridge basic")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=5, max_edges_per_node=3, node_dim=2)
+    m.timestep = 4
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))  # node1; 0<->1
+    m.move(np.array([0]), np.array([0]))             # head -> node1
+    m.create(np.array([0]), np.array([[2.0, 0.0]]))  # node2; 1<->2
+    m.move(np.array([0]), np.array([1]))             # head -> node2
+    m.timestep = 8
+    ok = m.bridge(np.array([0]), np.array([0]))      # node2 <-> node0
+    assert_equal("bridge success", ok, [True])
+    assert_equal("head not moved by bridge", m.head[0], 2)
+    assert_equal("node2 stores node0", m.edges[0, 2, 1], 0)
+    assert_equal("node0 stores node2", m.edges[0, 0, 1], 2)
+    assert_equal("node2 edge count", m.next_free_edge[0, 2], 2)
+    assert_equal("node0 edge count", m.next_free_edge[0, 0], 2)
+    assert_equal("total_used_edges", m.total_used_edges(), [3])
+    assert_equal("node2 slot stamped", m.edge_cause_time[0, 2, 1], 8)
+    assert_equal("node0 slot stamped", m.edge_cause_time[0, 0, 1], 8)
+
+    # ================================================================== TEST 37
+    # bridge: already-linked target succeeds without adding a duplicate edge
+    print("TEST 37: bridge already linked")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=1, node_dim=2)
+    m.timestep = 2
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))  # 0<->1, both now full
+    m.timestep = 6
+    ok = m.bridge(np.array([0]), np.array([1]))
+    assert_equal("bridge to neighbor succeeds even when full", ok, [True])
+    assert_equal("head edge count unchanged", m.next_free_edge[0, 0], 1)
+    assert_equal("node1 edge count unchanged", m.next_free_edge[0, 1], 1)
+    assert_equal("existing stamp untouched", m.edge_cause_time[0, 0, 0], 2)
+
+    # ================================================================== TEST 38
+    # bridge: rejects self, unallocated, negative targets, and full endpoints
+    print("TEST 38: bridge rejects invalid targets")
+    m = NP_Graph_Memory(num_batches=1, num_nodes=5, max_edges_per_node=1, node_dim=2)
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))  # node1; 0<->1, node0 full
+    m.next_free_node[0] = 3                          # node2 allocated, isolated
+    edges_before = m.edges.copy()
+    counts_before = m.next_free_edge.copy()
+    assert_equal("self target", m.bridge(np.array([0]), np.array([0])), [False])
+    assert_equal("unallocated target", m.bridge(np.array([0]), np.array([3])), [False])
+    assert_equal("out-of-range target", m.bridge(np.array([0]), np.array([99])), [False])
+    assert_equal("negative target", m.bridge(np.array([0]), np.array([-1])), [False])
+    assert_equal("head full", m.bridge(np.array([0]), np.array([2])), [False])
+    m.head[0] = 2
+    assert_equal("target full", m.bridge(np.array([0]), np.array([0])), [False])
+    assert_equal("edges untouched", m.edges, edges_before)
+    assert_equal("edge counts untouched", m.next_free_edge, counts_before)
+
+    # ================================================================== TEST 39
+    # execute BRIDGE|MOVE|WRITE: link, jump head to target, write onto target
+    print("TEST 39: execute BRIDGE|MOVE|WRITE")
+    OP = Graph_Memory_Operation_Type
+    BMW = OP.BRIDGE | OP.MOVE | OP.WRITE
+    m = NP_Graph_Memory(num_batches=1, num_nodes=5, max_edges_per_node=3, node_dim=2)
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))  # node1
+    m.create(np.array([0]), np.array([[2.0, 0.0]]))  # node2; head(0) <-> 1, 2
+    m.move(np.array([0]), np.array([0]))             # head -> node1
+    ok = m.execute([BMW], np.array([[7.0, 8.0]]), np.array([2]), np.zeros(1, dtype=int), cause_time=3)
+    assert_equal("bmw success", ok, [True])
+    assert_equal("head jumped to node2", m.head[0], 2)
+    assert_allclose("value written to target", m.nodes[0, 2], [7.0, 8.0])
+    assert_allclose("old head untouched", m.nodes[0, 1], [1.0, 0.0])
+    assert_equal("node1 stores node2", m.edges[0, 1, 1], 2)
+    assert_equal("node2 stores node1", m.edges[0, 2, 1], 1)
+    assert_equal("head_track records target", m.get_head_track()[0, -1], 2)
+    # write stamps every neighbor slot pointing at the new head
+    assert_equal("node0->node2 slot stamped by write", m.edge_cause_time[0, 0, 1], 3)
+    assert_equal("node1->node2 slot stamped", m.edge_cause_time[0, 1, 1], 3)
+    ct = m.get_cause_times()
+    assert_equal("context cause times at new head", ct[0, :2], [0, 3])  # slot0 from create at timestep 0, slot1 from bridge
+
+    # ================================================================== TEST 40
+    # execute BRIDGE|MOVE|WRITE: atomic on failure, partial success across batches
+    print("TEST 40: BRIDGE|MOVE|WRITE failure is atomic")
+    OP = Graph_Memory_Operation_Type
+    BMW = OP.BRIDGE | OP.MOVE | OP.WRITE
+    m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.create(np.arange(3), np.array([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]]))  # each: 0<->1
+    ok = m.execute(
+        [BMW, BMW, BMW],
+        np.array([[5.0, 5.0], [6.0, 6.0], [7.0, 7.0]]),
+        np.array([1, 3, 0]),  # b0: existing neighbor, b1: unallocated, b2: self
+        np.zeros(3, dtype=int),
+        cause_time=0,
+    )
+    assert_equal("partial success", ok, [True, False, False])
+    assert_equal("b0 head moved via existing edge", m.head[0], 1)
+    assert_allclose("b0 target written", m.nodes[0, 1], [5.0, 5.0])
+    assert_equal("b0 no duplicate edge", m.total_used_edges()[0], 1)
+    assert_equal("b1 head unchanged", m.head[1], 0)
+    assert_allclose("b1 head not written", m.nodes[1, 0], [1.0, 1.0])
+    assert_equal("b2 head unchanged", m.head[2], 0)
+    assert_allclose("b2 head not written", m.nodes[2, 0], [1.0, 1.0])
+
+    # ================================================================== TEST 41
+    # execute: RESET|BRIDGE|MOVE|WRITE runs on the fresh graph (only node 0 exists)
+    print("TEST 41: RESET composed with BRIDGE|MOVE|WRITE")
+    OP = Graph_Memory_Operation_Type
+    m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.create(np.array([0]), np.array([[1.0, 0.0]]))
+    ok = m.execute([OP.RESET | OP.BRIDGE | OP.MOVE | OP.WRITE], np.array([[9.0, 9.0]]), np.array([1]), np.zeros(1, dtype=int), cause_time=0)
+    assert_equal("bridge to reset-freed node fails", ok, [False])
+    assert_equal("head at root", m.head[0], 0)
+    assert_equal("no edges after reset", m.total_used_edges(), [0])
+    assert_allclose("root not written", m.nodes[0, 0], [1.0, 1.0])
 
     print("\nAll tests passed.")
