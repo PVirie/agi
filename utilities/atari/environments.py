@@ -212,14 +212,16 @@ class Multi_Atari_Environment:
             self.diagnostic_rewarded_steps += int(game_reward != 0)
             self.diagnostic_game_reward += game_reward
             if termination or truncation:
+                # same convention as MiniGrid: an episode with positive game score counts as a success
+                success = self.total_return[i] > 0
                 info["episode"] = {
                     "r": self.total_return[i],
                     "aug_r": self.total_aux_return[i],
-                    "l": self.total_length[i],
+                    # failed episodes report no length (recorded as blank, skipped by tasks/plot.py)
+                    "l": self.total_length[i] if success else None,
                     "e": self.cumulative_length[i],
                     "t": time.perf_counter() - self.total_duration[i],
-                    # same convention as MiniGrid: an episode with positive game score counts as a success
-                    "s": 1.0 if self.total_return[i] > 0 else 0.0
+                    "s": 1.0 if success else 0.0
                 }
                 obs, _ = env.reset() # You must manually reset!
                 if self.rnd is not None:

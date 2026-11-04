@@ -125,15 +125,17 @@ class Multi_Environment:
             self.cumulative_length[i] += 1
             if termination or truncation:
                 obs, _ = env.reset() # You must manually reset!
+                # MiniGrid/BabyAI only emit a positive reward (1 - 0.9*steps/max_steps) on task completion
+                success = self.total_return[i] > 0
                 self.return_infos[i] = {
                     "episode": {
                         "r": self.total_return[i],
                         "aug_r": self.total_aux_return[i],
-                        "l": self.total_length[i],
+                        # failed episodes report no length (recorded as blank, skipped by tasks/plot.py)
+                        "l": self.total_length[i] if success else None,
                         "e": self.cumulative_length[i],
                         "t": time.perf_counter() - self.total_duration[i],
-                        # MiniGrid/BabyAI only emit a positive reward (1 - 0.9*steps/max_steps) on task completion
-                        "s": 1.0 if self.total_return[i] > 0 else 0.0
+                        "s": 1.0 if success else 0.0
                     }
                 }
                 self.total_return[i] = 0
