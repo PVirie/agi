@@ -12,7 +12,7 @@ from implementations.agents.model_base import make_valid_mask, apply_cascading_m
 INT_FLAG_OPS = {
     0: Graph_Memory_Operation_Type.WRITE,
     1: Graph_Memory_Operation_Type.CREATE | Graph_Memory_Operation_Type.MOVE,  # create a node from write_value, move onto it
-    2: Graph_Memory_Operation_Type.BRIDGE | Graph_Memory_Operation_Type.MOVE | Graph_Memory_Operation_Type.WRITE, # link head to node edge_1 (graph node index), move onto it, write value
+    2: Graph_Memory_Operation_Type.BRIDGE | Graph_Memory_Operation_Type.MOVE | Graph_Memory_Operation_Type.WRITE, # link head to the node visited at window step edge_1, move onto it, write value
 }
 
 
@@ -164,8 +164,7 @@ class Model(Agent):
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                 masks=masks,
-                aux=self.last_cause_times,
-                head_track=self.graph_memory.get_head_track()
+                aux=self.last_cause_times
             )
             
             left_over_slide = self.obs.mark(skip_last=True)
@@ -182,11 +181,9 @@ class Model(Agent):
             self.last_cause_times = [np.full_like(self.last_cause_times[-1], -1)]
 
         # Choose a random action
-        last_obs = self.obs.get_last_batch(batch_led=True)
         packed_action = self.policy_model.get_action(
-            last_obs,
-            self.valid_actions.get_last_batch(batch_led=True),
-            head_track=self.graph_memory.get_head_track()[:, -last_obs.shape[1]:]
+            self.obs.get_last_batch(batch_led=True),
+            self.valid_actions.get_last_batch(batch_led=True)
         )
         packed_action = packed_action[:, -1, ...]
 

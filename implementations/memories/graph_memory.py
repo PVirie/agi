@@ -40,7 +40,7 @@ class NP_Graph_Memory(Graph_Memory):
         # update trace for training
         self.timestep = 0  # sequence index the current op is attributed to; set by execute()
         self.edge_cause_time = np.full((num_batches, num_nodes, max_edges_per_node), -1, dtype=np.int32)  # store time index from which the edge was last affected. -1 means never updated
-        self.head_track = []  # list (T) of (num_batches,) head node indices, one per execute()
+        self.head_track = []  # internal: list (T) of (num_batches,) head node indices, one per execute(); resolves bridge steps; -1 = step from before a reset
 
 
     def total_used_nodes(self):
@@ -89,17 +89,22 @@ class NP_Graph_Memory(Graph_Memory):
         return cause_times
 
 
-    def get_head_track(self):
-        # return shape: (batch_size, T)
-        if len(self.head_track) == 0:
-            return np.zeros((self.head.shape[0], 0), dtype=np.int32)
-        return np.stack(self.head_track, axis=1)
-
-
     def reset_timestamp(self):
         self.edge_cause_time.fill(-1)
         # keep the current head so the track stays index-aligned with the caller's retained slot
         self.head_track = self.head_track[-1:]
+
+
+    def _resolve_steps(self, batch_indices, steps):
+        # internal: map head-track step indices to the head node recorded at that step; -1 where the step is not recorded
+        batch_indices = np.asarray(batch_indices)
+        steps = np.asarray(steps, dtype=np.int64)
+        nodes = np.full(len(batch_indices), -1, dtype=np.int32)
+        valid = (steps >= 0) & (steps < len(self.head_track))
+        if valid.any():
+            track = np.stack(self.head_track, axis=1)  # (num_batches, T)
+            nodes[valid] = track[batch_indices[valid], steps[valid]]
+        return nodes
 
 
     def reset(self, batch_indices):
@@ -111,6 +116,10 @@ class NP_Graph_Memory(Graph_Memory):
         self.head[batch_indices] = 0
 
         self.edge_cause_time[batch_indices, :, :] = -1
+
+        # recorded heads point into the wiped graph whose node indices get reused; -1 makes bridges to them fail
+        for heads in self.head_track:
+            heads[batch_indices] = -1
 
         return np.ones(len(batch_indices), dtype=bool)
 
@@ -420,11 +429,13 @@ class NP_Graph_Memory(Graph_Memory):
                 self.move(created, new_slots)
                 op_success = create_ok
             elif op == (Graph_Memory_Operation_Type.BRIDGE | Graph_Memory_Operation_Type.MOVE | Graph_Memory_Operation_Type.WRITE):
-                # edge_1 is a node index in the whole graph, not an edge slot on the head
-                # atomic: on bridge failure the head stays put and nothing is written
-                bridge_ok = self.bridge(op_indices, edge_1[op_indices])
+                # edge_1 is a step index (execute() calls since the last reset_timestamp, which keeps the latest as step 0), not an edge slot;
+                # it bridges to the head node recorded at that step
+                # atomic: on bridge failure (incl. an unrecorded step) the head stays put and nothing is written
+                targets = self._resolve_steps(op_indices, edge_1[op_indices])
+                bridge_ok = self.bridge(op_indices, targets)
                 bridged = op_indices[bridge_ok]
-                self.head[bridged] = np.asarray(edge_1[bridged], dtype=np.int32)
+                self.head[bridged] = targets[bridge_ok]
                 self.write(bridged, write_value[bridged])
                 op_success = bridge_ok
             elif op == Graph_Memory_Operation_Type.ROTATE:
@@ -1027,15 +1038,19 @@ if __name__ == "__main__":
     m = NP_Graph_Memory(num_batches=1, num_nodes=5, max_edges_per_node=3, node_dim=2)
     m.create(np.array([0]), np.array([[1.0, 0.0]]))  # node1
     m.create(np.array([0]), np.array([[2.0, 0.0]]))  # node2; head(0) <-> 1, 2
+    m.move(np.array([0]), np.array([1]))             # head -> node2
+    m.execute([OP.IDLE], np.zeros((1, 2)), np.zeros(1, dtype=int), np.zeros(1, dtype=int), cause_time=0)  # step 0: node2
+    m.move(np.array([0]), np.array([0]))             # head -> node0
     m.move(np.array([0]), np.array([0]))             # head -> node1
-    ok = m.execute([BMW], np.array([[7.0, 8.0]]), np.array([2]), np.zeros(1, dtype=int), cause_time=3)
+    m.execute([OP.IDLE], np.zeros((1, 2)), np.zeros(1, dtype=int), np.zeros(1, dtype=int), cause_time=0)  # step 1: node1
+    ok = m.execute([BMW], np.array([[7.0, 8.0]]), np.array([0]), np.zeros(1, dtype=int), cause_time=3)  # bridge to step 0
     assert_equal("bmw success", ok, [True])
     assert_equal("head jumped to node2", m.head[0], 2)
     assert_allclose("value written to target", m.nodes[0, 2], [7.0, 8.0])
     assert_allclose("old head untouched", m.nodes[0, 1], [1.0, 0.0])
     assert_equal("node1 stores node2", m.edges[0, 1, 1], 2)
     assert_equal("node2 stores node1", m.edges[0, 2, 1], 1)
-    assert_equal("head_track records target", m.get_head_track()[0, -1], 2)
+    assert_equal("head_track records target", np.stack(m.head_track, axis=1)[0], [2, 1, 2])
     # write stamps every neighbor slot pointing at the new head
     assert_equal("node0->node2 slot stamped by write", m.edge_cause_time[0, 0, 1], 3)
     assert_equal("node1->node2 slot stamped", m.edge_cause_time[0, 1, 1], 3)
@@ -1049,10 +1064,11 @@ if __name__ == "__main__":
     BMW = OP.BRIDGE | OP.MOVE | OP.WRITE
     m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=3, node_dim=2)
     m.create(np.arange(3), np.array([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]]))  # each: 0<->1
+    m.head_track = [np.array([1, 3, 0], dtype=np.int32)]  # step 0 resolves to b0: existing neighbor, b1: unallocated, b2: self
     ok = m.execute(
         [BMW, BMW, BMW],
         np.array([[5.0, 5.0], [6.0, 6.0], [7.0, 7.0]]),
-        np.array([1, 3, 0]),  # b0: existing neighbor, b1: unallocated, b2: self
+        np.zeros(3, dtype=int),
         np.zeros(3, dtype=int),
         cause_time=0,
     )
@@ -1071,10 +1087,55 @@ if __name__ == "__main__":
     OP = Graph_Memory_Operation_Type
     m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
     m.create(np.array([0]), np.array([[1.0, 0.0]]))
-    ok = m.execute([OP.RESET | OP.BRIDGE | OP.MOVE | OP.WRITE], np.array([[9.0, 9.0]]), np.array([1]), np.zeros(1, dtype=int), cause_time=0)
+    m.head_track = [np.array([1], dtype=np.int32)]  # step 0 was at node1
+    ok = m.execute([OP.RESET | OP.BRIDGE | OP.MOVE | OP.WRITE], np.array([[9.0, 9.0]]), np.array([0]), np.zeros(1, dtype=int), cause_time=0)
     assert_equal("bridge to reset-freed node fails", ok, [False])
     assert_equal("head at root", m.head[0], 0)
     assert_equal("no edges after reset", m.total_used_edges(), [0])
     assert_allclose("root not written", m.nodes[0, 0], [1.0, 1.0])
+
+    # ================================================================== TEST 42
+    # BRIDGE|MOVE|WRITE with unrecorded steps fails atomically; reset_timestamp renumbers the latest step as 0
+    print("TEST 42: bridge step resolution and reset_timestamp")
+    OP = Graph_Memory_Operation_Type
+    BMW = OP.BRIDGE | OP.MOVE | OP.WRITE
+    m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.create(np.arange(3), np.array([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]]))
+    m.move(np.arange(3), np.zeros(3, dtype=int))     # heads -> node1
+    m.execute([OP.IDLE] * 3, np.zeros((3, 2)), np.zeros(3, dtype=int), np.zeros(3, dtype=int), cause_time=0)  # step 0: node1
+    m.move(np.arange(3), np.zeros(3, dtype=int))     # heads -> node0
+    assert_equal("resolve_steps", m._resolve_steps(np.arange(3), np.array([0, 1, -1])), [1, -1, -1])
+    ok = m.execute([BMW] * 3, np.full((3, 2), 4.0), np.array([0, 1, -1]), np.zeros(3, dtype=int), cause_time=1)
+    assert_equal("only the recorded step bridges", ok, [True, False, False])
+    assert_equal("heads", m.head, [1, 0, 0])
+    assert_allclose("b1 head not written", m.nodes[1, 0], [1.0, 1.0])
+    # track is now [node1 x3, [1, 0, 0]]; reset_timestamp keeps only the latest -> step 0 = heads [1, 0, 0]
+    m.reset_timestamp()
+    assert_equal("step 1 no longer recorded", m._resolve_steps(np.arange(3), np.array([1, 1, 1])), [-1, -1, -1])
+    assert_equal("latest step renumbered 0", m._resolve_steps(np.arange(3), np.array([0, 0, 0])), [1, 0, 0])
+
+    # ================================================================== TEST 43
+    # RESET invalidates that batch's earlier steps (their node indices get reused); other batches and later steps unaffected
+    print("TEST 43: reset invalidates pre-reset bridge steps")
+    OP = Graph_Memory_Operation_Type
+    BMW = OP.BRIDGE | OP.MOVE | OP.WRITE
+    z2 = np.zeros(2, dtype=int)
+    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.create(np.arange(2), np.array([[1.0, 0.0], [1.0, 0.0]]))  # each: 0<->1
+    m.move(np.arange(2), z2)                                     # heads -> node1
+    m.execute([OP.IDLE, OP.IDLE], np.zeros((2, 2)), z2, z2, cause_time=0)   # step 0: [1, 1]
+    m.move(np.arange(2), z2)                                     # heads -> node0
+    m.execute([OP.RESET, OP.IDLE], np.zeros((2, 2)), z2, z2, cause_time=1)  # step 1: [0, 0]; b0 wiped
+    assert_equal("b0 pre-reset step invalidated", m._resolve_steps(np.arange(2), z2), [-1, 1])
+    m.create(np.array([0]), np.array([[3.0, 3.0]]))               # b0 reuses node index 1
+    ok = m.execute([BMW, BMW], np.full((2, 2), 5.0), z2, z2, cause_time=2)  # both bridge to step 0
+    assert_equal("stale step fails, other batch bridges", ok, [False, True])
+    assert_equal("b0 head unchanged", m.head[0], 0)
+    assert_allclose("reused node untouched", m.nodes[0, 1], [3.0, 3.0])
+    assert_equal("b1 head moved", m.head[1], 1)
+    m.move(np.array([0]), np.array([0]))                          # b0 head -> node1
+    ok = m.execute([BMW, OP.IDLE], np.full((2, 2), 6.0), np.array([1, 0]), z2, cause_time=3)  # b0 -> post-reset step 1 (node0)
+    assert_equal("post-reset step bridges", ok, [True, True])
+    assert_equal("b0 head at node0", m.head[0], 0)
 
     print("\nAll tests passed.")
