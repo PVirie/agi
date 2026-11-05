@@ -8,18 +8,18 @@ from interfaces.memory import Graph_Memory_Operation_Type
 
 
 def op_uses_write_value(op):
-    return bool(op & (Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.CREATE))
+    return bool(op & (Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.CREATE | Graph_Memory_Operation_Type.NAVIGATE))
 
 
 def op_uses_edge_1(op):
     # CREATE|MOVE moves to the newly created node itself, so it ignores edge_1
-    if op & (Graph_Memory_Operation_Type.LINK | Graph_Memory_Operation_Type.ROTATE | Graph_Memory_Operation_Type.BRIDGE):
+    if op & (Graph_Memory_Operation_Type.LINK | Graph_Memory_Operation_Type.ROTATE | Graph_Memory_Operation_Type.NAVIGATE):
         return True
     return bool(op & Graph_Memory_Operation_Type.MOVE) and not (op & Graph_Memory_Operation_Type.CREATE)
 
 
 def op_uses_edge_2(op):
-    return bool(op & (Graph_Memory_Operation_Type.LINK | Graph_Memory_Operation_Type.ROTATE))
+    return bool(op & (Graph_Memory_Operation_Type.LINK | Graph_Memory_Operation_Type.ROTATE | Graph_Memory_Operation_Type.NAVIGATE))
 
 
 def make_component_flags(flag_ops, external_flags):

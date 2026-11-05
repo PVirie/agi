@@ -2,6 +2,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.distributions.bernoulli import Bernoulli
 from torch.distributions.categorical import Categorical
 
 from implementations.networks.torch.components.std_resnet import ResNet
@@ -10,14 +11,14 @@ from implementations.networks.torch.components.wavenet import BasicWavenet
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.policy.minigrid import Policy_Core as Minigrid_Policy_Core
-from implementations.networks.torch.policy.babyai import Projector  # noqa: F401 -- same component masking; use with model_77.COMPONENT_FLAGS
+from implementations.networks.torch.policy.babyai import Projector  # noqa: F401 -- re-exported for the task
 from utilities.safe_torch_module import Safe_nn_Module
 
 
 class Policy_Core(Minigrid_Policy_Core):
 
     def __init__(self, 
-                 int_action_size, ext_action_size,
+                 action_size,
                  write_action_size,
                  internal_state_size,
                  goal_size,
@@ -28,15 +29,14 @@ class Policy_Core(Minigrid_Policy_Core):
                  cnn_channels=128, cnn_blocks=2,
                  value_size=1,
                  location_size=64,
-                 bridge_flag=2,
+                 navigate_flag=2,
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="babyai_77_core", device=device, persistence_path=persistence_path)
         self.device = device
 
-        self.int_action_size = int_action_size  # num classes for flag
-        self.ext_action_size = ext_action_size
+        self.action_size = action_size
         self.write_action_size = write_action_size
 
         self.internal_state_size = internal_state_size
@@ -52,18 +52,21 @@ class Policy_Core(Minigrid_Policy_Core):
         # 1 for single-stream PPO (values squeezed to (batch, context)); 2 for ppo_graph_dual [extrinsic, intrinsic]
         self.value_size = value_size
 
-        # bridge: each step emits a query/key "location vector"; q_t . k_j picks a previous step j to bridge to
+        # navigate: each step emits a query/key "location vector"; q_t . k_j picks a previous step j to link to (edge_1),
+        # and head_bridge decides between creating a new node (edge_2=0) and linking to step j (edge_2=1)
         self.location_size = location_size
-        # int-action flag that performs the bridge (model_77 INT_FLAG_OPS); the bridge target only counts on these steps
-        self.bridge_flag = bridge_flag
+        # action flag mapped to NAVIGATE in model_77's action_map; edge_1/edge_2 only count on these steps
+        self.navigate_flag = navigate_flag
         self._bridge_key_cache = None  # rollout-only cache of past keys, see get_action
 
         self.position_size = 2
         self.content_size = internal_state_size + goal_size + inventory_size + width * height * channel
-        self.packed_action_size = 1 + 1 + self.position_size + 1
-        self.packed_context_size = 1 + 1 + 1 + self.position_size + self.content_size
+        # [flag, edge_1 (window step), edge_2 (0: create, 1: link), write_value]
+        self.packed_action_size = 1 + self.position_size + 1
+        # [reward, flag, position, content]
+        self.packed_context_size = 1 + 1 + self.position_size + self.content_size
 
-        self.internal_state_pos = 1 + 1 + 1 + self.position_size
+        self.internal_state_pos = 1 + 1 + self.position_size
         self.goal_pos = self.internal_state_pos + self.internal_state_size
         self.inv_pos = self.goal_pos + goal_size
         self.obs_pos = self.inv_pos + inventory_size
@@ -98,7 +101,7 @@ class Policy_Core(Minigrid_Policy_Core):
         )
 
         # internal_state, goal, inv, obs -> hidden
-        vec_dim = int_action_size + ext_action_size + hidden_size + hidden_size 
+        vec_dim = action_size + hidden_size + hidden_size 
         self.backbone = ResNet(
             output_dims=hidden_size, 
             input_dims=vec_dim, 
@@ -106,20 +109,10 @@ class Policy_Core(Minigrid_Policy_Core):
             layers=[hidden_size for _ in layers]
         )
 
-        self.head_int = nn.Sequential(
+        self.head_action = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, int_action_size)   # int_action_size classes
-        )
-        self.head_ext = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, ext_action_size)   # ext_action_size classes
-        )
-        self.head_write_value = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, self.write_action_size)
+            nn.Linear(hidden_size, action_size)   # action_size classes
         )
         self.head_bridge_k = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
@@ -130,6 +123,16 @@ class Policy_Core(Minigrid_Policy_Core):
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, location_size)
+        )
+        self.head_bridge = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, 1)
+        )
+        self.head_write_value = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, self.write_action_size)
         )
 
         self.head_value = nn.Sequential(
@@ -167,10 +170,10 @@ class Policy_Core(Minigrid_Policy_Core):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-        self.head_int.apply(init_actor_weights)
-        self.head_ext.apply(init_actor_weights)
+        self.head_action.apply(init_actor_weights)
         self.head_bridge_k.apply(init_actor_weights)
         self.head_bridge_q.apply(init_actor_weights)
+        self.head_bridge.apply(init_actor_weights)
         self.head_write_value.apply(init_actor_weights)
 
         def init_value_weights(m):
@@ -187,8 +190,7 @@ class Policy_Core(Minigrid_Policy_Core):
         batch_size = context.size(0)
         context_size = context.size(1)
 
-        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
-        action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
+        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.action_size).float()
         internal_state = context[:, :, self.internal_state_pos: (self.internal_state_pos + self.internal_state_size)]  # (batch_size, context_size, internal_state_size)
         goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
         inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
@@ -214,20 +216,20 @@ class Policy_Core(Minigrid_Policy_Core):
         obs_features = self.conv_layers(obs_features, cond)  # (batch_size * context_size, hidden_size)
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
-        base_input = torch.concat([flag_onehot, action_onehot, internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
+        base_input = torch.concat([flag_onehot, internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
 
-        int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
-        ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
+        action_logits = self.head_action(base_output)  # (batch_size, context_size, action_size)
         bridge_q = self.head_bridge_q(base_output)  # (batch_size, context_size, location_size)
         bridge_k = self.head_bridge_k(base_output)  # (batch_size, context_size, location_size)
+        link_logits = self.head_bridge(base_output).squeeze(-1)  # (batch_size, context_size)
         write_value_logits = self.head_write_value(base_output)  # (batch_size, context_size, write_action_size)
 
         values = self.head_value(base_output)  # (batch_size, context_size, value_size)
         if self.value_size == 1:
             values = values.squeeze(-1)  # (batch_size, context_size)
 
-        return int_logits, ext_logits, bridge_q, bridge_k, write_value_logits, values
+        return action_logits, bridge_q, bridge_k, link_logits, write_value_logits, values
 
 
     def _bridge_logits(self, q, k, offset=0):
@@ -252,54 +254,52 @@ class Policy_Core(Minigrid_Policy_Core):
         return super().train(mode)
 
 
-    def _split_valid_actions(self, valid_actions):
+    def _valid_mask(self, valid_actions):
         if valid_actions is None:
-            return None, None
+            return None
         if isinstance(valid_actions, np.ndarray):
             valid_actions = torch.tensor(valid_actions, dtype=torch.bool)
-        valid_actions = valid_actions.to(self.device)
-        # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
-        return valid_actions[:, :, :self.int_action_size], valid_actions[:, :, self.int_action_size:]
+        return valid_actions.to(self.device)
 
 
-    def _distributions(self, int_logits, ext_logits, bridge_q, bridge_k, write_value_logits, valid_actions):
-        available_flags, available_actions = self._split_valid_actions(valid_actions)
+    def _distributions(self, action_logits, bridge_q, bridge_k, link_logits, write_value_logits, valid_actions):
         bridge_logits, bridge_mask = self._bridge_logits(bridge_q, bridge_k)
         return (
-            Categorical_With_Mask(logits=int_logits, mask=available_flags),
-            Categorical_With_Mask(logits=ext_logits, mask=available_actions),
+            Categorical_With_Mask(logits=action_logits, mask=self._valid_mask(valid_actions)),
             Categorical_With_Mask(logits=bridge_logits, mask=bridge_mask),
+            Bernoulli(logits=link_logits),
             Categorical(logits=write_value_logits),
         )
 
 
     def _log_prob_and_entropy(self, dists, selected_action):
-        probs_int, probs_ext, probs_bridge, probs_write_value = dists
+        probs_flag, probs_bridge, probs_link, probs_write_value = dists
 
-        action_int = selected_action[:, :, 0]
-        action_ext = selected_action[:, :, 1]
-        action_bridge_step = selected_action[:, :, 1 + 1 + 0]  # position[0] holds the sampled window step
-        action_write_value = selected_action[:, :, 1 + 1 + 2]
+        action_flag = selected_action[:, :, 0]
+        action_bridge_step = selected_action[:, :, 1]
+        action_link = selected_action[:, :, 2]
+        action_write_value = selected_action[:, :, 3]
 
-        # the bridge target only affects the outcome when the flag is BRIDGE
-        is_bridge = (action_int.long() == self.bridge_flag).float()
+        # create-vs-link only matters on NAVIGATE; the link target only when NAVIGATE chose to link
+        is_navigate = action_flag.long() == self.navigate_flag
+        is_link = is_navigate & (action_link > 0.5)
 
-        log_prob_int = probs_int.log_prob(action_int)
-        log_prob_ext = probs_ext.log_prob(action_ext)
-        log_prob_bridge = probs_bridge.log_prob(action_bridge_step) * is_bridge
+        log_prob_flag = probs_flag.log_prob(action_flag)
+        zeros = torch.zeros_like(log_prob_flag)
+        log_prob_bridge = torch.where(is_link, probs_bridge.log_prob(action_bridge_step), zeros)
+        log_prob_link = torch.where(is_navigate, probs_link.log_prob(action_link), zeros)
         log_prob_write_value = probs_write_value.log_prob(action_write_value)
 
-        entropy_int = probs_int.entropy()
-        entropy_ext = probs_ext.entropy()
-        entropy_bridge = probs_bridge.entropy() * is_bridge
+        entropy_flag = probs_flag.entropy()
+        entropy_bridge = torch.where(is_link, probs_bridge.entropy(), zeros)
+        entropy_link = torch.where(is_navigate, probs_link.entropy(), zeros)
         entropy_write_value = probs_write_value.entropy()
 
-        # keep the 5-slot layout [int, ext, position 0, position 1, write]; position 1 is unused
-        zeros = torch.zeros_like(log_prob_int)
+        # layout [flag, edge_1, edge_2, write] matches the packed action
         return torch.stack([
-            log_prob_int, log_prob_ext, log_prob_bridge, zeros, log_prob_write_value
+            log_prob_flag, log_prob_bridge, log_prob_link, log_prob_write_value
         ], dim=-1), torch.stack([
-            entropy_int, entropy_ext, entropy_bridge, zeros, entropy_write_value
+            entropy_flag, entropy_bridge, entropy_link, entropy_write_value
         ], dim=-1)
 
 
@@ -311,8 +311,8 @@ class Policy_Core(Minigrid_Policy_Core):
         every cached step of the current window (the window restarts when the core enters train mode, i.e. at learn()).
         The cached keys equal those recomputed at training time since parameters only change at learn().
 
-        returns action (batch, T, packed_action_size) = [int, ext, bridge window step, 0, write_value];
-        the graph memory resolves the bridge window step to a node through its own head track.
+        returns action (batch, T, packed_action_size) = [flag, edge_1 (window step), edge_2 (0: create, 1: link), write_value];
+        the graph memory resolves the window step to a node through its own head track.
         """
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.long).to(self.device)
@@ -320,7 +320,7 @@ class Policy_Core(Minigrid_Policy_Core):
         batch_size = context.size(0)
         context_size = context.size(1)
 
-        int_logits, ext_logits, bridge_q, bridge_k, write_value_logits, _ = self.compute(context)
+        action_logits, bridge_q, bridge_k, link_logits, write_value_logits, _ = self.compute(context)
 
         cache = self._bridge_key_cache
         if cache is not None and cache.size(0) != batch_size:
@@ -329,23 +329,39 @@ class Policy_Core(Minigrid_Policy_Core):
         bridge_k = new_key if cache is None else torch.cat([cache, new_key], dim=1)  # (batch, window_size, location_size)
         self._bridge_key_cache = bridge_k
 
-        available_flags, available_actions = self._split_valid_actions(valid_actions)
         bridge_logits, bridge_mask = self._bridge_logits(bridge_q, bridge_k, offset=bridge_k.size(1) - context_size)
 
-        action_int = Categorical_With_Mask(logits=int_logits, mask=available_flags).sample()
-        action_ext = Categorical_With_Mask(logits=ext_logits, mask=available_actions).sample()
+        action_flag = Categorical_With_Mask(logits=action_logits, mask=self._valid_mask(valid_actions)).sample()
         bridge_step = Categorical_With_Mask(logits=bridge_logits, mask=bridge_mask).sample()  # (batch, T) window step
+        link = Bernoulli(logits=link_logits).sample()
         write_value = Categorical(logits=write_value_logits).sample()
 
         action = np.concatenate([
-            action_int.unsqueeze(-1).cpu().numpy(),
-            action_ext.unsqueeze(-1).cpu().numpy(),
+            action_flag.unsqueeze(-1).cpu().numpy(),
             bridge_step.unsqueeze(-1).cpu().numpy(),
-            np.zeros((batch_size, context_size, 1)),
+            link.unsqueeze(-1).cpu().numpy(),
             write_value.unsqueeze(-1).cpu().numpy()
         ], axis=-1)
 
         return action.astype(float)
+
+
+    def unpack_action(self, packed_action):
+        # packed_action has shape (batch, packed_action_size); flag stays (batch, 1) so flag[i][0] is the env action
+        flag = packed_action[:, 0:1].astype(int)
+        position = packed_action[:, 1:1 + self.position_size].astype(float)
+        write_value = packed_action[:, 1 + self.position_size:].astype(float)
+        return flag, position, write_value
+
+
+    def pack_context(self, b_reward, b_flag, b_position, b_content):
+        batch_size = b_reward.shape[0]
+        return np.concatenate([
+            np.reshape(b_reward, (batch_size, 1)),
+            np.reshape(b_flag, (batch_size, 1)),
+            b_position,
+            b_content
+        ], axis=-1).astype(float)
 
 
     def get_log_probability(self, context, selected_action, valid_actions=None):
@@ -353,8 +369,8 @@ class Policy_Core(Minigrid_Policy_Core):
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.long).to(self.device)
 
-        int_logits, ext_logits, bridge_q, bridge_k, write_value_logits, _ = self.compute(context)
-        dists = self._distributions(int_logits, ext_logits, bridge_q, bridge_k, write_value_logits, valid_actions)
+        action_logits, bridge_q, bridge_k, link_logits, write_value_logits, _ = self.compute(context)
+        dists = self._distributions(action_logits, bridge_q, bridge_k, link_logits, write_value_logits, valid_actions)
         return self._log_prob_and_entropy(dists, selected_action)
 
 
@@ -373,13 +389,14 @@ class Policy_Core(Minigrid_Policy_Core):
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.long).to(self.device)
 
-        int_logits, ext_logits, bridge_q, bridge_k, write_value_logits, values = self.compute(context)
+        action_logits, bridge_q, bridge_k, link_logits, write_value_logits, values = self.compute(context)
 
         # drop the last step's outputs: it is the observation after the last action
         # (step i only attends to keys j <= i, so dropping the last key changes nothing for the remaining rows)
         dists = self._distributions(
-            int_logits[:, :-1], ext_logits[:, :-1],
+            action_logits[:, :-1], 
             bridge_q[:, :-1], bridge_k[:, :-1],
+            link_logits[:, :-1],
             write_value_logits[:, :-1],
             valid_actions,
         )

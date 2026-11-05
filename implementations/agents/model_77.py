@@ -5,32 +5,24 @@ from interfaces.agent import Agent
 from interfaces.network import Policy_Network, Value_Network
 from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
-from implementations.agents.model_base import make_valid_mask, apply_cascading_masks, make_component_flags
-
-
-# int-action flag -> graph memory op; every step also acts in the env
-INT_FLAG_OPS = {
-    0: Graph_Memory_Operation_Type.WRITE,
-    1: Graph_Memory_Operation_Type.CREATE | Graph_Memory_Operation_Type.MOVE,  # create a node from write_value, move onto it
-    2: Graph_Memory_Operation_Type.BRIDGE | Graph_Memory_Operation_Type.MOVE | Graph_Memory_Operation_Type.WRITE, # link head to the node visited at window step edge_1, move onto it, write value
-}
-# policy component index (int, ext, edge_1, edge_2, write) -> flags on which that component is used
-COMPONENT_FLAGS = make_component_flags(INT_FLAG_OPS, external_flags=INT_FLAG_OPS.keys())
+from implementations.agents.model_base import make_valid_mask, apply_cascading_masks
 
 
 class Model(Agent):
     
-    def __init__(self, 
+    def __init__(self,
                  policy_model: Policy_Network,
                  trainer: RL_Learner, 
                  context_collector: Context_Collector, 
                  action_collector: Context_Collector, 
                  valid_action_collector: Context_Collector,
                  graph_memory: Graph_Memory,
+                 action_map: dict,
                  do_supervision: bool = False,
                  has_intrinsic_reward: bool = False
                  ):
         """
+        action_map: a dictionary mapping action to memory action
         has_intrinsic_reward: if False, each env reward passed to choose_action is a scalar (extrinsic);
                               if True, each is a pair [extrinsic, intrinsic].
                               Rewards are always stored as (batch_size, reward_size) arrays with
@@ -48,7 +40,7 @@ class Model(Agent):
         self.has_intrinsic_reward = has_intrinsic_reward
         self.reward_size = 2 if has_intrinsic_reward else 1
 
-        self.valid_int_actions = list(INT_FLAG_OPS.keys())
+        self.action_map = action_map
 
         self.reset()
 
@@ -84,8 +76,7 @@ class Model(Agent):
                 np.zeros((batch_size, self.policy_model.packed_action_size), dtype=np.float32)
             )
             self.valid_actions.append(
-                np.ones((batch_size, self.policy_model.int_action_size), dtype=bool),
-                np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
+                np.ones((batch_size, self.policy_model.action_size), dtype=bool)
             )
             self.rewards.append(
                 np.zeros((batch_size, self.reward_size), dtype=np.float32)
@@ -99,15 +90,15 @@ class Model(Agent):
 
         # get last action's position
         last_action = self.actions.get_last()
-        int_action, ext_action, position, write_content = self.policy_model.unpack_action(last_action)
+        action_flag, position, write_content = self.policy_model.unpack_action(last_action)
 
         memory_action = [Graph_Memory_Operation_Type.IDLE for _ in range(batch_size)]
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
-            flag = int_action[i].item()
+            flag = action_flag[i].item()
             if r:
                 memory_action[i] = Graph_Memory_Operation_Type.RESET
             else:
-                memory_action[i] = INT_FLAG_OPS.get(flag, Graph_Memory_Operation_Type.IDLE)
+                memory_action[i] = self.action_map.get(flag, Graph_Memory_Operation_Type.IDLE)
             if d or t:
                 # reset position
                 position[i, :] = np.zeros_like(position[i, :])
@@ -120,7 +111,7 @@ class Model(Agent):
             operations=memory_action,
             write_value=write_content, # write value
             edge_1=position[:, 0],
-            edge_2=np.zeros_like(position[:, 0]),
+            edge_2=position[:, 1],
             cause_time=len(self.rewards) - 2, # the pending op comes from the action chosen one step back
         )
         self.last_cause_times.append(self.graph_memory.get_cause_times())
@@ -135,17 +126,13 @@ class Model(Agent):
         self.obs.update_last(
             self.policy_model.pack_context(
                 b_reward=reward[:, 0],   # the policy observes the extrinsic reward only
-                b_int=int_action,
-                b_ext=ext_action,
+                b_flag=action_flag,
                 b_position=position,
                 b_content=np.concatenate([context, content], axis=-1)
             )
         )
         self.rewards[-1] = reward
-        self.valid_actions.update_last(
-            make_valid_mask([self.valid_int_actions for i in range(batch_size)], self.policy_model.int_action_size),
-            make_valid_mask(next_available_actions, self.policy_model.ext_action_size)
-        )
+        self.valid_actions.update_last(make_valid_mask(next_available_actions, self.policy_model.action_size))
 
         # if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
         if force_train and current_cl > 1:
@@ -190,19 +177,16 @@ class Model(Agent):
         packed_action = packed_action[:, -1, ...]
 
         # extract output here
-        int_action, ext_action, position, write_content = self.policy_model.unpack_action(packed_action)
+        action_flag, position, write_content = self.policy_model.unpack_action(packed_action)
 
-        return_action = [ext_action[i] for i in range(batch_size)]
+        return_action = [action_flag[i] for i in range(batch_size)]
 
         # populate last states
         self.obs.append(
             np.zeros((batch_size, self.policy_model.packed_context_size), dtype=np.float32)
         )
         self.actions.append(packed_action)
-        self.valid_actions.append(
-            np.ones((batch_size, self.policy_model.int_action_size), dtype=bool),
-            np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
-        )
+        self.valid_actions.append(np.ones((batch_size, self.policy_model.action_size), dtype=bool))
         self.rewards.append(np.zeros((batch_size, self.reward_size), dtype=np.float32))
         self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         self.last_dones.append([False for _ in range(batch_size)])

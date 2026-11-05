@@ -14,7 +14,7 @@ except ImportError:
         MOVE = auto()
         LINK = auto()
         ROTATE = auto()
-        BRIDGE = auto()
+        NAVIGATE = auto()
 
     class Graph_Memory:
         pass
@@ -40,7 +40,7 @@ class NP_Graph_Memory(Graph_Memory):
         # update trace for training
         self.timestep = 0  # sequence index the current op is attributed to; set by execute()
         self.edge_cause_time = np.full((num_batches, num_nodes, max_edges_per_node), -1, dtype=np.int32)  # store time index from which the edge was last affected. -1 means never updated
-        self.head_track = []  # internal: list (T) of (num_batches,) head node indices, one per execute(); resolves bridge steps; -1 = step from before a reset
+        self.head_track = []  # internal: list (T) of (num_batches,) head node indices, one per execute(); resolves navigate steps; -1 = step from before a reset
 
 
     def total_used_nodes(self):
@@ -302,6 +302,37 @@ class NP_Graph_Memory(Graph_Memory):
             self.edge_cause_time[link_batches, link_targets, slots_target] = self.timestep
 
         return success
+
+
+    def navigate(self, batch_indices, write_value, edge_1, edge_2):
+        # edge_2 == 0: create a new node holding write_value and move onto it
+        # edge_2 == 1: bridge head to the node recorded at step edge_1 (execute() calls since the last reset_timestamp,
+        #              which keeps the latest as step 0), move onto it and overwrite it with write_value
+        # atomic: on failure the head stays put and nothing is written
+        batch_indices = np.asarray(batch_indices)
+        write_value = np.asarray(write_value)
+        edge_1 = np.asarray(edge_1)
+        edge_2 = np.asarray(edge_2)
+        success = np.zeros(len(batch_indices), dtype=bool)
+
+        is_link = edge_2 > 0.5
+
+        create_batches = batch_indices[~is_link]
+        create_ok = self.create(create_batches, write_value[~is_link])
+        created = create_batches[create_ok]
+        # the new node is always the last occupied slot on the head
+        self.move(created, self.next_free_edge[created, self.head[created]] - 1)
+        success[~is_link] = create_ok
+
+        link_batches = batch_indices[is_link]
+        targets = self._resolve_steps(link_batches, edge_1[is_link])
+        bridge_ok = self.bridge(link_batches, targets)
+        bridged = link_batches[bridge_ok]
+        self.head[bridged] = targets[bridge_ok]
+        self.write(bridged, write_value[is_link][bridge_ok])
+        success[is_link] = bridge_ok
+
+        return success
     
 
     def _remove_edge(self, batches, src_nodes, dst_nodes):
@@ -428,16 +459,8 @@ class NP_Graph_Memory(Graph_Memory):
                 new_slots = self.next_free_edge[created, self.head[created]] - 1
                 self.move(created, new_slots)
                 op_success = create_ok
-            elif op == (Graph_Memory_Operation_Type.BRIDGE | Graph_Memory_Operation_Type.MOVE | Graph_Memory_Operation_Type.WRITE):
-                # edge_1 is a step index (execute() calls since the last reset_timestamp, which keeps the latest as step 0), not an edge slot;
-                # it bridges to the head node recorded at that step
-                # atomic: on bridge failure (incl. an unrecorded step) the head stays put and nothing is written
-                targets = self._resolve_steps(op_indices, edge_1[op_indices])
-                bridge_ok = self.bridge(op_indices, targets)
-                bridged = op_indices[bridge_ok]
-                self.head[bridged] = targets[bridge_ok]
-                self.write(bridged, write_value[bridged])
-                op_success = bridge_ok
+            elif op == Graph_Memory_Operation_Type.NAVIGATE:
+                op_success = self.navigate(op_indices, write_value[op_indices], edge_1[op_indices], edge_2[op_indices])
             elif op == Graph_Memory_Operation_Type.ROTATE:
                 op_success = self.rotate(op_indices, edge_1[op_indices], edge_2[op_indices])
             elif op == Graph_Memory_Operation_Type.IDLE:
@@ -1031,10 +1054,9 @@ if __name__ == "__main__":
     assert_equal("edge counts untouched", m.next_free_edge, counts_before)
 
     # ================================================================== TEST 39
-    # execute BRIDGE|MOVE|WRITE: link, jump head to target, write onto target
-    print("TEST 39: execute BRIDGE|MOVE|WRITE")
+    # execute NAVIGATE (edge_2=1): link, jump head to target, write onto target
+    print("TEST 39: execute NAVIGATE link")
     OP = Graph_Memory_Operation_Type
-    BMW = OP.BRIDGE | OP.MOVE | OP.WRITE
     m = NP_Graph_Memory(num_batches=1, num_nodes=5, max_edges_per_node=3, node_dim=2)
     m.create(np.array([0]), np.array([[1.0, 0.0]]))  # node1
     m.create(np.array([0]), np.array([[2.0, 0.0]]))  # node2; head(0) <-> 1, 2
@@ -1043,8 +1065,8 @@ if __name__ == "__main__":
     m.move(np.array([0]), np.array([0]))             # head -> node0
     m.move(np.array([0]), np.array([0]))             # head -> node1
     m.execute([OP.IDLE], np.zeros((1, 2)), np.zeros(1, dtype=int), np.zeros(1, dtype=int), cause_time=0)  # step 1: node1
-    ok = m.execute([BMW], np.array([[7.0, 8.0]]), np.array([0]), np.zeros(1, dtype=int), cause_time=3)  # bridge to step 0
-    assert_equal("bmw success", ok, [True])
+    ok = m.execute([OP.NAVIGATE], np.array([[7.0, 8.0]]), np.array([0]), np.ones(1, dtype=int), cause_time=3)  # bridge to step 0
+    assert_equal("navigate success", ok, [True])
     assert_equal("head jumped to node2", m.head[0], 2)
     assert_allclose("value written to target", m.nodes[0, 2], [7.0, 8.0])
     assert_allclose("old head untouched", m.nodes[0, 1], [1.0, 0.0])
@@ -1058,18 +1080,17 @@ if __name__ == "__main__":
     assert_equal("context cause times at new head", ct[0, :2], [0, 3])  # slot0 from create at timestep 0, slot1 from bridge
 
     # ================================================================== TEST 40
-    # execute BRIDGE|MOVE|WRITE: atomic on failure, partial success across batches
-    print("TEST 40: BRIDGE|MOVE|WRITE failure is atomic")
+    # execute NAVIGATE link: atomic on failure, partial success across batches
+    print("TEST 40: NAVIGATE link failure is atomic")
     OP = Graph_Memory_Operation_Type
-    BMW = OP.BRIDGE | OP.MOVE | OP.WRITE
     m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=3, node_dim=2)
     m.create(np.arange(3), np.array([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]]))  # each: 0<->1
     m.head_track = [np.array([1, 3, 0], dtype=np.int32)]  # step 0 resolves to b0: existing neighbor, b1: unallocated, b2: self
     ok = m.execute(
-        [BMW, BMW, BMW],
+        [OP.NAVIGATE] * 3,
         np.array([[5.0, 5.0], [6.0, 6.0], [7.0, 7.0]]),
         np.zeros(3, dtype=int),
-        np.zeros(3, dtype=int),
+        np.ones(3, dtype=int),
         cause_time=0,
     )
     assert_equal("partial success", ok, [True, False, False])
@@ -1082,30 +1103,29 @@ if __name__ == "__main__":
     assert_allclose("b2 head not written", m.nodes[2, 0], [1.0, 1.0])
 
     # ================================================================== TEST 41
-    # execute: RESET|BRIDGE|MOVE|WRITE runs on the fresh graph (only node 0 exists)
-    print("TEST 41: RESET composed with BRIDGE|MOVE|WRITE")
+    # execute: RESET|NAVIGATE runs on the fresh graph (only node 0 exists)
+    print("TEST 41: RESET composed with NAVIGATE link")
     OP = Graph_Memory_Operation_Type
     m = NP_Graph_Memory(num_batches=1, num_nodes=4, max_edges_per_node=3, node_dim=2)
     m.create(np.array([0]), np.array([[1.0, 0.0]]))
     m.head_track = [np.array([1], dtype=np.int32)]  # step 0 was at node1
-    ok = m.execute([OP.RESET | OP.BRIDGE | OP.MOVE | OP.WRITE], np.array([[9.0, 9.0]]), np.array([0]), np.zeros(1, dtype=int), cause_time=0)
+    ok = m.execute([OP.RESET | OP.NAVIGATE], np.array([[9.0, 9.0]]), np.array([0]), np.ones(1, dtype=int), cause_time=0)
     assert_equal("bridge to reset-freed node fails", ok, [False])
     assert_equal("head at root", m.head[0], 0)
     assert_equal("no edges after reset", m.total_used_edges(), [0])
     assert_allclose("root not written", m.nodes[0, 0], [1.0, 1.0])
 
     # ================================================================== TEST 42
-    # BRIDGE|MOVE|WRITE with unrecorded steps fails atomically; reset_timestamp renumbers the latest step as 0
-    print("TEST 42: bridge step resolution and reset_timestamp")
+    # NAVIGATE link with unrecorded steps fails atomically; reset_timestamp renumbers the latest step as 0
+    print("TEST 42: navigate step resolution and reset_timestamp")
     OP = Graph_Memory_Operation_Type
-    BMW = OP.BRIDGE | OP.MOVE | OP.WRITE
     m = NP_Graph_Memory(num_batches=3, num_nodes=4, max_edges_per_node=3, node_dim=2)
     m.create(np.arange(3), np.array([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]]))
     m.move(np.arange(3), np.zeros(3, dtype=int))     # heads -> node1
     m.execute([OP.IDLE] * 3, np.zeros((3, 2)), np.zeros(3, dtype=int), np.zeros(3, dtype=int), cause_time=0)  # step 0: node1
     m.move(np.arange(3), np.zeros(3, dtype=int))     # heads -> node0
     assert_equal("resolve_steps", m._resolve_steps(np.arange(3), np.array([0, 1, -1])), [1, -1, -1])
-    ok = m.execute([BMW] * 3, np.full((3, 2), 4.0), np.array([0, 1, -1]), np.zeros(3, dtype=int), cause_time=1)
+    ok = m.execute([OP.NAVIGATE] * 3, np.full((3, 2), 4.0), np.array([0, 1, -1]), np.ones(3, dtype=int), cause_time=1)
     assert_equal("only the recorded step bridges", ok, [True, False, False])
     assert_equal("heads", m.head, [1, 0, 0])
     assert_allclose("b1 head not written", m.nodes[1, 0], [1.0, 1.0])
@@ -1116,10 +1136,10 @@ if __name__ == "__main__":
 
     # ================================================================== TEST 43
     # RESET invalidates that batch's earlier steps (their node indices get reused); other batches and later steps unaffected
-    print("TEST 43: reset invalidates pre-reset bridge steps")
+    print("TEST 43: reset invalidates pre-reset navigate steps")
     OP = Graph_Memory_Operation_Type
-    BMW = OP.BRIDGE | OP.MOVE | OP.WRITE
     z2 = np.zeros(2, dtype=int)
+    o2 = np.ones(2, dtype=int)
     m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
     m.create(np.arange(2), np.array([[1.0, 0.0], [1.0, 0.0]]))  # each: 0<->1
     m.move(np.arange(2), z2)                                     # heads -> node1
@@ -1128,14 +1148,31 @@ if __name__ == "__main__":
     m.execute([OP.RESET, OP.IDLE], np.zeros((2, 2)), z2, z2, cause_time=1)  # step 1: [0, 0]; b0 wiped
     assert_equal("b0 pre-reset step invalidated", m._resolve_steps(np.arange(2), z2), [-1, 1])
     m.create(np.array([0]), np.array([[3.0, 3.0]]))               # b0 reuses node index 1
-    ok = m.execute([BMW, BMW], np.full((2, 2), 5.0), z2, z2, cause_time=2)  # both bridge to step 0
+    ok = m.execute([OP.NAVIGATE, OP.NAVIGATE], np.full((2, 2), 5.0), z2, o2, cause_time=2)  # both bridge to step 0
     assert_equal("stale step fails, other batch bridges", ok, [False, True])
     assert_equal("b0 head unchanged", m.head[0], 0)
     assert_allclose("reused node untouched", m.nodes[0, 1], [3.0, 3.0])
     assert_equal("b1 head moved", m.head[1], 1)
     m.move(np.array([0]), np.array([0]))                          # b0 head -> node1
-    ok = m.execute([BMW, OP.IDLE], np.full((2, 2), 6.0), np.array([1, 0]), z2, cause_time=3)  # b0 -> post-reset step 1 (node0)
+    ok = m.execute([OP.NAVIGATE, OP.IDLE], np.full((2, 2), 6.0), np.array([1, 0]), o2, cause_time=3)  # b0 -> post-reset step 1 (node0)
     assert_equal("post-reset step bridges", ok, [True, True])
     assert_equal("b0 head at node0", m.head[0], 0)
+
+    # ================================================================== TEST 44
+    # NAVIGATE edge_2=0 creates a node and moves onto it; mixed with a link in the same call
+    print("TEST 44: NAVIGATE create and link mixed")
+    OP = Graph_Memory_Operation_Type
+    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.create(np.array([1]), np.array([[1.0, 0.0]]))  # b1: 0<->1
+    m.head_track = [np.array([0, 1], dtype=np.int32)]
+    ok = m.execute([OP.NAVIGATE] * 2, np.array([[5.0, 5.0], [6.0, 6.0]]), np.array([0, 0]), np.array([0, 1]), cause_time=0)
+    assert_equal("both succeed", ok, [True, True])
+    assert_equal("heads moved", m.head, [1, 1])
+    assert_allclose("b0 new node written", m.nodes[0, 1], [5.0, 5.0])
+    assert_equal("b0 head0 -> node1 edge", m.edges[0, 0, 0], 1)
+    assert_equal("b0 new edge stamped", m.edge_cause_time[0, 0, 0], 0)
+    assert_allclose("b1 linked target overwritten", m.nodes[1, 1], [6.0, 6.0])
+    assert_equal("b1 no duplicate edge", m.total_used_edges()[1], 1)
+    assert_equal("head_track records heads", m.head_track[-1], [1, 1])
 
     print("\nAll tests passed.")

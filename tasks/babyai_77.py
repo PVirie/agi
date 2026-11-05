@@ -32,6 +32,7 @@ from implementations.networks.torch.policy.babyai_77_core import Policy_Core
 from implementations.learning_algorithms.torch.ppo_graph import PPO
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
+from interfaces.memory import Graph_Memory_Operation_Type
 
 torch.autograd.set_detect_anomaly(False)
 
@@ -226,7 +227,7 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=3, ext_action_size=7,
+        action_size=7,
         write_action_size=128,
         internal_state_size=1 + C,
         goal_size=mission_size, 
@@ -238,10 +239,7 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(
-            policy_core, [0, 1, 2, 3, 4],
-            component_flags=model_77.COMPONENT_FLAGS,
-        ),
+        policy_model=Projector(policy_core, [0, 1, 2, 3]),
         device=device, persistence_path=parameters_path,
         lr=1e-4, minibatch_size=minibatch_size,
         gamma=0.985,
@@ -264,6 +262,15 @@ if __name__ == "__main__":
         action_collector=Collector(max_history=0),
         valid_action_collector=Collector(max_history=0),
         graph_memory=memory,
+        action_map={
+            0: Graph_Memory_Operation_Type.WRITE,
+            1: Graph_Memory_Operation_Type.WRITE,
+            2: Graph_Memory_Operation_Type.NAVIGATE,
+            3: Graph_Memory_Operation_Type.WRITE,
+            4: Graph_Memory_Operation_Type.WRITE,
+            5: Graph_Memory_Operation_Type.WRITE,
+            6: Graph_Memory_Operation_Type.WRITE,
+        },
         do_supervision=False,
         has_intrinsic_reward=env.has_intrinsic_reward
     )

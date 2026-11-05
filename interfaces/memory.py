@@ -25,7 +25,7 @@ class Graph_Memory_Operation_Type(Flag):
     MOVE = auto()
     LINK = auto()
     ROTATE = auto()
-    BRIDGE = auto()
+    NAVIGATE = auto()
 
 
 class Graph_Memory:
@@ -44,7 +44,7 @@ class Graph_Memory:
     def rotate(self, batch_indices, edge_1, edge_2):
         pass
 
-    def bridge(self, batch_indices, target_nodes):
+    def navigate(self, batch_indices, write_value, edge_1, edge_2):
         pass
 
     def reset(self, batch_indices):
