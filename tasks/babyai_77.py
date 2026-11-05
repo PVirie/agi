@@ -226,6 +226,15 @@ if __name__ == "__main__":
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
+    action_map = {
+        0: Graph_Memory_Operation_Type.WRITE,
+        1: Graph_Memory_Operation_Type.WRITE,
+        2: Graph_Memory_Operation_Type.NAVIGATE,
+        3: Graph_Memory_Operation_Type.WRITE,
+        4: Graph_Memory_Operation_Type.WRITE,
+        5: Graph_Memory_Operation_Type.WRITE,
+        6: Graph_Memory_Operation_Type.WRITE,
+    }
     policy_core = Policy_Core(
         action_size=7,
         write_action_size=128,
@@ -236,6 +245,7 @@ if __name__ == "__main__":
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
         cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
+        navigate_flag=next(k for k, v in action_map.items() if v == Graph_Memory_Operation_Type.NAVIGATE),
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
@@ -262,15 +272,7 @@ if __name__ == "__main__":
         action_collector=Collector(max_history=0),
         valid_action_collector=Collector(max_history=0),
         graph_memory=memory,
-        action_map={
-            0: Graph_Memory_Operation_Type.WRITE,
-            1: Graph_Memory_Operation_Type.WRITE,
-            2: Graph_Memory_Operation_Type.NAVIGATE,
-            3: Graph_Memory_Operation_Type.WRITE,
-            4: Graph_Memory_Operation_Type.WRITE,
-            5: Graph_Memory_Operation_Type.WRITE,
-            6: Graph_Memory_Operation_Type.WRITE,
-        },
+        action_map=action_map,
         do_supervision=False,
         has_intrinsic_reward=env.has_intrinsic_reward
     )
