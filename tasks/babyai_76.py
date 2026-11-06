@@ -136,7 +136,6 @@ if __name__ == "__main__":
     parser.add_argument("--scheme",                 "-sch", type=str, default="full", help="The scheme to use for the agent's decision making. Default is 'full'.")
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
-    parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
     args = parser.parse_args()
 
@@ -165,8 +164,6 @@ if __name__ == "__main__":
     experiment_path = f"{APP_ROOT}/experiments/babyai_76_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
     if args.st_train:
         experiment_path += "_stmean"
-    if args.low_var:
-        experiment_path += "_lv"
 
     if args.reset:
         # clear the experiment path
@@ -222,7 +219,7 @@ if __name__ == "__main__":
         # large 25GB VRAM
         hidden_size = 512
         embedding_dim = 32
-        C = 8
+        C = 16
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
@@ -233,7 +230,7 @@ if __name__ == "__main__":
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
         int_action_size=7, ext_action_size=7,
-        write_action_size=128,
+        write_action_size=32,
         internal_state_size=1 + C,
         goal_size=mission_size, inventory_size=inventory_size,
         width=7, height=7, channel=3,
@@ -249,8 +246,8 @@ if __name__ == "__main__":
         ),
         device=device, persistence_path=parameters_path,
         lr=1e-4, minibatch_size=minibatch_size,
-        gamma=0.985,
-        gae_lambda=0.95 if not args.low_var else 0.90,
+        gamma=0.99,
+        gae_lambda=0.95,
         ent_coef=args.ent_coef,
         use_graph=args.st_train,
     )

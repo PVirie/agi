@@ -26,6 +26,7 @@ class Graph_Memory_Operation_Type(Flag):
     LINK = auto()
     ROTATE = auto()
     NAVIGATE = auto()
+    UNLINK = auto()
 
 
 class Graph_Memory:
@@ -42,6 +43,9 @@ class Graph_Memory:
         pass
 
     def rotate(self, batch_indices, edge_1, edge_2):
+        pass
+
+    def unlink(self, batch_indices, edge_1):
         pass
 
     def navigate(self, batch_indices, write_value, edge_1, edge_2):

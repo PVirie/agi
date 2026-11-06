@@ -15,6 +15,7 @@ except ImportError:
         LINK = auto()
         ROTATE = auto()
         NAVIGATE = auto()
+        UNLINK = auto()
 
     class Graph_Memory:
         pass
@@ -354,6 +355,25 @@ class NP_Graph_Memory(Graph_Memory):
         self.edge_cause_time[batches, src_nodes, last] = self.timestep
         self.next_free_edge[batches, src_nodes] -= 1
 
+
+    def unlink(self, batch_indices, edge_1):
+        # removes head <-> node at slot edge_1 on head; fails only on an unoccupied slot
+        batch_indices = np.asarray(batch_indices)
+        edge_1 = np.asarray(edge_1, dtype=np.int32)
+
+        heads = self.head[batch_indices]
+        success = edge_1 < self.next_free_edge[batch_indices, heads]
+
+        unlink_batches = batch_indices[success]
+        if len(unlink_batches) > 0:
+            unlink_heads = heads[success]
+            targets = self.edges[unlink_batches, unlink_heads, edge_1[success]]
+            self._remove_edge(unlink_batches, unlink_heads, targets)
+            self._remove_edge(unlink_batches, targets, unlink_heads)
+
+        return success
+
+
     def rotate(self, batch_indices, edge_1, edge_2):
         # edge_1 is the pivot slot on head, edge_2 is the src slot on head
         # edges are undirected, so rotation:
@@ -463,6 +483,8 @@ class NP_Graph_Memory(Graph_Memory):
                 op_success = self.navigate(op_indices, write_value[op_indices], edge_1[op_indices], edge_2[op_indices])
             elif op == Graph_Memory_Operation_Type.ROTATE:
                 op_success = self.rotate(op_indices, edge_1[op_indices], edge_2[op_indices])
+            elif op == Graph_Memory_Operation_Type.UNLINK:
+                op_success = self.unlink(op_indices, edge_1[op_indices])
             elif op == Graph_Memory_Operation_Type.IDLE:
                 op_success = np.ones(len(op_indices), dtype=bool)
             else:
@@ -1174,5 +1196,21 @@ if __name__ == "__main__":
     assert_allclose("b1 linked target overwritten", m.nodes[1, 1], [6.0, 6.0])
     assert_equal("b1 no duplicate edge", m.total_used_edges()[1], 1)
     assert_equal("head_track records heads", m.head_track[-1], [1, 1])
+
+    # ================================================================== TEST 45
+    # UNLINK: removes head <-> slot target on both ends; fails on an unoccupied slot
+    print("TEST 45: execute UNLINK")
+    OP = Graph_Memory_Operation_Type
+    m = NP_Graph_Memory(num_batches=2, num_nodes=4, max_edges_per_node=3, node_dim=2)
+    m.create(np.arange(2), np.ones((2, 2)))  # each: 0<->1
+    m.create(np.arange(2), np.ones((2, 2)))  # each: 0<->2
+    ok = m.execute([OP.UNLINK] * 2, np.zeros((2, 2)), np.array([0, 2]), np.zeros(2, dtype=int), cause_time=5)
+    assert_equal("unlink success / invalid slot fails", ok, [True, False])
+    assert_equal("b0 head keeps node2 in slot 0", m.edges[0, 0, 0], 2)
+    assert_equal("b0 head edge count", m.next_free_edge[0, 0], 1)
+    assert_equal("b0 node1 isolated", m.next_free_edge[0, 1], 0)
+    assert_equal("b0 total edges", m.total_used_edges()[0], 1)
+    assert_equal("b0 vacated slot masked", m.get_cause_times()[0, 1], -1)
+    assert_equal("b1 untouched", m.total_used_edges()[1], 2)
 
     print("\nAll tests passed.")

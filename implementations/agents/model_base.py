@@ -13,7 +13,7 @@ def op_uses_write_value(op):
 
 def op_uses_edge_1(op):
     # CREATE|MOVE moves to the newly created node itself, so it ignores edge_1
-    if op & (Graph_Memory_Operation_Type.LINK | Graph_Memory_Operation_Type.ROTATE | Graph_Memory_Operation_Type.NAVIGATE):
+    if op & (Graph_Memory_Operation_Type.LINK | Graph_Memory_Operation_Type.ROTATE | Graph_Memory_Operation_Type.NAVIGATE | Graph_Memory_Operation_Type.UNLINK):
         return True
     return bool(op & Graph_Memory_Operation_Type.MOVE) and not (op & Graph_Memory_Operation_Type.CREATE)
 

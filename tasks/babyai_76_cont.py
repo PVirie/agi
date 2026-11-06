@@ -136,7 +136,6 @@ if __name__ == "__main__":
     parser.add_argument("--scheme",                 "-sch", type=str, default="full", help="The scheme to use for the agent's decision making. Default is 'full'.")
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
-    parser.add_argument("--low-var",                "-lv", action="store_true", help="Use low-variance (lower GAE-lambda) advantage estimation. Default is False.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
     args = parser.parse_args()
 
@@ -165,8 +164,6 @@ if __name__ == "__main__":
     experiment_path = f"{APP_ROOT}/experiments/babyai_76_cont_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
     if args.st_train:
         experiment_path += "_stmean"
-    if args.low_var:
-        experiment_path += "_lv"
 
     if args.reset:
         # clear the experiment path
@@ -249,12 +246,12 @@ if __name__ == "__main__":
     ppo_learner = PPO(
         policy_model=Projector(
             policy_core, [0, 1, 2, 3, 4],
-            component_flags={4: model_76.WRITE_VALUE_FLAGS},
+            component_flags=model_76.COMPONENT_FLAGS,
         ),
         device=device, persistence_path=parameters_path,
         lr=1e-4, minibatch_size=minibatch_size,
-        gamma=0.985,
-        gae_lambda=0.95 if not args.low_var else 0.90,
+        gamma=0.99,
+        gae_lambda=0.95,
         ent_coef=args.ent_coef,
         use_graph=args.st_train,
     )
