@@ -217,7 +217,7 @@ if __name__ == "__main__":
         # large 25GB VRAM
         hidden_size = 512
         embedding_dim = 32
-        C = 8
+        C = 15
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
