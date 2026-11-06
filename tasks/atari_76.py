@@ -261,7 +261,7 @@ if __name__ == "__main__":
         persistence_path=parameters_path,
     )
 
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "edges_per_node", "graph_nodes"]])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "excess_degree", "graph_nodes"]])
     diagnostic_recorder = Episode_Recorder(f"{experiment_path}/diagnostics", headers=["env_steps"] + DIAGNOSTIC_KEYS)
     
     if args.scale == "small":

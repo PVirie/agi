@@ -195,7 +195,7 @@ if __name__ == "__main__":
     mission_size = env.mission_max_len
     inventory_size = 3 # inventory include 1 slot for current direction and 2 slots for items
     
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "success", "edges_per_node", "graph_nodes"]])
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "success", "excess_degree", "graph_nodes"]])
     
     if args.scale == "small":
         hidden_size = 256

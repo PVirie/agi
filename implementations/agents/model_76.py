@@ -245,9 +245,10 @@ class Model(Agent):
 
         # calculate metrics per batch
         metrics = []
-        # 1. average edge counts
-        metrics.append(self.graph_memory.total_used_edges()/self.graph_memory.total_used_nodes())
-        # 2. graph size; with (1) this gives the cycle count E - N + 1, which is 0 for a tree
+        # 1. branching: mean excess degree sum(max(deg - 2, 0)) / N; 0 for paths/cycles, ~0.5 binary tree, ~1 star
+        degrees = self.graph_memory.next_free_edge  # (B, num_nodes); unused nodes have degree 0
+        metrics.append(np.maximum(degrees - 2, 0).sum(axis=1) / self.graph_memory.total_used_nodes())
+        # 2. graph size
         metrics.append(self.graph_memory.total_used_nodes())
 
         return return_action, metrics
