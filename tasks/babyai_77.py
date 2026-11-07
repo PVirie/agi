@@ -201,7 +201,7 @@ if __name__ == "__main__":
     if args.scale == "small":
         hidden_size = 256
         embedding_dim = 32
-        node_dim = 8
+        node_dim = 32
         C = 4
         layers = [1, 1, 1]
         cnn_channels = 64
@@ -212,7 +212,7 @@ if __name__ == "__main__":
         # 19GB VRAM
         hidden_size = 256
         embedding_dim = 32
-        node_dim = 8
+        node_dim = 32
         C = 8
         layers = [1, 1, 1, 1]
         cnn_channels = 128
@@ -223,7 +223,7 @@ if __name__ == "__main__":
         # large 25GB VRAM
         hidden_size = 384
         embedding_dim = 32
-        node_dim = 8
+        node_dim = 32
         C = 15
         layers = [1, 1, 1, 1]
         cnn_channels = 128
@@ -263,7 +263,7 @@ if __name__ == "__main__":
         policy_model=Projector(policy_core, [0, 1, 2, 3]),
         device=device, persistence_path=parameters_path,
         lr=1e-4, minibatch_size=minibatch_size,
-        gamma=0.985,
+        gamma=0.99,
         gae_lambda=0.95,
         ent_coef=args.ent_coef,
         aux_coef=args.aux_coef,
