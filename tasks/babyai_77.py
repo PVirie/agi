@@ -136,6 +136,7 @@ if __name__ == "__main__":
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
+    parser.add_argument("--aux-coef",               "-aux", type=float, default=None, help="Coefficient of the graph-transition auxiliary loss (delta graph explains obs change and action). Default is off.")
     args = parser.parse_args()
 
 
@@ -163,6 +164,9 @@ if __name__ == "__main__":
     experiment_path = f"{APP_ROOT}/experiments/babyai_77_size_{args.scale}"
     if args.st_train:
         experiment_path += "_stmean"
+    if args.aux_coef is not None:
+        # the aux decoder adds parameters, so its checkpoints are not interchangeable with the plain arm
+        experiment_path += "_aux"
 
     if args.reset:
         # clear the experiment path
@@ -252,6 +256,7 @@ if __name__ == "__main__":
         cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
         navigate_flag=next(k for k, v in action_map.items() if v == Graph_Memory_Operation_Type.NAVIGATE),
         empty_value=empty_value,
+        use_aux=args.aux_coef is not None,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
@@ -261,6 +266,7 @@ if __name__ == "__main__":
         gamma=0.985,
         gae_lambda=0.95,
         ent_coef=args.ent_coef,
+        aux_coef=args.aux_coef,
         use_graph=args.st_train,
     )
     memory = Graph_Memory(

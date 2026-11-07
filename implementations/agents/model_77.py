@@ -145,6 +145,8 @@ class Model(Agent):
                 self.actions.make_mask(batch_led=True)[:, :-1], 
                 self.last_truncates[1:]
             )
+            # on done steps the next obs belongs to a new episode, so the transition aux loss must skip them
+            aux_masks = apply_cascading_masks(masks, self.last_dones[1:])
 
             self.trainer.learn(
                 obs=self.obs.make_batch(batch_led=True), 
@@ -153,6 +155,7 @@ class Model(Agent):
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                 masks=masks,
+                aux=aux_masks,
                 causes=self.last_cause_times
             )
             

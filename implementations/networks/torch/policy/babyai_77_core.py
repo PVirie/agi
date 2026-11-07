@@ -31,6 +31,8 @@ class Policy_Core(Minigrid_Policy_Core):
                  location_size=64,
                  navigate_flag=2,
                  empty_value=-1.0,
+                 use_aux=False,
+                 obs_classes=(11, 6, 3),
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
@@ -146,6 +148,28 @@ class Policy_Core(Minigrid_Policy_Core):
             nn.Linear(hidden_size, value_size)
         )
 
+        # auxiliary transition decoder (see _aux_loss): obs_t + delta(graph)_t -> obs_{t+1}, a_t
+        # only built when enabled so checkpoints saved without it still load (load_state_dict is strict)
+        self.use_aux = use_aux
+        self.obs_classes = tuple(obs_classes)  # per-channel class counts of the raw grid (minigrid object, color, state)
+        self.obs_cells = width * height
+        self.aux_obs_size = self.obs_cells * sum(self.obs_classes)
+        self.aux_write_tol = 1e-4  # a write landed if the next head node equals the sampled write value
+        if use_aux:
+            self.aux_obs_encoder = nn.Sequential(
+                nn.Linear(self.aux_obs_size, hidden_size),
+                nn.GELU(),
+                nn.Linear(hidden_size, hidden_size)
+            )
+            self.aux_decoder = nn.Sequential(
+                nn.Linear(hidden_size + node_dim, hidden_size),
+                nn.GELU(),
+                nn.Linear(hidden_size, hidden_size),
+                nn.GELU()
+            )
+            self.aux_head_obs = nn.Linear(hidden_size, self.aux_obs_size)
+            self.aux_head_action = nn.Linear(hidden_size, action_size)
+
         self.reset_parameters()
         self.load(override_persistence_path=first_load_path)
         self.eval()
@@ -188,6 +212,10 @@ class Policy_Core(Minigrid_Policy_Core):
                     nn.init.constant_(m.bias, 0)
                     
         self.head_value.apply(init_value_weights)
+
+        if self.use_aux:
+            for module in [self.aux_obs_encoder, self.aux_decoder, self.aux_head_obs, self.aux_head_action]:
+                module.apply(init_value_weights)
 
 
     def compute(self, context):
@@ -270,12 +298,70 @@ class Policy_Core(Minigrid_Policy_Core):
         return valid_actions.to(self.device)
 
 
-    def _write_value_distribution(self, write_value_params):
+    def _write_value_concentrations(self, write_value_params):
         alpha_raw, beta_raw = write_value_params.chunk(2, dim=-1)
         # concentrations >= 1 keep each Beta unimodal with bounded density
         alpha = 1.0 + nn.functional.softplus(alpha_raw)
         beta = 1.0 + nn.functional.softplus(beta_raw)
+        return alpha, beta
+
+
+    def _write_value_distribution(self, write_value_params):
+        alpha, beta = self._write_value_concentrations(write_value_params)
         return Independent(Beta(alpha, beta), 1)  # joint over node_dim
+
+
+    def _obs_one_hot(self, obs):
+        # obs: (..., height * width * channel) raw grid -> (..., cells * sum(obs_classes)) one-hot, and the long class ids
+        obs = obs.reshape(*obs.shape[:-1], self.obs_cells, len(self.obs_classes)).long()
+        ids = torch.stack([obs[..., c].clamp(0, n - 1) for c, n in enumerate(self.obs_classes)], dim=-1)  # (..., cells, channel)
+        one_hot = torch.cat([
+            nn.functional.one_hot(ids[..., c], num_classes=n) for c, n in enumerate(self.obs_classes)
+        ], dim=-1).float()  # (..., cells, sum(obs_classes))
+        return one_hot.reshape(*one_hot.shape[:-2], self.aux_obs_size), ids
+
+
+    def _aux_loss(self, context, write_value_params, selected_action):
+        """
+        Transition consistency: the change of the graph state must explain the env transition.
+        delta(graph)_t = E[write_value_t] - head_t, since the write of action t becomes the head node at t + 1
+        (the write head is the only differentiable route into the non-differentiable graph memory).
+        A decoder reconstructs obs_{t+1} and a_t from obs_t and delta(graph)_t; it never sees a_t, so delta(graph)
+        has to encode both the action and the part of the env change that obs_t cannot explain.
+
+        context: (batch, context_size + 1, packed_context_size); write_value_params: (batch, context_size, 2 * node_dim)
+        selected_action: (batch, context_size, packed_action_size)
+        returns (batch, context_size); zero on steps whose write did not land on the next head (e.g. failed navigate)
+        """
+        node_slice = slice(self.internal_state_pos, self.internal_state_pos + self.node_dim)
+        head = context[:, :-1, node_slice].float()  # (batch, context_size, node_dim)
+        next_head = context[:, 1:, node_slice].float()
+
+        alpha, beta = self._write_value_concentrations(write_value_params)
+        delta_graph = alpha / (alpha + beta) - head  # (batch, context_size, node_dim)
+
+        obs_in, _ = self._obs_one_hot(context[:, :-1, self.obs_pos:])
+        _, obs_target = self._obs_one_hot(context[:, 1:, self.obs_pos:])  # (batch, context_size, cells, channel)
+
+        hidden = self.aux_decoder(torch.cat([self.aux_obs_encoder(obs_in), delta_graph], dim=-1))
+        obs_logits = self.aux_head_obs(hidden)  # (batch, context_size, cells * sum(obs_classes))
+        obs_logits = obs_logits.reshape(*obs_logits.shape[:-1], self.obs_cells, sum(self.obs_classes))
+        action_logits = self.aux_head_action(hidden)  # (batch, context_size, action_size)
+
+        # flat (N, C) cross entropy: the spatial nll variant has no deterministic CUDA kernel
+        obs_loss = 0.0
+        for c, logits in enumerate(obs_logits.split(list(self.obs_classes), dim=-1)):
+            obs_loss = obs_loss + nn.functional.cross_entropy(
+                logits.reshape(-1, logits.size(-1)), obs_target[..., c].reshape(-1), reduction="none"
+            ).view(obs_target.shape[:-1]).mean(dim=-1)  # mean over cells
+        action_flag = selected_action[:, :, 0].long()
+        action_loss = nn.functional.cross_entropy(
+            action_logits.reshape(-1, self.action_size), action_flag.reshape(-1), reduction="none"
+        ).view(action_flag.shape)
+
+        written = selected_action[:, :, 3:3 + self.node_dim].float()
+        landed = ((next_head - written).abs() <= self.aux_write_tol).all(dim=-1)
+        return torch.where(landed, obs_loss + action_loss, torch.zeros_like(action_loss))
 
 
     def _distributions(self, action_logits, bridge_q, bridge_k, link_logits, write_value_params, valid_actions):
@@ -397,8 +483,31 @@ class Policy_Core(Minigrid_Policy_Core):
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
-        log_probs, entropy = self.get_log_probability(context[:, :-1, :], selected_action, valid_actions)
-        return log_probs, entropy, None
+        action_logits, bridge_q, bridge_k, link_logits, write_value_params, _ = self.compute(context[:, :-1, :])
+        dists = self._distributions(action_logits, bridge_q, bridge_k, link_logits, write_value_params, valid_actions)
+        log_probs, entropy = self._log_prob_and_entropy(dists, selected_action)
+        aux_loss = self._aux_loss(context, write_value_params, selected_action) if self.use_aux else None
+        return log_probs, entropy, aux_loss
+
+
+    def _log_prob_with_value(self, context, selected_action, valid_actions):
+        # context: (batch, context_size + 1, packed_context_size) tensor; also returns the write head params of the
+        # first context_size steps so the aux loss can reuse this forward pass
+        action_logits, bridge_q, bridge_k, link_logits, write_value_params, values = self.compute(context)
+
+        # drop the last step's outputs: it is the observation after the last action
+        # (step i only attends to keys j <= i, so dropping the last key changes nothing for the remaining rows)
+        write_value_params = write_value_params[:, :-1]
+        dists = self._distributions(
+            action_logits[:, :-1], 
+            bridge_q[:, :-1], bridge_k[:, :-1],
+            link_logits[:, :-1],
+            write_value_params,
+            valid_actions,
+        )
+        log_probs, entropy = self._log_prob_and_entropy(dists, selected_action)
+        # but maintain values for all contexts, since we need the bootstrap value for the last context
+        return log_probs, entropy, values, write_value_params
 
 
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
@@ -407,17 +516,17 @@ class Policy_Core(Minigrid_Policy_Core):
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
-        action_logits, bridge_q, bridge_k, link_logits, write_value_params, values = self.compute(context)
-
-        # drop the last step's outputs: it is the observation after the last action
-        # (step i only attends to keys j <= i, so dropping the last key changes nothing for the remaining rows)
-        dists = self._distributions(
-            action_logits[:, :-1], 
-            bridge_q[:, :-1], bridge_k[:, :-1],
-            link_logits[:, :-1],
-            write_value_params[:, :-1],
-            valid_actions,
-        )
-        log_probs, entropy = self._log_prob_and_entropy(dists, selected_action)
-        # but maintain values for all contexts, since we need the bootstrap value for the last context
+        log_probs, entropy, values, _ = self._log_prob_with_value(context, selected_action, valid_actions)
         return log_probs, entropy, values
+
+
+    def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
+        # get_log_probability_with_value plus the (batch, context_size) aux loss (None unless use_aux), see _aux_loss
+        if isinstance(context, np.ndarray):
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
+        if isinstance(selected_action, np.ndarray):
+            selected_action = torch.tensor(selected_action, dtype=torch.float32).to(self.device)
+
+        log_probs, entropy, values, write_value_params = self._log_prob_with_value(context, selected_action, valid_actions)
+        aux_loss = self._aux_loss(context, write_value_params, selected_action) if self.use_aux else None
+        return log_probs, entropy, values, aux_loss

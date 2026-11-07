@@ -331,8 +331,9 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         ], dim=-1), None # No auxiliary loss
 
 
-    def get_aux_loss(self, context, selected_action, valid_actions=None):
-        return None
+    def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
+        log_probs, entropy, values = self.get_log_probability_with_value(context, selected_action, valid_actions)
+        return log_probs, entropy, values, None  # no auxiliary loss
 
 
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):

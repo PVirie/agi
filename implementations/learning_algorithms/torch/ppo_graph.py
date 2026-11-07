@@ -31,7 +31,7 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         use_graph: if True, `causes` passed to learn() are used for graph-based credit assignment;
                    otherwise `causes` are ignored and standard GAE is used.
-        aux_coef: coefficient of the policy's auxiliary loss (from get_aux_loss).
+        aux_coef: coefficient of the policy's auxiliary loss (from get_log_prob_with_value_aux).
                   If None, no auxiliary loss is used.
 
         Issue: NaN when the sample actions are not on-policy.
@@ -203,24 +203,25 @@ class PPO(RL_Learner, Safe_nn_Module):
                 mb_actions = b_actions[mb_inds, 1:, ...]
                 mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
                 
-                mb_newlogprob, mb_entropy, mb_newvalue = self.policy_model.get_log_probability_with_value(
-                    context=mb_obs,
-                    selected_action=mb_actions,
-                    valid_actions=mb_valid_actions,
-                )
-                mb_newlogprob = mb_newlogprob
-                mb_newvalue = mb_newvalue[:, :-1, ...]  # remove last value
-
-                aux_loss = None
+                # one forward pass for both: the aux variant also returns the policy's unreduced aux loss (or None)
+                aux_unsum_loss = None
                 if self.aux_coef is not None:
-                    aux_unsum_loss = self.policy_model.get_aux_loss(
+                    mb_newlogprob, mb_entropy, mb_newvalue, aux_unsum_loss = self.policy_model.get_log_prob_with_value_aux(
                         context=mb_obs,
                         selected_action=mb_actions,
                         valid_actions=mb_valid_actions,
                     )
-                    # policies without an auxiliary objective return None
-                    if aux_unsum_loss is not None:
-                        aux_loss = masked_mean(aux_unsum_loss, b_aux_masks[mb_inds, ...])
+                else:
+                    mb_newlogprob, mb_entropy, mb_newvalue = self.policy_model.get_log_probability_with_value(
+                        context=mb_obs,
+                        selected_action=mb_actions,
+                        valid_actions=mb_valid_actions,
+                    )
+                mb_newvalue = mb_newvalue[:, :-1, ...]  # remove last value
+
+                aux_loss = None
+                if aux_unsum_loss is not None:
+                    aux_loss = masked_mean(aux_unsum_loss, b_aux_masks[mb_inds, ...])
                 
                 logratio = mb_newlogprob - mb_log_prob
                 ratio = logratio.exp()

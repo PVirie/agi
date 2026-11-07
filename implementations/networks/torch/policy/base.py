@@ -321,8 +321,11 @@ class Projector:
         entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
         return log_probs, entropy, svl_unsum_loss
 
-    def get_aux_loss(self, context, selected_action, valid_actions=None):
-        return self.master_core.get_aux_loss(context, selected_action, valid_actions)
+    def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy, values, aux_loss = self.master_core.get_log_prob_with_value_aux(context, selected_action, valid_actions)
+        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
+        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
+        return log_probs, entropy, values, aux_loss
     
     def train(self):
         self.master_core.train()

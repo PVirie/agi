@@ -257,4 +257,9 @@ class Projector(Base_Projector):
         all_logprobs, all_entropy, values = self.master_core.get_log_probability_with_value(context, selected_action, valid_actions)
         log_probs, entropy = self._project(all_logprobs, all_entropy, selected_action)
         return log_probs, entropy, values
+
+    def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy, values, aux_loss = self.master_core.get_log_prob_with_value_aux(context, selected_action, valid_actions)
+        log_probs, entropy = self._project(all_logprobs, all_entropy, selected_action)
+        return log_probs, entropy, values, aux_loss
     
