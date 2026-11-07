@@ -194,7 +194,7 @@ class Model(Agent):
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                 masks=masks,
-                aux=self.last_cause_times
+                causes=self.last_cause_times
             )
             
             left_over_slide = self.obs.mark(skip_last=True)
@@ -206,7 +206,7 @@ class Model(Agent):
             self.last_truncates = self.last_truncates[left_over_slide]
 
             self.graph_memory.reset_timestamp()
-            # keep one slot so aux stays index-aligned with obs; reset_timestamp just
+            # keep one slot so causes stay index-aligned with obs; reset_timestamp just
             # invalidated the retained entry's stamps, so they must not be reused
             self.last_cause_times = [np.full_like(self.last_cause_times[-1], -1)]
 

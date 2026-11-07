@@ -344,6 +344,10 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
         ], dim=-1), None # No auxiliary loss for flipflop task
 
 
+    def get_aux_loss(self, context, selected_action, valid_actions=None):
+        return None
+
+
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
         # now context has shape (batch, context_size + 1, self.packed_context_size)
         # Return log prob will only have context_size, but value will have context_size + 1

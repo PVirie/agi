@@ -36,6 +36,14 @@ class Policy_Value_Network(abc.ABC):
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
         pass
 
+    @abc.abstractmethod
+    def get_aux_loss(self, context, selected_action, valid_actions=None):
+        """
+        context: (batch, context_size + 1, ...); selected_action: (batch, context_size, ...)
+        Returns the unreduced auxiliary loss of shape (batch, context_size), or None if the policy has none.
+        """
+        pass
+
 
 class Q_Network(abc.ABC):
     

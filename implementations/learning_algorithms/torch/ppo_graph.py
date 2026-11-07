@@ -24,12 +24,15 @@ class PPO(RL_Learner, Safe_nn_Module):
                  gamma=0.99,
                  gae_lambda=None,
                  ent_coef=0.01,
-                 use_graph=False):
+                 use_graph=False,
+                 aux_coef=None):
         """
         PPO: Proximal Policy Optimization Algorithm
 
-        use_graph: if True, `aux` passed to learn() is interpreted as causal links and used for
-                   graph-based credit assignment; otherwise `aux` is ignored and standard GAE is used.
+        use_graph: if True, `causes` passed to learn() are used for graph-based credit assignment;
+                   otherwise `causes` are ignored and standard GAE is used.
+        aux_coef: coefficient of the policy's auxiliary loss (from get_aux_loss).
+                  If None, no auxiliary loss is used.
 
         Issue: NaN when the sample actions are not on-policy.
         """
@@ -46,6 +49,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.vf_coef = 0.5
         self.max_grad_norm = 0.5
         self.target_kl = None
+
+        self.aux_coef = aux_coef
 
         self.update_epochs = 4
         self.last_stats = {}
@@ -87,7 +92,8 @@ class PPO(RL_Learner, Safe_nn_Module):
               next_dones: List[List[bool]],
               valid_actions: Any = None, 
               masks: Any = None, 
-              aux: Any = None
+              aux: Any = None,
+              causes: Any = None
             ):
         """
         obs: np array of shape (batch_size, context_length + 1, ...)
@@ -96,12 +102,13 @@ class PPO(RL_Learner, Safe_nn_Module):
         next_dones: list (context_length) of bools of length batch_size
         valid_actions: np array of shape (batch_size, context_length, ...)
         masks: np array of shape (batch_size, context_length)
-        aux: np array of shape (batch_size, context_length + 1, cause_size); only used when use_graph is True
+        aux: np array of shape (batch_size, context_length); mask of the auxiliary loss, defaults to masks; only used when aux_coef is set
+        causes: np array of shape (batch_size, context_length + 1, cause_size); only used when use_graph is True
 
         Note that obs and last_actions include the context length + 1 items.
         This corresponds to the observations after taking the last actions.
 
-        In graph mode, aux (causes) is a list of previous context indices that cause the current one.
+        In graph mode, causes is a list of previous context indices that cause the current one.
         All return values from the current context index should be propagated to the cause context indices as well, not just the previous step.
         """
         # Use dim 0 as context length dimension
@@ -115,7 +122,8 @@ class PPO(RL_Learner, Safe_nn_Module):
         b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
         b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
         b_masks = torch.ones_like(b_rewards).to(self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
-        b_causes = convert_list_of_np_array_to_int_tensor(aux, self.device) if (self.use_graph and aux is not None) else None
+        b_aux_masks = b_masks if aux is None else convert_np_array_to_float_tensor(aux, self.device)
+        b_causes = convert_list_of_np_array_to_int_tensor(causes, self.device) if (self.use_graph and causes is not None) else None
 
         batch_size = b_rewards.shape[0]
         sequence_size = b_rewards.shape[1]
@@ -170,6 +178,8 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         # averaged over the minibatch updates of this call, for diagnostics (last_stats)
         stat_sums = {"entropy": 0.0, "approx_kl": 0.0, "pg_loss": 0.0, "v_loss": 0.0}
+        if self.aux_coef is not None:
+            stat_sums["aux_loss"] = 0.0
         num_updates = 0
 
         # Optimizing the policy and value network
@@ -200,6 +210,17 @@ class PPO(RL_Learner, Safe_nn_Module):
                 )
                 mb_newlogprob = mb_newlogprob
                 mb_newvalue = mb_newvalue[:, :-1, ...]  # remove last value
+
+                aux_loss = None
+                if self.aux_coef is not None:
+                    aux_unsum_loss = self.policy_model.get_aux_loss(
+                        context=mb_obs,
+                        selected_action=mb_actions,
+                        valid_actions=mb_valid_actions,
+                    )
+                    # policies without an auxiliary objective return None
+                    if aux_unsum_loss is not None:
+                        aux_loss = masked_mean(aux_unsum_loss, b_aux_masks[mb_inds, ...])
                 
                 logratio = mb_newlogprob - mb_log_prob
                 ratio = logratio.exp()
@@ -231,11 +252,15 @@ class PPO(RL_Learner, Safe_nn_Module):
                 entropy_loss = masked_mean(mb_entropy, mb_masks)
 
                 loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
+                if aux_loss is not None:
+                    loss = loss + aux_loss * self.aux_coef
 
                 stat_sums["entropy"] += entropy_loss.detach()
                 stat_sums["approx_kl"] += approx_kl
                 stat_sums["pg_loss"] += pg_loss.detach()
                 stat_sums["v_loss"] += v_loss.detach()
+                if aux_loss is not None:
+                    stat_sums["aux_loss"] += aux_loss.detach()
                 num_updates += 1
 
                 self.optimizer.zero_grad()
