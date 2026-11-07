@@ -34,6 +34,29 @@ EXTERNAL_FLAGS = (0, *sorted(EXTERNAL_FLAG_OPS))
 COMPONENT_FLAGS = make_component_flags({**EXTERNAL_FLAG_OPS, **THOUGHT_FLAG_OPS}, EXTERNAL_FLAGS)
 
 
+def make_non_thought_pair_masks(masks, flags, next_dones):
+    """
+    Mask of the transition aux loss obs_t + delta(graph)_{t -> t'} = obs_{t'}: keeps step t only if it is a non-thought
+    step whose next non-thought step t' lies in the window, with every step in t .. t' unmasked and no done in t .. t'-1.
+    masks: (batch, T); flags: (batch, T) int-action flags chosen at each step; next_dones: list (T) of bools of length batch
+    """
+    batch_size, T = flags.shape
+    is_external = np.isin(flags.astype(int), EXTERNAL_FLAGS)
+    index = np.where(is_external, np.arange(T)[None, :], T)
+    at_or_after = np.minimum.accumulate(index[:, ::-1], axis=1)[:, ::-1]
+    next_index = np.concatenate([at_or_after[:, 1:], np.full((batch_size, 1), T)], axis=1)
+    has_next = next_index < T
+    next_index = np.minimum(next_index, T - 1)
+
+    # stops in [t, t'-1] (done or masked) plus a masked t'
+    stops = np.stack(next_dones, axis=1).astype(bool) | (masks <= 0)
+    stop_count = np.concatenate([np.zeros((batch_size, 1), dtype=int), np.cumsum(stops, axis=1)], axis=1)
+    span_clear = np.take_along_axis(stop_count, next_index, axis=1) == stop_count[:, :-1]
+    next_valid = np.take_along_axis(masks, next_index, axis=1) > 0
+
+    return (masks * (is_external & has_next & span_clear & next_valid)).astype(np.float32)
+
+
 class Model(Agent):
     
     def __init__(self, 
@@ -186,14 +209,17 @@ class Model(Agent):
                 self.actions.make_mask(batch_led=True)[:, :-1], 
                 self.last_truncates[1:]
             )
+            last_actions = self.actions.make_batch(batch_led=True)
+            aux_masks = make_non_thought_pair_masks(masks, last_actions[:, 1:, 0], self.last_dones[1:])
 
             self.trainer.learn(
                 obs=self.obs.make_batch(batch_led=True), 
-                last_actions=self.actions.make_batch(batch_led=True), 
+                last_actions=last_actions, 
                 rewards=self.rewards[1:],
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                 masks=masks,
+                aux=aux_masks,
                 causes=self.last_cause_times
             )
             

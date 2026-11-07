@@ -8,7 +8,7 @@ import numpy as np
 from interfaces.network import Actor_Network, Policy_Value_Network
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
-from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
+from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN, FiLMUNet
 from implementations.networks.torch.components.wavenet import BasicWavenet
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
@@ -29,6 +29,10 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
                  hidden_size, layers, 
                  cnn_channels=128, cnn_blocks=2,
                  value_size=1,
+                 empty_value=-1.0,
+                 use_aux=False,
+                 obs_classes=(11, 6, 3),
+                 external_flags=(0, 1, 2),
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
@@ -138,6 +142,31 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             nn.Linear(hidden_size, value_size)
         )
 
+        # auxiliary transition model (see _aux_loss): U-Net(obs_t | delta(graph)_{t -> t'}) -> obs_{t'}
+        # only built when enabled so checkpoints saved without it still load (load_state_dict is strict)
+        self.use_aux = use_aux
+        # graph memory's value for unused edge slots (must match its empty_value)
+        self.empty_value = empty_value
+        self.obs_classes = tuple(obs_classes)  # per-channel class counts of the raw grid (minigrid object, color, state)
+        # int-action flags of non-thought steps (model_76.EXTERNAL_FLAGS)
+        self.external_flags = tuple(external_flags)
+        self.aux_write_tol = 1e-4  # a write landed if a next graph slot equals the sampled write value
+        if use_aux:
+            self.aux_node_embedding = nn.Linear(node_dim, hidden_size)
+            self.aux_delta_net = nn.Sequential(
+                nn.Linear(2 * hidden_size + 1, hidden_size),
+                nn.GELU(),
+                nn.Linear(hidden_size, hidden_size)
+            )
+            self.aux_unet = FiLMUNet(
+                out_channels=sum(self.obs_classes),
+                cond_dims=hidden_size,
+                input_channels=channel,
+                width=width, height=height,
+                vocab_size=256, embedding_dim=8,
+                channels=cnn_channels, num_blocks=1
+            )
+
         self.reset_parameters()
         self.load(override_persistence_path=first_load_path)
         self.eval()
@@ -177,6 +206,11 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
                     nn.init.constant_(m.bias, 0)
                     
         self.head_value.apply(init_value_weights)
+
+        if self.use_aux:
+            self.aux_node_embedding.apply(init_value_weights)
+            self.aux_delta_net.apply(init_value_weights)
+            self.aux_unet.reset_parameters()
 
 
     def compute(self, context):
@@ -301,9 +335,112 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
     
 
 
+    def _graph_summary(self, graph, valid):
+        # permutation-invariant over neighbor slots: [head token, masked-mean neighbor token, occupancy fraction]
+        tokens = self.aux_node_embedding(graph)  # (..., internal_state_size, hidden_size)
+        neighbor_valid = valid[..., 1:, :]
+        count = neighbor_valid.sum(dim=-2)  # (..., 1)
+        neighbors = (tokens[..., 1:, :] * neighbor_valid).sum(dim=-2) / count.clamp(min=1.0)
+        occupancy = count / max(self.internal_state_size - 1, 1)
+        return self.aux_delta_net(torch.cat([tokens[..., 0, :], neighbors, occupancy], dim=-1))
+
+
+    def _graph_delta(self, state, next_state):
+        # state, next_state: (..., internal_state_size, node_dim) graph contexts -> (..., hidden_size)
+        valid = (state != self.empty_value).any(dim=-1, keepdim=True).float()
+        next_valid = (next_state != self.empty_value).any(dim=-1, keepdim=True).float()
+        return self._graph_summary(next_state, next_valid) - self._graph_summary(state, valid)
+
+
+    def _next_external_index(self, flags):
+        # flags: (batch, T) int-action flags; returns for each t the first t' > t with a non-thought flag, or T if none
+        T = flags.size(1)
+        steps = torch.arange(T, device=flags.device).expand_as(flags)
+        is_external = torch.isin(flags, torch.tensor(self.external_flags, dtype=flags.dtype, device=flags.device))
+        index = torch.where(is_external, steps, torch.full_like(steps, T))
+        at_or_after = torch.flip(torch.cummin(torch.flip(index, [1]), dim=1).values, [1])
+        return torch.cat([at_or_after[:, 1:], torch.full_like(at_or_after[:, :1], T)], dim=1)
+
+
+    def _aux_loss(self, context, write_value_params, selected_action):
+        """
+        Consistency rule: obs_t + delta(graph)_{t -> t'} = obs_{t'}, where t is a non-thought step and t' the next
+        non-thought step (the thought steps in between see the same env frame).
+        A FiLM U-Net convolutionally transforms obs_t into obs_{t'} logits, conditioned only on the graph change over
+        t .. t'-1, so the external action can only reach the prediction through the graph.
+        The graph memory is not differentiable; where the write of step t'-1 landed in graph_{t'}, that slot carries a
+        straight-through gradient into E[write_value_{t'-1}] (forward value unchanged).
+        Pairs are computed for every t; the agent's aux mask keeps only non-thought t with t' inside the window.
+
+        context: (batch, context_size + 1, packed_context_size); write_value_params: (batch, context_size, 2 * node_dim)
+        selected_action: (batch, context_size, packed_action_size)
+        returns (batch, context_size)
+        """
+        context = context.float()
+        batch_size, context_size = write_value_params.shape[:2]
+        S, D = self.internal_state_size, self.node_dim
+
+        next_index = self._next_external_index(selected_action[:, :, 0].long()).clamp(max=context_size - 1)  # (batch, T)
+        last_index = (next_index - 1).clamp(min=0)  # step whose write is freshest in graph_{t'}
+
+        graph = context[:, :-1, self.internal_state_pos:self.goal_pos].reshape(batch_size, context_size, S, D)
+        next_state = torch.gather(graph, 1, next_index[:, :, None, None].expand(-1, -1, S, D))
+
+        alpha, beta = self._write_value_concentrations(write_value_params)
+        write_mean = alpha / (alpha + beta)
+        written = selected_action[:, :, 4:4 + D].float()
+        last_gather = last_index[:, :, None].expand(-1, -1, D)
+        write_mean = torch.gather(write_mean, 1, last_gather)[:, :, None, :]  # (batch, T, 1, D)
+        written = torch.gather(written, 1, last_gather)[:, :, None, :]
+        landed = ((next_state - written).abs() <= self.aux_write_tol).all(dim=-1, keepdim=True)  # (batch, T, S, 1)
+        next_state = next_state + torch.where(landed, write_mean - write_mean.detach(), torch.zeros_like(next_state))
+
+        cond = self._graph_delta(graph, next_state).reshape(batch_size * context_size, self.hidden_size)
+        grid_shape = (batch_size * context_size, self.height, self.width, self.channel)
+        obs_all = context[:, :-1, self.obs_pos:]
+        obs = obs_all.reshape(grid_shape)
+        obs_target = torch.gather(obs_all, 1, next_index[:, :, None].expand(-1, -1, obs_all.size(-1))).reshape(grid_shape).long()
+        obs_logits = self.aux_unet(obs, cond)  # (batch * context_size, height, width, sum(obs_classes))
+
+        # flat (N, C) cross entropy: the spatial nll variant has no deterministic CUDA kernel
+        obs_loss = 0.0
+        for c, logits in enumerate(obs_logits.split(list(self.obs_classes), dim=-1)):
+            target = obs_target[..., c].clamp(0, self.obs_classes[c] - 1)
+            obs_loss = obs_loss + nn.functional.cross_entropy(
+                logits.reshape(-1, logits.size(-1)), target.reshape(-1), reduction="none"
+            ).view(target.shape).mean(dim=(-2, -1))  # mean over cells
+        return obs_loss.view(batch_size, context_size)
+
+
+    def _write_value_concentrations(self, write_value_params):
+        alpha_raw, beta_raw = write_value_params.chunk(2, dim=-1)
+        return 1.0 + nn.functional.softplus(alpha_raw), 1.0 + nn.functional.softplus(beta_raw)
+
+
+    def _log_prob_with_value(self, context, selected_action, valid_actions):
+        # context: (batch, context_size + 1, packed_context_size) tensor; also returns the write head params of the
+        # first context_size steps so the aux loss can reuse this forward pass
+        available_flags, available_actions = self._split_valid_actions(valid_actions)
+
+        outputs = self.compute(context)
+        values = outputs[5]  # keep all contexts: the last one is the bootstrap value
+        # drop the last context for logprob: it is the observation after the last action
+        heads = [o[:, :-1, :] for o in outputs[:5]]
+        dists = self._make_distributions(*heads, available_flags, available_actions)
+        log_probs, entropy = self._log_prob_entropy(dists, selected_action)
+        return log_probs, entropy, values, heads[4]
+
+
     def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
-        log_probs, entropy, values = self.get_log_probability_with_value(context, selected_action, valid_actions)
-        return log_probs, entropy, values, None  # no auxiliary loss
+        # get_log_probability_with_value plus the (batch, context_size) aux loss (None unless use_aux), see _aux_loss
+        if isinstance(context, np.ndarray):
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
+        if isinstance(selected_action, np.ndarray):
+            selected_action = torch.tensor(selected_action, dtype=torch.float32).to(self.device)
+
+        log_probs, entropy, values, write_value_params = self._log_prob_with_value(context, selected_action, valid_actions)
+        aux_loss = self._aux_loss(context, write_value_params, selected_action) if self.use_aux else None
+        return log_probs, entropy, values, aux_loss
 
 
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
@@ -313,11 +450,5 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
 
-        available_flags, available_actions = self._split_valid_actions(valid_actions)
-
-        outputs = self.compute(context)
-        values = outputs[5]  # keep all contexts: the last one is the bootstrap value
-        # drop the last context for logprob: it is the observation after the last action
-        dists = self._make_distributions(*(o[:, :-1, :] for o in outputs[:5]), available_flags, available_actions)
-        log_probs, entropy = self._log_prob_entropy(dists, selected_action)
+        log_probs, entropy, values, _ = self._log_prob_with_value(context, selected_action, valid_actions)
         return log_probs, entropy, values

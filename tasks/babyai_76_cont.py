@@ -137,6 +137,7 @@ if __name__ == "__main__":
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
+    parser.add_argument("--aux-coef",               "-aux", type=float, default=None, help="Coefficient of the graph-transition auxiliary loss (U-Net: obs_t + delta graph -> obs at the next non-thought step). Default is off.")
     args = parser.parse_args()
 
 
@@ -164,6 +165,9 @@ if __name__ == "__main__":
     experiment_path = f"{APP_ROOT}/experiments/babyai_76_cont_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
     if args.st_train:
         experiment_path += "_stmean"
+    if args.aux_coef is not None:
+        # the aux decoder adds parameters, so its checkpoints are not interchangeable with the plain arm
+        experiment_path += "_aux"
 
     if args.reset:
         # clear the experiment path
@@ -241,6 +245,9 @@ if __name__ == "__main__":
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
         cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
+        empty_value=-1.0,
+        use_aux=args.aux_coef is not None,
+        external_flags=model_76.EXTERNAL_FLAGS,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
@@ -254,6 +261,7 @@ if __name__ == "__main__":
         gae_lambda=0.95,
         ent_coef=args.ent_coef,
         use_graph=args.st_train,
+        aux_coef=args.aux_coef,
     )
     memory = Graph_Memory(
         num_batches=len(game_ids),
