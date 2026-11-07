@@ -6,7 +6,7 @@ from torch.distributions import Bernoulli
 import numpy as np
 import logging
 
-from interfaces.network import Policy_Value_Network
+from interfaces.network import Actor_Network, Policy_Value_Network
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
@@ -17,7 +17,7 @@ from implementations.networks.torch.policy.base import Projector as Base_Project
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Policy_Core(Base_Policy_Core, Policy_Value_Network):
+class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
     def __init__(self, 
                  int_action_size, ext_action_size,
@@ -244,105 +244,6 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
 
         return action.astype(float)
     
-
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-        # context has shape (batch, context_size, self.packed_context_size)
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.long).to(self.device)
-
-        available_flags = None
-        available_actions = None
-        if valid_actions is not None:
-            if isinstance(valid_actions, np.ndarray):
-                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
-            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
-            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
-
-        logits_int, logits_ext, edge_1_logits, edge_2_logits, write_value_logits, _ = self.compute(context)
-
-        probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
-        probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
-        probs_edge_1 = Categorical(logits=edge_1_logits)
-        probs_edge_2 = Categorical(logits=edge_2_logits)
-        probs_write_value = Categorical(logits=write_value_logits)
-
-        action_int = selected_action[:, :, 0]
-        action_ext = selected_action[:, :, 1]
-        action_edge_1 = selected_action[:, :, 1 + 1 + 0]
-        action_edge_2 = selected_action[:, :, 1 + 1 + 1]
-        action_write_value = selected_action[:, :, 1 + 1 + 2]
-
-        log_prob_int = probs_int.log_prob(action_int)
-        log_prob_ext = probs_ext.log_prob(action_ext)
-        log_prob_edge_1 = probs_edge_1.log_prob(action_edge_1)
-        log_prob_edge_2 = probs_edge_2.log_prob(action_edge_2)
-        log_prob_write_value = probs_write_value.log_prob(action_write_value)
-        
-        entropy_int = probs_int.entropy()
-        entropy_ext = probs_ext.entropy()
-        entropy_edge_1 = probs_edge_1.entropy()
-        entropy_edge_2 = probs_edge_2.entropy()
-        entropy_write_value = probs_write_value.entropy()
-
-        return torch.stack([
-            log_prob_int, log_prob_ext, log_prob_edge_1, log_prob_edge_2, log_prob_write_value
-        ], dim=-1), torch.stack([
-            entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2, entropy_write_value
-        ], dim=-1)
-
-
-    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
-        # now context has shape (batch, context_size + 1, self.packed_context_size)
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.long).to(self.device)
-
-        context_full = context
-        context = context_full[:, :-1, :]  # remove last context for computing logprob
-
-        available_flags = None
-        available_actions = None
-        if valid_actions is not None:
-            if isinstance(valid_actions, np.ndarray):
-                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
-            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
-            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
-
-        logits_int, logits_ext, edge_1_logits, edge_2_logits, write_value_logits, _ = self.compute(context)
-
-        probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
-        probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
-        probs_edge_1 = Categorical(logits=edge_1_logits)
-        probs_edge_2 = Categorical(logits=edge_2_logits)
-        probs_write_value = Categorical(logits=write_value_logits)
-
-        action_int = selected_action[:, :, 0]
-        action_ext = selected_action[:, :, 1]
-        action_edge_1 = selected_action[:, :, 1 + 1 + 0]
-        action_edge_2 = selected_action[:, :, 1 + 1 + 1]
-        action_write_value = selected_action[:, :, 1 + 1 + 2]
-
-        log_prob_int = probs_int.log_prob(action_int)
-        log_prob_ext = probs_ext.log_prob(action_ext)
-        log_prob_edge_1 = probs_edge_1.log_prob(action_edge_1)
-        log_prob_edge_2 = probs_edge_2.log_prob(action_edge_2)
-        log_prob_write_value = probs_write_value.log_prob(action_write_value)
-        
-        entropy_int = probs_int.entropy()
-        entropy_ext = probs_ext.entropy()
-        entropy_edge_1 = probs_edge_1.entropy()
-        entropy_edge_2 = probs_edge_2.entropy()
-        entropy_write_value = probs_write_value.entropy()
-
-        return torch.stack([
-            log_prob_int, log_prob_ext, log_prob_edge_1, log_prob_edge_2, log_prob_write_value
-        ], dim=-1), torch.stack([
-            entropy_int, entropy_ext, entropy_edge_1, entropy_edge_2, entropy_write_value
-        ], dim=-1), None # No auxiliary loss for flipflop task
-
 
     def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
         log_probs, entropy, values = self.get_log_probability_with_value(context, selected_action, valid_actions)

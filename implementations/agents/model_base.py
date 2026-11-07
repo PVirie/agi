@@ -2,7 +2,7 @@ import numpy as np
 from enum import Enum
 from interfaces.learning import RL_Learner
 from interfaces.agent import Agent
-from interfaces.network import Policy_Network, Value_Network
+from interfaces.network import Actor_Network, Value_Network
 from interfaces.data_structure import Context_Collector
 from interfaces.memory import Graph_Memory_Operation_Type
 
@@ -78,7 +78,7 @@ def apply_cascading_masks(masks, *stop_conditions):
 class Model_Base(Agent):
     
     def __init__(self, 
-                 policy_model: Policy_Network, value_model: Value_Network,
+                 policy_model: Actor_Network, value_model: Value_Network,
                  trainer: RL_Learner, 
                  context_collector: Context_Collector, 
                  action_collector: Context_Collector, 

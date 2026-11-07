@@ -1,17 +1,10 @@
 import abc
 
-class Policy_Network(abc.ABC):
+
+class Actor_Network(abc.ABC):
     
     @abc.abstractmethod
     def get_action(self, context, valid_actions=None):
-        pass
-
-    @abc.abstractmethod
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-        pass
-
-    @abc.abstractmethod
-    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
         pass
 
     @abc.abstractmethod
@@ -27,6 +20,17 @@ class Value_Network(abc.ABC):
 
     @abc.abstractmethod
     def get_value(self, context):
+        pass
+
+
+class Policy_Network(abc.ABC):
+    
+    @abc.abstractmethod
+    def get_log_probability(self, context, selected_action, valid_actions=None):
+        pass
+
+    @abc.abstractmethod
+    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
         pass
 
 

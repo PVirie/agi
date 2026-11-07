@@ -468,28 +468,6 @@ class Policy_Core(Minigrid_Policy_Core):
         ], axis=-1).astype(float)
 
 
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-        # context has shape (batch, context_size, self.packed_context_size); window step indices are positions in context
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        action_logits, bridge_q, bridge_k, link_logits, write_value_params, _ = self.compute(context)
-        dists = self._distributions(action_logits, bridge_q, bridge_k, link_logits, write_value_params, valid_actions)
-        return self._log_prob_and_entropy(dists, selected_action)
-
-
-    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
-        # now context has shape (batch, context_size + 1, self.packed_context_size)
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        action_logits, bridge_q, bridge_k, link_logits, write_value_params, _ = self.compute(context[:, :-1, :])
-        dists = self._distributions(action_logits, bridge_q, bridge_k, link_logits, write_value_params, valid_actions)
-        log_probs, entropy = self._log_prob_and_entropy(dists, selected_action)
-        aux_loss = self._aux_loss(context, write_value_params, selected_action) if self.use_aux else None
-        return log_probs, entropy, aux_loss
-
-
     def _log_prob_with_value(self, context, selected_action, valid_actions):
         # context: (batch, context_size + 1, packed_context_size) tensor; also returns the write head params of the
         # first context_size steps so the aux loss can reuse this forward pass

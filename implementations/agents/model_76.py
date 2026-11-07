@@ -2,7 +2,7 @@ import numpy as np
 from enum import Enum
 from interfaces.learning import RL_Learner
 from interfaces.agent import Agent
-from interfaces.network import Policy_Network, Value_Network
+from interfaces.network import Actor_Network, Value_Network
 from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
 from implementations.agents.model_base import make_valid_mask, apply_cascading_masks, make_component_flags
@@ -37,7 +37,7 @@ COMPONENT_FLAGS = make_component_flags({**EXTERNAL_FLAG_OPS, **THOUGHT_FLAG_OPS}
 class Model(Agent):
     
     def __init__(self, 
-                 policy_model: Policy_Network,
+                 policy_model: Actor_Network,
                  trainer: RL_Learner, 
                  context_collector: Context_Collector, 
                  action_collector: Context_Collector, 

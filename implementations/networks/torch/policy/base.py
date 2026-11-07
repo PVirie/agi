@@ -6,7 +6,7 @@ from torch.distributions import Bernoulli
 import numpy as np
 import logging
 
-from interfaces.network import Policy_Network
+from interfaces.network import Actor_Network
 from implementations.networks.torch.components.base import init_weights
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
@@ -14,7 +14,7 @@ from implementations.networks.torch.components.std_conv import ImpalaCNN
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
+class Policy_Core(Actor_Network, nn.Module, Safe_nn_Module):
 
     def __init__(self, 
                  int_action_size, ext_action_size, position_size, 
@@ -172,80 +172,6 @@ class Policy_Core(Policy_Network, nn.Module, Safe_nn_Module):
         return action.astype(float)
     
 
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-        # context has shape (batch, context_size, self.packed_context_size)
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        available_flags = None
-        available_actions = None
-        if valid_actions is not None:
-            if isinstance(valid_actions, np.ndarray):
-                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
-            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
-            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
-
-        logits_int, logits_ext, aux_loss = self.compute(context)
-
-        probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
-        probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
-
-        action_int = selected_action[:, :, 0]
-        action_ext = selected_action[:, :, 1]
-
-        log_prob_int = probs_int.log_prob(action_int)
-        log_prob_ext = probs_ext.log_prob(action_ext)
-        
-        entropy_int = probs_int.entropy()
-        entropy_ext = probs_ext.entropy()
-
-        return torch.stack([
-            log_prob_int, log_prob_ext
-        ], dim=-1), torch.stack([
-            entropy_int, entropy_ext
-        ], dim=-1)
-
-
-    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
-        # now context has shape (batch, context_size + 1, self.packed_context_size)
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        context_full = context
-        context = context_full[:, :-1, :]  # remove last context for computing logprob
-
-        available_flags = None
-        available_actions = None
-        if valid_actions is not None:
-            if isinstance(valid_actions, np.ndarray):
-                valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
-            # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
-            available_flags = valid_actions[:, :, :self.int_action_size].to(self.device)
-            available_actions = valid_actions[:, :, self.int_action_size:].to(self.device)
-
-        logits_int, logits_ext, aux_loss = self.compute(context)
-
-        probs_int = Categorical_With_Mask(logits=logits_int, mask=available_flags)
-        probs_ext = Categorical_With_Mask(logits=logits_ext, mask=available_actions)
-
-        action_int = selected_action[:, :, 0]
-        action_ext = selected_action[:, :, 1]
-
-        log_prob_int = probs_int.log_prob(action_int)
-        log_prob_ext = probs_ext.log_prob(action_ext)
-        
-        entropy_int = probs_int.entropy()
-        entropy_ext = probs_ext.entropy()
-
-        return torch.stack([
-            log_prob_int, log_prob_ext
-        ], dim=-1), torch.stack([
-            entropy_int, entropy_ext
-        ], dim=-1), aux_loss
-
 
     def unpack_action(self, packed_action):
         # packed_action has shape (batch, self.packed_action_size)
@@ -308,18 +234,6 @@ class Projector:
 
     def parameters(self):
         return self.master_core.parameters()
-    
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy = self.master_core.get_log_probability(context, selected_action, valid_actions)
-        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
-        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
-        return log_probs, entropy
-    
-    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy, svl_unsum_loss = self.master_core.get_log_probability_with_aux_loss(context, selected_action, valid_actions)
-        log_probs = all_logprobs[:, :, self.selected_indices].sum(dim=-1)  # sum over selected logprob components
-        entropy = all_entropy[:, :, self.selected_indices].sum(dim=-1)
-        return log_probs, entropy, svl_unsum_loss
 
     def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
         all_logprobs, all_entropy, values, aux_loss = self.master_core.get_log_prob_with_value_aux(context, selected_action, valid_actions)

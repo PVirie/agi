@@ -244,15 +244,6 @@ class Projector(Base_Projector):
         all_logprobs, all_entropy = self._mask(all_logprobs, all_entropy, selected_action)
         return all_logprobs[:, :, self.selected_indices].sum(dim=-1), all_entropy[:, :, self.selected_indices].sum(dim=-1)
 
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy = self.master_core.get_log_probability(context, selected_action, valid_actions)
-        return self._project(all_logprobs, all_entropy, selected_action)
-
-    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy, aux_loss = self.master_core.get_log_probability_with_aux_loss(context, selected_action, valid_actions)
-        log_probs, entropy = self._project(all_logprobs, all_entropy, selected_action)
-        return log_probs, entropy, aux_loss
-
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
         all_logprobs, all_entropy, values = self.master_core.get_log_probability_with_value(context, selected_action, valid_actions)
         log_probs, entropy = self._project(all_logprobs, all_entropy, selected_action)

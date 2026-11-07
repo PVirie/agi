@@ -5,7 +5,7 @@ from torch.distributions.categorical import Categorical
 from torch.distributions import Beta, Independent
 import numpy as np
 
-from interfaces.network import Policy_Value_Network
+from interfaces.network import Actor_Network, Policy_Value_Network
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
 from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
@@ -16,7 +16,7 @@ from implementations.networks.torch.policy.babyai import Projector  # noqa: F401
 from utilities.safe_torch_module import Safe_nn_Module
 
 
-class Policy_Core(Base_Policy_Core, Policy_Value_Network):
+class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
     def __init__(self, 
                  int_action_size, ext_action_size,
@@ -299,34 +299,6 @@ class Policy_Core(Base_Policy_Core, Policy_Value_Network):
 
         return action.astype(float)
     
-
-    def get_log_probability(self, context, selected_action, valid_actions=None):
-        # context has shape (batch, context_size, self.packed_context_size)
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        available_flags, available_actions = self._split_valid_actions(valid_actions)
-
-        outputs = self.compute(context)
-        dists = self._make_distributions(*outputs[:5], available_flags, available_actions)
-        return self._log_prob_entropy(dists, selected_action)
-
-
-    def get_log_probability_with_aux_loss(self, context, selected_action, valid_actions=None):
-        # now context has shape (batch, context_size + 1, self.packed_context_size)
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        context = context[:, :-1, :]  # remove last context for computing logprob
-
-        available_flags, available_actions = self._split_valid_actions(valid_actions)
-
-        outputs = self.compute(context)
-        dists = self._make_distributions(*outputs[:5], available_flags, available_actions)
-        log_probs, entropy = self._log_prob_entropy(dists, selected_action)
-        return log_probs, entropy, None
 
 
     def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
