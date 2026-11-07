@@ -197,6 +197,7 @@ if __name__ == "__main__":
     if args.scale == "small":
         hidden_size = 256
         embedding_dim = 32
+        node_dim = 8
         C = 4
         layers = [1, 1, 1]
         cnn_channels = 64
@@ -207,6 +208,7 @@ if __name__ == "__main__":
         # 19GB VRAM
         hidden_size = 256
         embedding_dim = 32
+        node_dim = 8
         C = 8
         layers = [1, 1, 1, 1]
         cnn_channels = 128
@@ -215,8 +217,9 @@ if __name__ == "__main__":
         rollout_length = 512
     else:
         # large 25GB VRAM
-        hidden_size = 512
+        hidden_size = 384
         embedding_dim = 32
+        node_dim = 8
         C = 15
         layers = [1, 1, 1, 1]
         cnn_channels = 128
@@ -235,9 +238,11 @@ if __name__ == "__main__":
         5: Graph_Memory_Operation_Type.WRITE,
         6: Graph_Memory_Operation_Type.WRITE,
     }
+    # node values live in [0, 1]^D; empty edge slots sit outside that range so they stay distinguishable
+    empty_value = -1.0
     policy_core = Policy_Core(
         action_size=7,
-        write_action_size=128,
+        node_dim=node_dim,
         internal_state_size=1 + C,
         goal_size=mission_size, 
         inventory_size=inventory_size,
@@ -246,6 +251,7 @@ if __name__ == "__main__":
         hidden_size=hidden_size, layers=layers,
         cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
         navigate_flag=next(k for k, v in action_map.items() if v == Graph_Memory_Operation_Type.NAVIGATE),
+        empty_value=empty_value,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
@@ -261,8 +267,9 @@ if __name__ == "__main__":
         num_batches=len(game_ids),
         num_nodes=4096,
         max_edges_per_node=C,
-        node_dim=1,
-        start_node_value=vocab_size - 1
+        node_dim=node_dim,
+        start_node_value=0.5,
+        empty_value=empty_value,
     )
     agent_class = model_77.Model
     agent = agent_class(
