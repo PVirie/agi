@@ -6,7 +6,7 @@ from torch.distributions.bernoulli import Bernoulli
 from torch.distributions import Beta, Independent
 
 from implementations.networks.torch.components.std_resnet import ResNet
-from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
+from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN, FiLMUNet
 from implementations.networks.torch.components.wavenet import BasicWavenet
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.components.base import Categorical_With_Mask
@@ -148,27 +148,26 @@ class Policy_Core(Minigrid_Policy_Core):
             nn.Linear(hidden_size, value_size)
         )
 
-        # auxiliary transition decoder (see _aux_loss): obs_t + delta(graph)_t -> obs_{t+1}, a_t
+        # auxiliary transition model (see _aux_loss): U-Net(obs_t | delta(graph)_t) -> obs_{t+1}
         # only built when enabled so checkpoints saved without it still load (load_state_dict is strict)
         self.use_aux = use_aux
         self.obs_classes = tuple(obs_classes)  # per-channel class counts of the raw grid (minigrid object, color, state)
-        self.obs_cells = width * height
-        self.aux_obs_size = self.obs_cells * sum(self.obs_classes)
         self.aux_write_tol = 1e-4  # a write landed if the next head node equals the sampled write value
         if use_aux:
-            self.aux_obs_encoder = nn.Sequential(
-                nn.Linear(self.aux_obs_size, hidden_size),
+            self.aux_node_embedding = nn.Linear(node_dim, hidden_size)
+            self.aux_delta_net = nn.Sequential(
+                nn.Linear(2 * hidden_size + 1, hidden_size),
                 nn.GELU(),
                 nn.Linear(hidden_size, hidden_size)
             )
-            self.aux_decoder = nn.Sequential(
-                nn.Linear(hidden_size + node_dim, hidden_size),
-                nn.GELU(),
-                nn.Linear(hidden_size, hidden_size),
-                nn.GELU()
+            self.aux_unet = FiLMUNet(
+                out_channels=sum(self.obs_classes),
+                cond_dims=hidden_size,
+                input_channels=channel,
+                width=width, height=height,
+                vocab_size=256, embedding_dim=8,
+                channels=cnn_channels, num_blocks=1
             )
-            self.aux_head_obs = nn.Linear(hidden_size, self.aux_obs_size)
-            self.aux_head_action = nn.Linear(hidden_size, action_size)
 
         self.reset_parameters()
         self.load(override_persistence_path=first_load_path)
@@ -214,11 +213,12 @@ class Policy_Core(Minigrid_Policy_Core):
         self.head_value.apply(init_value_weights)
 
         if self.use_aux:
-            for module in [self.aux_obs_encoder, self.aux_decoder, self.aux_head_obs, self.aux_head_action]:
-                module.apply(init_value_weights)
+            self.aux_node_embedding.apply(init_value_weights)
+            self.aux_delta_net.apply(init_value_weights)
+            self.aux_unet.reset_parameters()
 
 
-    def compute(self, context):
+    def _encode(self, context):
         # context has shape (batch, context_size, self.packed_context_size)
         batch_size = context.size(0)
         context_size = context.size(1)
@@ -254,6 +254,11 @@ class Policy_Core(Minigrid_Policy_Core):
 
         base_input = torch.concat([flag_onehot, internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
         base_output = self.backbone(base_input)  # (batch_size, context_size, hidden_size)
+        return base_output
+
+
+    def compute(self, context):
+        base_output = self._encode(context)  # (batch_size, context_size, hidden_size)
 
         action_logits = self.head_action(base_output)  # (batch_size, context_size, action_size)
         bridge_q = self.head_bridge_q(base_output)  # (batch_size, context_size, location_size)
@@ -311,57 +316,64 @@ class Policy_Core(Minigrid_Policy_Core):
         return Independent(Beta(alpha, beta), 1)  # joint over node_dim
 
 
-    def _obs_one_hot(self, obs):
-        # obs: (..., height * width * channel) raw grid -> (..., cells * sum(obs_classes)) one-hot, and the long class ids
-        obs = obs.reshape(*obs.shape[:-1], self.obs_cells, len(self.obs_classes)).long()
-        ids = torch.stack([obs[..., c].clamp(0, n - 1) for c, n in enumerate(self.obs_classes)], dim=-1)  # (..., cells, channel)
-        one_hot = torch.cat([
-            nn.functional.one_hot(ids[..., c], num_classes=n) for c, n in enumerate(self.obs_classes)
-        ], dim=-1).float()  # (..., cells, sum(obs_classes))
-        return one_hot.reshape(*one_hot.shape[:-2], self.aux_obs_size), ids
+    def _graph_summary(self, graph, valid):
+        # permutation-invariant over neighbor slots: [head token, masked-mean neighbor token, occupancy fraction]
+        tokens = self.aux_node_embedding(graph)  # (..., internal_state_size, hidden_size)
+        neighbor_valid = valid[..., 1:, :]
+        count = neighbor_valid.sum(dim=-2)  # (..., 1)
+        neighbors = (tokens[..., 1:, :] * neighbor_valid).sum(dim=-2) / count.clamp(min=1.0)
+        occupancy = count / max(self.internal_state_size - 1, 1)
+        return self.aux_delta_net(torch.cat([tokens[..., 0, :], neighbors, occupancy], dim=-1))
+
+
+    def _graph_delta(self, state, next_state):
+        # state, next_state: (..., internal_state_size, node_dim) graph contexts before/after action t -> (..., hidden_size)
+        valid = (state != self.empty_value).any(dim=-1, keepdim=True).float()
+        next_valid = (next_state != self.empty_value).any(dim=-1, keepdim=True).float()
+        return self._graph_summary(next_state, next_valid) - self._graph_summary(state, valid)
 
 
     def _aux_loss(self, context, write_value_params, selected_action):
         """
-        Transition consistency: the change of the graph state must explain the env transition.
-        delta(graph)_t = E[write_value_t] - head_t, since the write of action t becomes the head node at t + 1
-        (the write head is the only differentiable route into the non-differentiable graph memory).
-        A decoder reconstructs obs_{t+1} and a_t from obs_t and delta(graph)_t; it never sees a_t, so delta(graph)
-        has to encode both the action and the part of the env change that obs_t cannot explain.
+        Consistency rule: obs_t + delta(graph)_t = obs_{t+1}.
+        A FiLM U-Net convolutionally transforms obs_t into obs_{t+1} logits, conditioned only on delta(graph)_t
+        (see _graph_delta), so a_t can only reach the prediction through the graph.
+        The graph memory is not differentiable; where the write landed on the next head, the head slot carries a
+        straight-through gradient into E[write_value_t] (forward value unchanged).
 
         context: (batch, context_size + 1, packed_context_size); write_value_params: (batch, context_size, 2 * node_dim)
         selected_action: (batch, context_size, packed_action_size)
-        returns (batch, context_size); zero on steps whose write did not land on the next head (e.g. failed navigate)
+        returns (batch, context_size)
         """
-        node_slice = slice(self.internal_state_pos, self.internal_state_pos + self.node_dim)
-        head = context[:, :-1, node_slice].float()  # (batch, context_size, node_dim)
-        next_head = context[:, 1:, node_slice].float()
+        context = context.float()
+        batch_size, context_size = write_value_params.shape[:2]
+        graph = context[:, :, self.internal_state_pos:self.goal_pos].reshape(
+            batch_size, context_size + 1, self.internal_state_size, self.node_dim
+        )
+        state, next_state = graph[:, :-1], graph[:, 1:]
 
         alpha, beta = self._write_value_concentrations(write_value_params)
-        delta_graph = alpha / (alpha + beta) - head  # (batch, context_size, node_dim)
+        write_mean = alpha / (alpha + beta)
+        written = selected_action[:, :, 3:3 + self.node_dim].float()
+        next_head = next_state[:, :, 0]
+        landed = ((next_head - written).abs() <= self.aux_write_tol).all(dim=-1, keepdim=True)
+        next_head = next_head + torch.where(landed, write_mean - write_mean.detach(), torch.zeros_like(write_mean))
+        next_state = torch.cat([next_head.unsqueeze(2), next_state[:, :, 1:]], dim=2)
 
-        obs_in, _ = self._obs_one_hot(context[:, :-1, self.obs_pos:])
-        _, obs_target = self._obs_one_hot(context[:, 1:, self.obs_pos:])  # (batch, context_size, cells, channel)
-
-        hidden = self.aux_decoder(torch.cat([self.aux_obs_encoder(obs_in), delta_graph], dim=-1))
-        obs_logits = self.aux_head_obs(hidden)  # (batch, context_size, cells * sum(obs_classes))
-        obs_logits = obs_logits.reshape(*obs_logits.shape[:-1], self.obs_cells, sum(self.obs_classes))
-        action_logits = self.aux_head_action(hidden)  # (batch, context_size, action_size)
+        cond = self._graph_delta(state, next_state).reshape(batch_size * context_size, self.hidden_size)
+        grid_shape = (batch_size * context_size, self.height, self.width, self.channel)
+        obs = context[:, :-1, self.obs_pos:].reshape(grid_shape)
+        obs_logits = self.aux_unet(obs, cond)  # (batch * context_size, height, width, sum(obs_classes))
+        obs_target = context[:, 1:, self.obs_pos:].reshape(grid_shape).long()
 
         # flat (N, C) cross entropy: the spatial nll variant has no deterministic CUDA kernel
         obs_loss = 0.0
         for c, logits in enumerate(obs_logits.split(list(self.obs_classes), dim=-1)):
+            target = obs_target[..., c].clamp(0, self.obs_classes[c] - 1)
             obs_loss = obs_loss + nn.functional.cross_entropy(
-                logits.reshape(-1, logits.size(-1)), obs_target[..., c].reshape(-1), reduction="none"
-            ).view(obs_target.shape[:-1]).mean(dim=-1)  # mean over cells
-        action_flag = selected_action[:, :, 0].long()
-        action_loss = nn.functional.cross_entropy(
-            action_logits.reshape(-1, self.action_size), action_flag.reshape(-1), reduction="none"
-        ).view(action_flag.shape)
-
-        written = selected_action[:, :, 3:3 + self.node_dim].float()
-        landed = ((next_head - written).abs() <= self.aux_write_tol).all(dim=-1)
-        return torch.where(landed, obs_loss + action_loss, torch.zeros_like(action_loss))
+                logits.reshape(-1, logits.size(-1)), target.reshape(-1), reduction="none"
+            ).view(target.shape).mean(dim=(-2, -1))  # mean over cells
+        return obs_loss.view(batch_size, context_size)
 
 
     def _distributions(self, action_logits, bridge_q, bridge_k, link_logits, write_value_params, valid_actions):

@@ -257,6 +257,78 @@ class FiLMMiniGridCNN(nn.Module):
         return x
 
 
+class FiLMUNet(nn.Module):
+    """
+    Conditional U-Net for small symbolic grids: maps a categorical grid (B, H, W, C) to per-cell logits
+    (B, H, W, out_channels). Every residual block is FiLM-modulated by a conditioning vector.
+    One stride-2 level; the full-resolution skip lets unchanged cells be copied through.
+    """
+    def __init__(self, out_channels, cond_dims, input_channels, width, height, vocab_size=256, embedding_dim=8, channels=64, num_blocks=1):
+        super().__init__()
+
+        self.input_channels = input_channels
+
+        self.embeddings = nn.ModuleList([
+            nn.Embedding(vocab_size, embedding_dim) for _ in range(input_channels)
+        ])
+        self.stem = nn.Sequential(
+            nn.Conv2d(input_channels * embedding_dim, channels, kernel_size=1),
+            nn.ReLU(),
+        )
+        self.enc_blocks = nn.ModuleList([FiLMBlock(channels, cond_dims) for _ in range(num_blocks)])
+
+        self.down = nn.Sequential(
+            nn.Conv2d(channels, 2 * channels, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+        )
+        self.mid_blocks = nn.ModuleList([FiLMBlock(2 * channels, cond_dims) for _ in range(num_blocks)])
+
+        down_h, down_w = (height + 1) // 2, (width + 1) // 2
+        # transposed conv (deterministic backward, unlike interpolate) restoring the exact odd/even size
+        self.up = nn.Sequential(
+            nn.ConvTranspose2d(
+                2 * channels, channels, kernel_size=3, stride=2, padding=1,
+                output_padding=(height - (2 * down_h - 1), width - (2 * down_w - 1))
+            ),
+            nn.ReLU(),
+        )
+        self.fuse = nn.Sequential(
+            nn.Conv2d(2 * channels, channels, kernel_size=1),
+            nn.ReLU(),
+        )
+        self.dec_blocks = nn.ModuleList([FiLMBlock(channels, cond_dims) for _ in range(num_blocks)])
+        self.out = nn.Conv2d(channels, out_channels, kernel_size=1)
+
+
+    def reset_parameters(self):
+        for embedding in self.embeddings:
+            embedding.reset_parameters()
+        for module in [self.stem, self.down, self.up, self.fuse, self.out]:
+            module.apply(init_weights)
+        for block in [*self.enc_blocks, *self.mid_blocks, *self.dec_blocks]:
+            block.reset_parameters()
+
+
+    def forward(self, x, cond):
+        # x: (B, H, W, C) with per-channel categorical indices, cond: (B, cond_dims)
+        embedded = [self.embeddings[c](x[..., c].long()) for c in range(self.input_channels)]
+        h = torch.cat(embedded, dim=-1).permute(0, 3, 1, 2)  # (B, C * embedding_dim, H, W)
+        h = self.stem(h)
+        for block in self.enc_blocks:
+            h = block(h, cond)
+        skip = h
+
+        h = self.down(h)
+        for block in self.mid_blocks:
+            h = block(h, cond)
+        h = self.up(h)
+
+        h = self.fuse(torch.cat([h, skip], dim=1))
+        for block in self.dec_blocks:
+            h = block(h, cond)
+        return self.out(h).permute(0, 2, 3, 1)  # (B, H, W, out_channels)
+
+
 class ImpalaBlock1D(nn.Module):
     """
     A 1D version of the IMPALA block for processing sequences.
