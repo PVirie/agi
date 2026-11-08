@@ -34,30 +34,6 @@ EXTERNAL_FLAGS = (0, *sorted(EXTERNAL_FLAG_OPS))
 COMPONENT_FLAGS = make_component_flags({**EXTERNAL_FLAG_OPS, **THOUGHT_FLAG_OPS}, EXTERNAL_FLAGS)
 
 
-def make_non_thought_transition_masks(masks, flags, next_dones):
-    """
-    Per-step mask (batch, T) of the transition aux loss obs_t + delta(graph)_{t -> t'} = obs_{t'}, indexed by the source
-    step t: keeps t only if it is a non-thought step whose next non-thought step t' lies in the window, with every step
-    in t .. t' unmasked and no done in t .. t'-1. The target t' is recomputed from the flags by the policy core.
-    masks: (batch, T); flags: (batch, T) int-action flags chosen at each step; next_dones: list (T) of bools of length batch
-    """
-    batch_size, T = flags.shape
-    is_external = np.isin(flags.astype(int), EXTERNAL_FLAGS)
-    index = np.where(is_external, np.arange(T)[None, :], T)
-    at_or_after = np.minimum.accumulate(index[:, ::-1], axis=1)[:, ::-1]
-    next_index = np.concatenate([at_or_after[:, 1:], np.full((batch_size, 1), T)], axis=1)
-    has_next = next_index < T
-    next_index = np.minimum(next_index, T - 1)
-
-    # stops in [t, t'-1] (done or masked) plus a masked t'
-    stops = np.stack(next_dones, axis=1).astype(bool) | (masks <= 0)
-    stop_count = np.concatenate([np.zeros((batch_size, 1), dtype=int), np.cumsum(stops, axis=1)], axis=1)
-    span_clear = np.take_along_axis(stop_count, next_index, axis=1) == stop_count[:, :-1]
-    next_valid = np.take_along_axis(masks, next_index, axis=1) > 0
-
-    return (masks * (is_external & has_next & span_clear & next_valid)).astype(np.float32)
-
-
 class Model(Agent):
     
     def __init__(self, 
@@ -210,17 +186,14 @@ class Model(Agent):
                 self.actions.make_mask(batch_led=True)[:, :-1], 
                 self.last_truncates[1:]
             )
-            last_actions = self.actions.make_batch(batch_led=True)
-            aux_masks = make_non_thought_transition_masks(masks, last_actions[:, 1:, 0], self.last_dones[1:])
 
             self.trainer.learn(
                 obs=self.obs.make_batch(batch_led=True), 
-                last_actions=last_actions, 
+                last_actions=self.actions.make_batch(batch_led=True), 
                 rewards=self.rewards[1:],
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                 masks=masks,
-                aux=aux_masks,
                 causes=self.last_cause_times
             )
             
@@ -282,36 +255,5 @@ class Model(Agent):
     
 
 if __name__ == "__main__":
-    # test make_non_thought_transition_masks; external flags are (0, 1, 2), thought flags are 3..6
-    flags = np.array([
-        [1, 3, 4, 0, 5, 2],  # thoughts in between; the last external step has no pair in the window
-        [0, 0, 0, 0, 0, 0],  # consecutive external steps with a done at t=2
-        [2, 3, 3, 1, 6, 6],  # masked thought step inside the span t=0 .. t'=3
-        [1, 1, 3, 3, 3, 3],  # the pair target t'=1 is masked
-    ], dtype=np.float32)
-    masks = np.array([
-        [1, 1, 1, 1, 1, 1],
-        [1, 1, 1, 1, 1, 1],
-        [1, 1, 0, 1, 1, 1],
-        [1, 0, 1, 1, 1, 1],
-    ], dtype=np.float32)
-    dones = np.zeros_like(flags, dtype=bool)
-    dones[1, 2] = True
-    next_dones = [list(column) for column in dones.T]  # list (T) of bools of length batch
-
-    expected = np.array([
-        [1, 0, 0, 1, 0, 0],
-        [1, 1, 0, 1, 1, 0],
-        [0, 0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0, 0],
-    ], dtype=np.float32)
-
-    result = make_non_thought_transition_masks(masks, flags, next_dones)
-    assert result.shape == expected.shape and result.dtype == np.float32, (result.shape, result.dtype)
-    assert np.array_equal(result, expected), f"\nexpected:\n{expected}\ngot:\n{result}"
-
-    # a single-step window never has a pair
-    single = make_non_thought_transition_masks(np.ones((2, 1), dtype=np.float32), np.zeros((2, 1)), [[False, False]])
-    assert np.array_equal(single, np.zeros((2, 1), dtype=np.float32)), single
-
-    print("make_non_thought_transition_masks: all tests passed")
+    # test mask
+    pass
