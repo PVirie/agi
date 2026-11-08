@@ -257,6 +257,7 @@ if __name__ == "__main__":
         empty_value=-1.0,
         use_aux=args.aux_coef is not None,
         external_flags=model_76.EXTERNAL_FLAGS,
+        aux_span=args.max_thought_steps + 1,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(

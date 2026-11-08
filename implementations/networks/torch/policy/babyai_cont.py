@@ -33,6 +33,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
                  use_aux=False,
                  obs_classes=(11, 6, 3),
                  external_flags=(0, 1, 2),
+                 aux_span=1,
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
@@ -150,6 +151,8 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.obs_classes = tuple(obs_classes)  # per-channel class counts of the raw grid (minigrid object, color, state)
         # int-action flags of non-thought steps (model_76.EXTERNAL_FLAGS)
         self.external_flags = tuple(external_flags)
+        # max steps in a t .. t'-1 span (model_76 forces an external step after max_num_thought_steps, so mts + 1)
+        self.aux_span = aux_span
         self.aux_write_tol = 1e-4  # a write landed if a next graph slot equals the sampled write value
         if use_aux:
             self.aux_node_embedding = nn.Linear(node_dim, hidden_size)
@@ -365,8 +368,9 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         non-thought step (the thought steps in between see the same env frame).
         A FiLM U-Net convolutionally transforms obs_t into obs_{t'} logits, conditioned only on the graph change over
         t .. t'-1, so the external action can only reach the prediction through the graph.
-        The graph memory is not differentiable; where the write of step t'-1 landed in graph_{t'}, that slot carries a
-        straight-through gradient into E[write_value_{t'-1}] (forward value unchanged).
+        The graph memory is not differentiable; every slot of graph_{t'} holding the write of a step s in t .. t'-1
+        (the latest such s, scanning at most aux_span steps back) carries a straight-through gradient into
+        E[write_value_s] (forward value unchanged), so each write in the span gets a learning signal.
         Pairs are computed for every t; the agent's aux mask keeps only non-thought t with t' inside the window.
 
         context: (batch, context_size + 1, packed_context_size); write_value_params: (batch, context_size, 2 * node_dim)
@@ -378,7 +382,6 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         S, D = self.internal_state_size, self.node_dim
 
         next_index = self._next_external_index(selected_action[:, :, 0].long()).clamp(max=context_size - 1)  # (batch, T)
-        last_index = (next_index - 1).clamp(min=0)  # step whose write is freshest in graph_{t'}
 
         graph = context[:, :-1, self.internal_state_pos:self.goal_pos].reshape(batch_size, context_size, S, D)
         next_state = torch.gather(graph, 1, next_index[:, :, None, None].expand(-1, -1, S, D))
@@ -386,11 +389,21 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         alpha, beta = self._write_value_concentrations(write_value_params)
         write_mean = alpha / (alpha + beta)
         written = selected_action[:, :, 4:4 + D].float()
-        last_gather = last_index[:, :, None].expand(-1, -1, D)
-        write_mean = torch.gather(write_mean, 1, last_gather)[:, :, None, :]  # (batch, T, 1, D)
-        written = torch.gather(written, 1, last_gather)[:, :, None, :]
-        landed = ((next_state - written).abs() <= self.aux_write_tol).all(dim=-1, keepdim=True)  # (batch, T, S, 1)
-        next_state = next_state + torch.where(landed, write_mean - write_mean.detach(), torch.zeros_like(next_state))
+        steps = torch.arange(context_size, device=next_index.device)[None, :]
+        straight_through = torch.zeros_like(next_state)
+        assigned = torch.zeros_like(next_state[..., :1], dtype=torch.bool)  # (batch, T, S, 1)
+        # newest write first, so a slot overwritten within the span credits only its final writer
+        for offset in range(self.aux_span):
+            source = next_index - 1 - offset  # (batch, T)
+            in_span = (source >= steps)[:, :, None, None]
+            source_gather = source.clamp(min=0)[:, :, None].expand(-1, -1, D)
+            source_mean = torch.gather(write_mean, 1, source_gather)[:, :, None, :]  # (batch, T, 1, D)
+            source_written = torch.gather(written, 1, source_gather)[:, :, None, :]
+            landed = ((next_state - source_written).abs() <= self.aux_write_tol).all(dim=-1, keepdim=True)
+            landed = landed & in_span & ~assigned
+            straight_through = straight_through + torch.where(landed, source_mean - source_mean.detach(), torch.zeros_like(next_state))
+            assigned = assigned | landed
+        next_state = next_state + straight_through
 
         cond = self._graph_delta(graph, next_state).reshape(batch_size * context_size, self.hidden_size)
         grid_shape = (batch_size * context_size, self.height, self.width, self.channel)
