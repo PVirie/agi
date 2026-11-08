@@ -281,5 +281,36 @@ class Model(Agent):
     
 
 if __name__ == "__main__":
-    # test mask
-    pass
+    # test make_non_thought_pair_masks; external flags are (0, 1, 2), thought flags are 3..6
+    flags = np.array([
+        [1, 3, 4, 0, 5, 2],  # thoughts in between; the last external step has no pair in the window
+        [0, 0, 0, 0, 0, 0],  # consecutive external steps with a done at t=2
+        [2, 3, 3, 1, 6, 6],  # masked thought step inside the span t=0 .. t'=3
+        [1, 1, 3, 3, 3, 3],  # the pair target t'=1 is masked
+    ], dtype=np.float32)
+    masks = np.array([
+        [1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+        [1, 1, 0, 1, 1, 1],
+        [1, 0, 1, 1, 1, 1],
+    ], dtype=np.float32)
+    dones = np.zeros_like(flags, dtype=bool)
+    dones[1, 2] = True
+    next_dones = [list(column) for column in dones.T]  # list (T) of bools of length batch
+
+    expected = np.array([
+        [1, 0, 0, 1, 0, 0],
+        [1, 1, 0, 1, 1, 0],
+        [0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+    ], dtype=np.float32)
+
+    result = make_non_thought_pair_masks(masks, flags, next_dones)
+    assert result.shape == expected.shape and result.dtype == np.float32, (result.shape, result.dtype)
+    assert np.array_equal(result, expected), f"\nexpected:\n{expected}\ngot:\n{result}"
+
+    # a single-step window never has a pair
+    single = make_non_thought_pair_masks(np.ones((2, 1), dtype=np.float32), np.zeros((2, 1)), [[False, False]])
+    assert np.array_equal(single, np.zeros((2, 1), dtype=np.float32)), single
+
+    print("make_non_thought_pair_masks: all tests passed")

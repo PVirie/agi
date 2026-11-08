@@ -77,7 +77,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             d_model=hidden_size,
             nhead=8,
             num_layers=2,
-            dropout=0.0,
+            dropout=0.01,
             max_len=goal_size + inventory_size,
             use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
             pooling="cls",  # mean pooling dilutes order-dependent structure ("A then B" vs "B then A")

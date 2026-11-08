@@ -144,7 +144,7 @@ if __name__ == "__main__":
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
-    parser.add_argument("--aux-coef",               "-aux", type=float, default=None, help="Coefficient of the graph-transition auxiliary loss (U-Net: obs_t + delta graph -> obs_t+1). Default is off.")
+    parser.add_argument("--aux-coef",               "-aux", type=float, default=1.0, help="Coefficient of the graph-transition auxiliary loss (U-Net: obs_t + delta graph -> obs_t+1). Default is 1.0.")
     args = parser.parse_args()
 
 
@@ -169,7 +169,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_77_size_{args.scale}"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_77_size_{args.scale}_a"
     if args.st_train:
         experiment_path += "_stmean"
     if args.aux_coef is not None:

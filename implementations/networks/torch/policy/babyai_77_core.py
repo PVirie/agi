@@ -90,8 +90,8 @@ class Policy_Core(Minigrid_Policy_Core):
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=8,
-            num_layers=2,
-            dropout=0.0,
+            num_layers=4,
+            dropout=0.01,
             max_len=internal_state_size + goal_size + inventory_size,
             use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
             pooling="cls",  # mean pooling dilutes order-dependent structure ("A then B" vs "B then A")
