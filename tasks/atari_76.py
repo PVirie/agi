@@ -39,7 +39,7 @@ DIAGNOSTIC_KEYS = [
     "game_reward_per_step", "rewarded_step_fraction",
     "rnd_error", "rnd_reward", "episodic_reward", "modulator", "intrinsic_reward",
     "cells_seen", "categorical_seen",
-    "entropy", "approx_kl", "pg_loss", "v_loss",
+    "entropy", "approx_kl", "pg_loss", "v_loss", "aux_loss",
 ]
 
 async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):

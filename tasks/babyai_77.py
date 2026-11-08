@@ -36,6 +36,9 @@ from interfaces.memory import Graph_Memory_Operation_Type
 
 torch.autograd.set_detect_anomaly(False)
 
+# logged every 2 rollouts, see PPO.last_stats; aux_loss is only present when the learner has aux_coef set
+DIAGNOSTIC_KEYS = ["entropy", "approx_kl", "pg_loss", "v_loss", "aux_loss"]
+
 async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
     observations, info = env.reset(seed=env_seed)
@@ -103,6 +106,11 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
         if steps % (rollout_length * 2) == 0 or should_stop:
             logging.info(f"{steps}| Returns: {', '.join([format_float(s) for s in total_returns])}")
             logging.info(f"{steps}| Selected actions: {actions}")
+
+            diagnostics = ppo_learner.last_stats
+            logging.info(f"{steps}| Diagnostics: " + ", ".join(f"{k}={diagnostics[k]:.4g}" for k in DIAGNOSTIC_KEYS if k in diagnostics))
+            diagnostic_recorder.record([env.total_env_steps()] + [diagnostics.get(k) for k in DIAGNOSTIC_KEYS])
+            diagnostic_recorder.write()
 
             # save 
             policy_core.save()
@@ -197,6 +205,7 @@ if __name__ == "__main__":
     inventory_size = 3 # inventory include 1 slot for current direction and 2 slots for items
     
     stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "success", "edges_per_node", "graph_nodes"]])
+    diagnostic_recorder = Episode_Recorder(f"{experiment_path}/diagnostics", headers=["env_steps"] + DIAGNOSTIC_KEYS)
     
     if args.scale == "small":
         hidden_size = 256
