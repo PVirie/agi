@@ -257,21 +257,19 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         return int_logits, ext_logits, edge_1_logits, edge_2_logits, write_value_params, values
 
 
-    def _split_valid_actions(self, valid_actions):
-        if valid_actions is None:
-            return None, None
-        if isinstance(valid_actions, np.ndarray):
-            valid_actions = torch.tensor(valid_actions, dtype=torch.bool)
-        valid_actions = valid_actions.to(self.device)
-        # valid_actions has shape (batch, context_size, int_action_size + ext_action_size)
-        return valid_actions[:, :, :self.int_action_size], valid_actions[:, :, self.int_action_size:]
-
-
-    def _make_distributions(self, logits_int, logits_ext, edge_1_logits, edge_2_logits, write_value_params, available_flags, available_actions):
+    def _write_value_concentrations(self, write_value_params):
         alpha_raw, beta_raw = write_value_params.chunk(2, dim=-1)
         # concentrations >= 1 keep each Beta unimodal with bounded density
         alpha = 1.0 + nn.functional.softplus(alpha_raw)
         beta = 1.0 + nn.functional.softplus(beta_raw)
+        return alpha, beta
+
+
+    def _make_distributions(self, logits_int, logits_ext, edge_1_logits, edge_2_logits, write_value_params, valid_actions):
+        # valid_actions: (batch, context_size, int_action_size + ext_action_size) or None
+        available_flags = valid_actions[..., :self.int_action_size] if valid_actions is not None else None
+        available_actions = valid_actions[..., self.int_action_size:] if valid_actions is not None else None
+        alpha, beta = self._write_value_concentrations(write_value_params)
         return (
             Categorical_With_Mask(logits=logits_int, mask=available_flags),
             Categorical_With_Mask(logits=logits_ext, mask=available_actions),
@@ -279,6 +277,37 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             Categorical(logits=edge_2_logits),
             Independent(Beta(alpha, beta), 1),  # joint over node_dim
         )
+
+
+    def get_action(self, context, valid_actions=None):
+
+        if isinstance(context, np.ndarray):
+            # float: node values are continuous and would be truncated by a long cast
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
+        if isinstance(valid_actions, np.ndarray):
+            valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
+
+        with torch.no_grad():
+            outputs = self.compute(context)
+            probs_int, probs_ext, probs_edge_1, probs_edge_2, probs_write_value = self._make_distributions(
+                *outputs[:5], valid_actions
+            )
+
+            action_int = probs_int.sample()
+            action_ext = probs_ext.sample()
+            edge_1 = probs_edge_1.sample()
+            edge_2 = probs_edge_2.sample()
+            write_value = probs_write_value.sample().clamp(self.write_eps, 1.0 - self.write_eps)  # (batch, context_size, node_dim)
+
+        action = np.concatenate([
+            action_int.unsqueeze(-1).cpu().numpy(),
+            action_ext.unsqueeze(-1).cpu().numpy(),
+            edge_1.unsqueeze(-1).cpu().numpy(),
+            edge_2.unsqueeze(-1).cpu().numpy(),
+            write_value.cpu().numpy()
+        ], axis=-1)
+
+        return action.astype(float)
 
 
     def _log_prob_entropy(self, dists, selected_action):
@@ -301,38 +330,6 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             probs_write_value.base_dist.entropy().mean(dim=-1),
         ], dim=-1)
         return log_probs, entropy
-    
-
-    def get_action(self, context, valid_actions=None):
-
-        if isinstance(context, np.ndarray):
-            # float: node values are continuous and would be truncated by a long cast
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        available_flags, available_actions = self._split_valid_actions(valid_actions)
-
-        with torch.no_grad():
-            outputs = self.compute(context)
-            probs_int, probs_ext, probs_edge_1, probs_edge_2, probs_write_value = self._make_distributions(
-                *outputs[:5], available_flags, available_actions
-            )
-
-            action_int = probs_int.sample()
-            action_ext = probs_ext.sample()
-            edge_1 = probs_edge_1.sample()
-            edge_2 = probs_edge_2.sample()
-            write_value = probs_write_value.sample().clamp(self.write_eps, 1.0 - self.write_eps)  # (batch, context_size, node_dim)
-
-        action = np.concatenate([
-            action_int.unsqueeze(-1).cpu().numpy(),
-            action_ext.unsqueeze(-1).cpu().numpy(),
-            edge_1.unsqueeze(-1).cpu().numpy(),
-            edge_2.unsqueeze(-1).cpu().numpy(),
-            write_value.cpu().numpy()
-        ], axis=-1)
-
-        return action.astype(float)
-    
 
 
     def _graph_summary(self, graph, valid):
@@ -412,23 +409,28 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         return obs_loss.view(batch_size, context_size)
 
 
-    def _write_value_concentrations(self, write_value_params):
-        alpha_raw, beta_raw = write_value_params.chunk(2, dim=-1)
-        return 1.0 + nn.functional.softplus(alpha_raw), 1.0 + nn.functional.softplus(beta_raw)
-
-
     def _log_prob_with_value(self, context, selected_action, valid_actions):
         # context: (batch, context_size + 1, packed_context_size) tensor; also returns the write head params of the
         # first context_size steps so the aux loss can reuse this forward pass
-        available_flags, available_actions = self._split_valid_actions(valid_actions)
-
         outputs = self.compute(context)
         values = outputs[5]  # keep all contexts: the last one is the bootstrap value
         # drop the last context for logprob: it is the observation after the last action
         heads = [o[:, :-1, :] for o in outputs[:5]]
-        dists = self._make_distributions(*heads, available_flags, available_actions)
+        dists = self._make_distributions(*heads, valid_actions)
         log_probs, entropy = self._log_prob_entropy(dists, selected_action)
         return log_probs, entropy, values, heads[4]
+
+
+    def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
+        # now context has shape (batch, context_size + 1, self.packed_context_size)
+        # Return log prob will only have context_size, but value will have context_size + 1
+        if isinstance(context, np.ndarray):
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
+        if isinstance(valid_actions, np.ndarray):
+            valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
+
+        log_probs, entropy, values, _ = self._log_prob_with_value(context, selected_action, valid_actions)
+        return log_probs, entropy, values
 
 
     def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
@@ -437,18 +439,9 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
         if isinstance(selected_action, np.ndarray):
             selected_action = torch.tensor(selected_action, dtype=torch.float32).to(self.device)
+        if isinstance(valid_actions, np.ndarray):
+            valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
 
         log_probs, entropy, values, write_value_params = self._log_prob_with_value(context, selected_action, valid_actions)
         aux_loss = self._aux_loss(context, write_value_params, selected_action) if self.use_aux else None
         return log_probs, entropy, values, aux_loss
-
-
-    def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
-        # now context has shape (batch, context_size + 1, self.packed_context_size)
-        # Return log prob will only have context_size, but value will have context_size + 1
-
-        if isinstance(context, np.ndarray):
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        log_probs, entropy, values, _ = self._log_prob_with_value(context, selected_action, valid_actions)
-        return log_probs, entropy, values
