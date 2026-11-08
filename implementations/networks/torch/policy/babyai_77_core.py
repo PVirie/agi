@@ -155,7 +155,7 @@ class Policy_Core(Minigrid_Policy_Core):
             nn.Linear(hidden_size, value_size)
         )
 
-        # auxiliary transition model (see _aux_loss): U-Net(obs_t | write_value_t, node context_t) -> obs_{t+1}
+        # auxiliary transition model (see _aux_loss): U-Net(obs_t | write_value_t, node context_{t+1}) -> obs_{t+1}
         # only built when enabled so checkpoints saved without it still load (load_state_dict is strict)
         self.use_aux = use_aux
         self.obs_classes = tuple(obs_classes)  # per-channel class counts of the raw grid (minigrid object, color, state)
@@ -378,10 +378,9 @@ class Policy_Core(Minigrid_Policy_Core):
 
     def _aux_loss(self, context, write_value):
         """
-        Transition rule: obs_t | (write_value_t, node context_t) = obs_{t+1}.
+        Transition rule: obs_t | (write_value_t, node context_{t+1}) = obs_{t+1}.
         A FiLM U-Net convolutionally transforms obs_t into obs_{t+1} logits, conditioned on the write value of step t
-        together with the node context step t observed (before its action). Since obs_t and the node context are given,
-        the write value is pushed to carry the residual: what changes from t to t+1 that neither already explains.
+        together with the node context the graph memory produced after executing a_t (context[:, t+1], see model_77).
         The node context is data (no gradient); the write value is trained by this loss alone (no policy gradient),
         while the backbone it shares with the policy receives both.
 
@@ -391,7 +390,7 @@ class Policy_Core(Minigrid_Policy_Core):
         context = context.float()
         batch_size, context_size = write_value.shape[:2]
 
-        node_context = context[:, :-1, self.internal_state_pos:self.goal_pos]  # (batch, context_size, internal_state_size * node_dim)
+        node_context = context[:, 1:, self.internal_state_pos:self.goal_pos]  # (batch, context_size, internal_state_size * node_dim)
         cond = self.aux_cond_net(torch.cat([write_value, node_context], dim=-1))  # (batch, context_size, hidden_size)
         cond = cond.reshape(batch_size * context_size, self.hidden_size)
         grid_shape = (batch_size * context_size, self.height, self.width, self.channel)
