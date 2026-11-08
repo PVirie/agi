@@ -65,14 +65,17 @@ class Policy_Core(Minigrid_Policy_Core):
         self._bridge_key_cache = None  # rollout-only cache of past keys, see get_action
 
         self.position_size = 2
-        self.content_size = internal_state_size * node_dim + goal_size + inventory_size + width * height * channel
+        # [node context (internal_state_size * node_dim), pre-write head content (node_dim), goal, inventory, obs]
+        self.content_size = internal_state_size * node_dim + node_dim + goal_size + inventory_size + width * height * channel
         # [flag, edge_1 (window step), edge_2 (0: create, 1: link), write_value (node_dim)]
         self.packed_action_size = 1 + self.position_size + node_dim
         # [reward, flag, position, content]
         self.packed_context_size = 1 + 1 + self.position_size + self.content_size
 
         self.internal_state_pos = 1 + 1 + self.position_size
-        self.goal_pos = self.internal_state_pos + self.internal_state_size * node_dim
+        # the head content before the step's write (see Graph_Memory.get_pre_write_head_content); aux loss only
+        self.pre_write_pos = self.internal_state_pos + self.internal_state_size * node_dim
+        self.goal_pos = self.pre_write_pos + node_dim
         self.inv_pos = self.goal_pos + goal_size
         self.obs_pos = self.inv_pos + inventory_size
 
@@ -155,13 +158,14 @@ class Policy_Core(Minigrid_Policy_Core):
             nn.Linear(hidden_size, value_size)
         )
 
-        # auxiliary transition model (see _aux_loss): U-Net(obs_t | write_value_t, node context_{t+1}) -> obs_{t+1}
+        # auxiliary transition model (see _aux_loss):
+        # U-Net(obs_t | write_value_t - pre-write head_{t+1}, neighbors_{t+1}) -> obs_{t+1}
         # only built when enabled so checkpoints saved without it still load (load_state_dict is strict)
         self.use_aux = use_aux
         self.obs_classes = tuple(obs_classes)  # per-channel class counts of the raw grid (minigrid object, color, state)
         if use_aux:
             self.aux_cond_net = nn.Sequential(
-                nn.Linear(node_dim + internal_state_size * node_dim, hidden_size),
+                nn.Linear(node_dim + (internal_state_size - 1) * node_dim, hidden_size),
                 nn.GELU(),
                 nn.Linear(hidden_size, hidden_size)
             )
@@ -241,7 +245,7 @@ class Policy_Core(Minigrid_Policy_Core):
         context_size = context.size(1)
 
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.action_size).float()
-        internal_state = context[:, :, self.internal_state_pos: self.goal_pos]  # (batch_size, context_size, internal_state_size * node_dim)
+        internal_state = context[:, :, self.internal_state_pos: self.pre_write_pos]  # (batch_size, context_size, internal_state_size * node_dim)
         goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
         inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
         obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
@@ -378,10 +382,12 @@ class Policy_Core(Minigrid_Policy_Core):
 
     def _aux_loss(self, context, write_value):
         """
-        Transition rule: obs_t | (write_value_t, node context_{t+1}) = obs_{t+1}.
-        A FiLM U-Net convolutionally transforms obs_t into obs_{t+1} logits, conditioned on the write value of step t
-        together with the node context the graph memory produced after executing a_t (context[:, t+1], see model_77).
-        The node context is data (no gradient); the write value is trained by this loss alone (no policy gradient),
+        Transition rule: obs_t | (write_value_t - pre-write head_{t+1}, neighbors_{t+1}) = obs_{t+1}.
+        A FiLM U-Net convolutionally transforms obs_t into obs_{t+1} logits, conditioned on
+          - the change step t made to the node it ended on: write_value_t minus that node's content just before the
+            write (the pre-write head content the graph memory reports at t+1, see model_77), and
+          - the neighbor slots of the node context at t+1 (the head slot is left out: it holds write_value_t itself).
+        Graph data carries no gradient; the write value is trained by this loss alone (no policy gradient),
         while the backbone it shares with the policy receives both.
 
         context: (batch, context_size + 1, packed_context_size); write_value: (batch, context_size, node_dim)
@@ -390,8 +396,10 @@ class Policy_Core(Minigrid_Policy_Core):
         context = context.float()
         batch_size, context_size = write_value.shape[:2]
 
-        node_context = context[:, 1:, self.internal_state_pos:self.goal_pos]  # (batch, context_size, internal_state_size * node_dim)
-        cond = self.aux_cond_net(torch.cat([write_value, node_context], dim=-1))  # (batch, context_size, hidden_size)
+        next_context = context[:, 1:]
+        neighbors = next_context[:, :, self.internal_state_pos + self.node_dim:self.pre_write_pos]  # (batch, context_size, (internal_state_size - 1) * node_dim)
+        pre_write_head = next_context[:, :, self.pre_write_pos:self.goal_pos]  # (batch, context_size, node_dim)
+        cond = self.aux_cond_net(torch.cat([write_value - pre_write_head, neighbors], dim=-1))  # (batch, context_size, hidden_size)
         cond = cond.reshape(batch_size * context_size, self.hidden_size)
         grid_shape = (batch_size * context_size, self.height, self.width, self.channel)
         obs = context[:, :-1, self.obs_pos:].reshape(grid_shape)

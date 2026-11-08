@@ -121,6 +121,8 @@ class Model(Agent):
 
         context = self.graph_memory.get_node_context()
         context = context.reshape(batch_size, -1) # reshape to (batch_size, context_size)
+        # head content before this step's write; consumed only by the policy core's transition aux loss
+        pre_write_head = self.graph_memory.get_pre_write_head_content().reshape(batch_size, -1)
 
         # replace the reward and content
         self.obs.update_last(
@@ -128,7 +130,7 @@ class Model(Agent):
                 b_reward=reward[:, 0],   # the policy observes the extrinsic reward only
                 b_flag=action_flag,
                 b_position=position,
-                b_content=np.concatenate([context, content], axis=-1)
+                b_content=np.concatenate([context, pre_write_head, content], axis=-1)
             )
         )
         self.rewards[-1] = reward
