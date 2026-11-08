@@ -66,16 +66,14 @@ class Policy_Core(Minigrid_Policy_Core):
 
         self.position_size = 2
         # [node context (internal_state_size * node_dim), pre-write head content (node_dim), goal, inventory, obs]
-        self.content_size = internal_state_size * node_dim + node_dim + goal_size + inventory_size + width * height * channel
+        self.content_size = internal_state_size * node_dim + goal_size + inventory_size + width * height * channel
         # [flag, edge_1 (window step), edge_2 (0: create, 1: link), write_value (node_dim)]
         self.packed_action_size = 1 + self.position_size + node_dim
         # [reward, flag, position, content]
         self.packed_context_size = 1 + 1 + self.position_size + self.content_size
 
         self.internal_state_pos = 1 + 1 + self.position_size
-        # the head content before the step's write (see Graph_Memory.get_pre_write_head_content); aux loss only
-        self.pre_write_pos = self.internal_state_pos + self.internal_state_size * node_dim
-        self.goal_pos = self.pre_write_pos + node_dim
+        self.goal_pos = self.internal_state_pos + self.internal_state_size * node_dim
         self.inv_pos = self.goal_pos + goal_size
         self.obs_pos = self.inv_pos + inventory_size
 
@@ -145,12 +143,14 @@ class Policy_Core(Minigrid_Policy_Core):
             nn.GELU(),
             nn.Linear(hidden_size, 1)
         )
-        self.head_write_value = nn.Sequential(
+        # outputs a change to the current head content (in logit space, see compute), not the content itself
+        self.head_write_delta = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, node_dim),
-            nn.Sigmoid()
+            nn.Linear(hidden_size, node_dim)
         )
+        # keeps logit(head) finite for contents saturated to 0/1 in float32
+        self.write_eps = 1e-6
 
         self.head_value = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
@@ -158,8 +158,7 @@ class Policy_Core(Minigrid_Policy_Core):
             nn.Linear(hidden_size, value_size)
         )
 
-        # auxiliary transition model (see _aux_loss):
-        # U-Net(obs_t | write_value_t - pre-write head_{t+1}, neighbors_{t+1}) -> obs_{t+1}
+        # auxiliary transition model (see _aux_loss): U-Net(obs_t | write_delta_t, neighbors_{t+1}) -> obs_{t+1}
         # only built when enabled so checkpoints saved without it still load (load_state_dict is strict)
         self.use_aux = use_aux
         self.obs_classes = tuple(obs_classes)  # per-channel class counts of the raw grid (minigrid object, color, state)
@@ -211,6 +210,8 @@ class Policy_Core(Minigrid_Policy_Core):
         self.head_bridge_k.apply(init_actor_weights)
         self.head_bridge_q.apply(init_actor_weights)
         self.head_bridge.apply(init_actor_weights)
+        # small gain: delta ~ 0 at start, so a write initially keeps the head content (a large delta saturates the sigmoid)
+        self.head_write_delta.apply(init_actor_weights)
 
         def init_value_weights(m):
             if isinstance(m, nn.Linear):
@@ -219,8 +220,6 @@ class Policy_Core(Minigrid_Policy_Core):
                     nn.init.constant_(m.bias, 0)
                     
         self.head_value.apply(init_value_weights)
-        # not a policy head anymore (no near-uniform start needed); full gain so writes differ across steps from the start
-        self.head_write_value.apply(init_value_weights)
 
         if self.use_aux:
             self.aux_cond_net.apply(init_value_weights)
@@ -245,7 +244,7 @@ class Policy_Core(Minigrid_Policy_Core):
         context_size = context.size(1)
 
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.action_size).float()
-        internal_state = context[:, :, self.internal_state_pos: self.pre_write_pos]  # (batch_size, context_size, internal_state_size * node_dim)
+        internal_state = context[:, :, self.internal_state_pos: self.goal_pos]  # (batch_size, context_size, internal_state_size * node_dim)
         goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
         inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
         obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
@@ -278,13 +277,18 @@ class Policy_Core(Minigrid_Policy_Core):
         bridge_q = self.head_bridge_q(base_output)  # (batch_size, context_size, location_size)
         bridge_k = self.head_bridge_k(base_output)  # (batch_size, context_size, location_size)
         link_logits = self.head_bridge(base_output).squeeze(-1)  # (batch_size, context_size)
-        write_value = self.head_write_value(base_output)  # (batch_size, context_size, node_dim)
+        write_delta = self.head_write_delta(base_output)  # (batch_size, context_size, node_dim)
+        # write = current head content shifted by the delta in logit space: stays in (0, 1) without clamping,
+        # so every delta is realized exactly (empty_value never applies, the head slot is always occupied)
+        head = context[:, :, self.internal_state_pos:self.internal_state_pos + self.node_dim].float()
+        head = head.clamp(self.write_eps, 1.0 - self.write_eps)
+        write_value = torch.sigmoid(torch.logit(head) + write_delta)  # (batch_size, context_size, node_dim)
 
         values = self.head_value(base_output)  # (batch_size, context_size, value_size)
         if self.value_size == 1:
             values = values.squeeze(-1)  # (batch_size, context_size)
 
-        return action_logits, bridge_q, bridge_k, link_logits, write_value, values
+        return action_logits, bridge_q, bridge_k, link_logits, write_value, write_delta, values
 
 
     def _bridge_logits(self, q, k, offset=0):
@@ -326,7 +330,7 @@ class Policy_Core(Minigrid_Policy_Core):
         batch_size = context.size(0)
         context_size = context.size(1)
 
-        action_logits, bridge_q, bridge_k, link_logits, write_value, _ = self.compute(context)
+        action_logits, bridge_q, bridge_k, link_logits, write_value, _, _ = self.compute(context)
 
         cache = self._bridge_key_cache
         if cache is not None and cache.size(0) != batch_size:
@@ -340,7 +344,7 @@ class Policy_Core(Minigrid_Policy_Core):
         action_flag = Categorical_With_Mask(logits=action_logits, mask=valid_actions).sample()
         bridge_step = Categorical_With_Mask(logits=bridge_logits, mask=bridge_mask).sample()  # (batch, T) window step
         link = Bernoulli(logits=link_logits).sample()
-        # write_value is deterministic (batch, T, node_dim): not part of the policy, trained only by the aux loss
+        # write_value is deterministic (batch, T, node_dim): not part of the policy, its delta is trained only by the aux loss
 
         action = np.concatenate([
             action_flag.unsqueeze(-1).cpu().numpy(),
@@ -380,26 +384,24 @@ class Policy_Core(Minigrid_Policy_Core):
         ], dim=-1)
 
 
-    def _aux_loss(self, context, write_value):
+    def _aux_loss(self, context, write_delta):
         """
-        Transition rule: obs_t | (write_value_t - pre-write head_{t+1}, neighbors_{t+1}) = obs_{t+1}.
-        A FiLM U-Net convolutionally transforms obs_t into obs_{t+1} logits, conditioned on
-          - the change step t made to the node it ended on: write_value_t minus that node's content just before the
-            write (the pre-write head content the graph memory reports at t+1, see model_77), and
-          - the neighbor slots of the node context at t+1 (the head slot is left out: it holds write_value_t itself).
-        Graph data carries no gradient; the write value is trained by this loss alone (no policy gradient),
+        Transition rule: obs_t | (write_delta_t, neighbors_{t+1}) = obs_{t+1}.
+        The write is the head content at t shifted by write_delta_t (see compute), so the delta is the change the
+        step makes to memory. A FiLM U-Net convolutionally transforms obs_t into obs_{t+1} logits, conditioned on
+          - write_delta_t (with grad), and
+          - the neighbor slots of the node context at t+1 (the head slot is left out: it holds the write itself).
+        Graph data carries no gradient; the delta is trained by this loss alone (no policy gradient),
         while the backbone it shares with the policy receives both.
 
-        context: (batch, context_size + 1, packed_context_size); write_value: (batch, context_size, node_dim)
+        context: (batch, context_size + 1, packed_context_size); write_delta: (batch, context_size, node_dim)
         returns (batch, context_size)
         """
         context = context.float()
-        batch_size, context_size = write_value.shape[:2]
+        batch_size, context_size = write_delta.shape[:2]
 
-        next_context = context[:, 1:]
-        neighbors = next_context[:, :, self.internal_state_pos + self.node_dim:self.pre_write_pos]  # (batch, context_size, (internal_state_size - 1) * node_dim)
-        pre_write_head = next_context[:, :, self.pre_write_pos:self.goal_pos]  # (batch, context_size, node_dim)
-        cond = self.aux_cond_net(torch.cat([write_value - pre_write_head, neighbors], dim=-1))  # (batch, context_size, hidden_size)
+        neighbors = context[:, 1:, self.internal_state_pos + self.node_dim:self.goal_pos]  # (batch, context_size, (internal_state_size - 1) * node_dim)
+        cond = self.aux_cond_net(torch.cat([write_delta, neighbors], dim=-1))  # (batch, context_size, hidden_size)
         cond = cond.reshape(batch_size * context_size, self.hidden_size)
         grid_shape = (batch_size * context_size, self.height, self.width, self.channel)
         obs = context[:, :-1, self.obs_pos:].reshape(grid_shape)
@@ -417,13 +419,13 @@ class Policy_Core(Minigrid_Policy_Core):
 
 
     def _log_prob_with_value(self, context, selected_action, valid_actions):
-        # context: (batch, context_size + 1, packed_context_size) tensor; also returns the write values of the
+        # context: (batch, context_size + 1, packed_context_size) tensor; also returns the write deltas of the
         # first context_size steps (with grad) so the aux loss can reuse this forward pass
-        action_logits, bridge_q, bridge_k, link_logits, write_value, values = self.compute(context)
+        action_logits, bridge_q, bridge_k, link_logits, _, write_delta, values = self.compute(context)
 
         # drop the last step's outputs: it is the observation after the last action
         # (step i only attends to keys j <= i, so dropping the last key changes nothing for the remaining rows)
-        write_value = write_value[:, :-1]
+        write_delta = write_delta[:, :-1]
         dists = self._distributions(
             action_logits[:, :-1], 
             bridge_q[:, :-1], bridge_k[:, :-1],
@@ -432,7 +434,7 @@ class Policy_Core(Minigrid_Policy_Core):
         )
         log_probs, entropy = self._log_prob_and_entropy(dists, selected_action)
         # but maintain values for all contexts, since we need the bootstrap value for the last context
-        return log_probs, entropy, values, write_value
+        return log_probs, entropy, values, write_delta
 
 
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
@@ -456,8 +458,8 @@ class Policy_Core(Minigrid_Policy_Core):
         if isinstance(valid_actions, np.ndarray):
             valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
 
-        log_probs, entropy, values, write_value = self._log_prob_with_value(context, selected_action, valid_actions)
-        aux_loss = self._aux_loss(context, write_value) if self.use_aux else None
+        log_probs, entropy, values, write_delta = self._log_prob_with_value(context, selected_action, valid_actions)
+        aux_loss = self._aux_loss(context, write_delta) if self.use_aux else None
         return log_probs, entropy, values, aux_loss
 
 

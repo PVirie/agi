@@ -43,10 +43,6 @@ class NP_Graph_Memory(Graph_Memory):
         self.edge_cause_time = np.full((num_batches, num_nodes, max_edges_per_node), -1, dtype=np.int32)  # store time index from which the edge was last affected. -1 means never updated
         self.head_track = []  # internal: list (T) of (num_batches,) head node indices, one per execute(); resolves navigate steps; -1 = step from before a reset
 
-        # first node written by the current execute() and its content just before that write; -1 = nothing written
-        self._written_node = np.full((num_batches,), -1, dtype=np.int32)
-        self._written_prev = np.zeros((num_batches, node_dim), dtype=np.float32)
-
 
     def total_used_nodes(self):
         return self.next_free_node
@@ -77,25 +73,7 @@ class NP_Graph_Memory(Graph_Memory):
         context[:, 1:, :] = np.where(valid_mask[:, :, None], context[:, 1:, :], self.empty_value)
 
         return context
-
-
-    def _record_pre_write(self, batch_indices, nodes):
-        # keep only the first write per execute(), so the record is the content before this step touched the node
-        fresh = self._written_node[batch_indices] < 0
-        batch_indices, nodes = batch_indices[fresh], nodes[fresh]
-        self._written_node[batch_indices] = nodes
-        self._written_prev[batch_indices] = self.nodes[batch_indices, nodes, :]
-
-
-    def get_pre_write_head_content(self):
-        # (num_batches, node_dim): content of the current head node as it was before the last execute() wrote to it;
-        # equals the current head content when that execute() did not write the head
-        batch_idx = np.arange(self.nodes.shape[0])
-        content = self.nodes[batch_idx, self.head, :].copy()
-        written = self._written_node == self.head
-        content[written] = self._written_prev[written]
-        return content
-
+    
 
     def get_cause_times(self):
         # fetch the edge update time at the head
@@ -137,7 +115,6 @@ class NP_Graph_Memory(Graph_Memory):
         self.next_free_node[batch_indices] = 1  # node 0 always exists after reset
         self.next_free_edge[batch_indices, :] = 0
         self.head[batch_indices] = 0
-        self._written_node[batch_indices] = -1
 
         self.edge_cause_time[batch_indices, :, :] = -1
 
@@ -154,7 +131,6 @@ class NP_Graph_Memory(Graph_Memory):
             return np.ones(0, dtype=bool)
 
         heads = self.head[batch_indices]                                        # (B,)
-        self._record_pre_write(batch_indices, heads)
         self.nodes[batch_indices, heads, :] = write_value  # write to head node
 
         # update trace: for all nodes with head as edge source (head→node), update edge_cause_time.
@@ -203,7 +179,6 @@ class NP_Graph_Memory(Graph_Memory):
         write_batches = batch_indices[success]
         if len(write_batches) > 0:
             new_node_indices = self.next_free_node[write_batches]  # index of the newly created node
-            self._record_pre_write(write_batches, new_node_indices)
             self.nodes[write_batches, new_node_indices, :] = write_value[success]
             self.next_free_node[write_batches] += 1
             head_indices = self.head[write_batches]
@@ -472,7 +447,6 @@ class NP_Graph_Memory(Graph_Memory):
         # cause_time: sequence index this op is attributed to; required so the trace is always
         # derived from the caller's own buffers and can never drift from them
         self.timestep = cause_time
-        self._written_node[:] = -1
 
         batch_indices = np.arange(len(operations))
         success = np.ones(len(operations), dtype=bool)
@@ -1238,32 +1212,5 @@ if __name__ == "__main__":
     assert_equal("b0 total edges", m.total_used_edges()[0], 1)
     assert_equal("b0 vacated slot masked", m.get_cause_times()[0, 1], -1)
     assert_equal("b1 untouched", m.total_used_edges()[1], 2)
-
-    # ================================================================== TEST 46
-    # pre-write head content: what the (new) head held right before this execute() wrote it
-    print("TEST 46: get_pre_write_head_content")
-    OP = Graph_Memory_Operation_Type
-    m = NP_Graph_Memory(num_batches=4, num_nodes=6, max_edges_per_node=3, node_dim=2, start_node_value=0.5)
-    m.execute([OP.WRITE] * 4, np.full((4, 2), 0.125), np.zeros(4, dtype=int), np.zeros(4, dtype=int), cause_time=0)  # step 0
-    assert_equal("write: head held the start value", m.get_pre_write_head_content(), np.full((4, 2), 0.5))
-    m.execute([OP.WRITE] * 4, np.full((4, 2), 0.25), np.zeros(4, dtype=int), np.zeros(4, dtype=int), cause_time=1)  # step 1
-    assert_equal("write: previous write", m.get_pre_write_head_content(), np.full((4, 2), 0.125))
-    # b0 WRITE, b1 NAVIGATE create, b2 IDLE, b3 NAVIGATE bridge to step 0 (same node as head -> fails)
-    ok = m.execute([OP.WRITE, OP.NAVIGATE, OP.IDLE, OP.NAVIGATE], np.full((4, 2), 0.375),
-                   np.zeros(4, dtype=int), np.array([0, 0, 0, 1]), cause_time=2)
-    assert_equal("mixed success", ok, [True, True, True, False])
-    pre = m.get_pre_write_head_content()
-    assert_equal("b0 write", pre[0], [0.25, 0.25])
-    assert_equal("b1 created node held the start value", pre[1], [0.5, 0.5])
-    assert_equal("b1 head moved onto the written node", m.get_node_context()[1, 0], [0.375, 0.375])
-    assert_equal("b2 idle: current head content", pre[2], [0.25, 0.25])
-    assert_equal("b3 failed navigate: current head content", pre[3], [0.25, 0.25])
-    # bridge back from b1's new node to step 0's node (root): pre is the root's content before the overwrite
-    ok = m.execute([OP.IDLE, OP.NAVIGATE, OP.IDLE, OP.IDLE], np.full((4, 2), 0.625),
-                   np.zeros(4, dtype=int), np.array([0, 1, 0, 0]), cause_time=3)
-    assert_equal("bridge success", ok[1], True)
-    assert_equal("b1 bridge: target held the earlier write", m.get_pre_write_head_content()[1], [0.25, 0.25])
-    m.execute([OP.RESET | OP.WRITE] + [OP.IDLE] * 3, np.full((4, 2), 0.875), np.zeros(4, dtype=int), np.zeros(4, dtype=int), cause_time=4)
-    assert_equal("reset+write: wiped head held the start value", m.get_pre_write_head_content()[0], [0.5, 0.5])
 
     print("\nAll tests passed.")
