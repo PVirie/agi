@@ -218,6 +218,18 @@ class Policy_Core(Minigrid_Policy_Core):
             self.aux_unet.reset_parameters()
 
 
+    def reset_bridge_cache(self):
+        self._bridge_key_cache = None
+
+
+    def train(self, mode=True):
+        # entering train mode means learn() is about to change the parameters and the window restarts afterwards
+        # (graph memory reset_timestamp), so cached keys are stale either way
+        if mode:
+            self.reset_bridge_cache()
+        return super().train(mode)
+
+
     def _encode(self, context):
         # context has shape (batch, context_size, self.packed_context_size)
         batch_size = context.size(0)
@@ -238,11 +250,6 @@ class Policy_Core(Minigrid_Policy_Core):
         internal_state_embedded = self.internal_state_embedding(internal_state.float())  # (batch_size, context_size, internal_state_size, embedding_dim)
         goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
         inv_embedded = self.inv_embedding(inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
-
-        # # run wavenet on goal to get a better representation of the goal sequence
-        # goal_embedded = goal_embedded.view(batch_size * context_size, self.goal_size, self.embedding_dim)  # (batch_size * context_size, goal_size, embedding_dim)
-        # goal_embedded = self.goal_wavenet(goal_embedded)  # (batch_size * context_size, goal_size, embedding_dim)
-        # goal_embedded = goal_embedded.view(batch_size, context_size, self.goal_size, self.embedding_dim)  # (batch_size, context_size, goal_size, embedding_dim)
 
         internal_state_goal_embedded = torch.concat([internal_state_embedded, goal_embedded, inv_embedded], dim=2)  # (batch_size, context_size, internal_state_size + goal_size + inventory_size, embedding_dim)
         internal_state_features = self.internal_state_feature_extraction(internal_state_goal_embedded, padding_mask)  # (batch_size, context_size, hidden_size)
@@ -283,26 +290,6 @@ class Policy_Core(Minigrid_Policy_Core):
         return logits, mask
 
 
-    def reset_bridge_cache(self):
-        self._bridge_key_cache = None
-
-
-    def train(self, mode=True):
-        # entering train mode means learn() is about to change the parameters and the window restarts afterwards
-        # (graph memory reset_timestamp), so cached keys are stale either way
-        if mode:
-            self.reset_bridge_cache()
-        return super().train(mode)
-
-
-    def _valid_mask(self, valid_actions):
-        if valid_actions is None:
-            return None
-        if isinstance(valid_actions, np.ndarray):
-            valid_actions = torch.tensor(valid_actions, dtype=torch.bool)
-        return valid_actions.to(self.device)
-
-
     def _write_value_concentrations(self, write_value_params):
         alpha_raw, beta_raw = write_value_params.chunk(2, dim=-1)
         # concentrations >= 1 keep each Beta unimodal with bounded density
@@ -314,6 +301,94 @@ class Policy_Core(Minigrid_Policy_Core):
     def _write_value_distribution(self, write_value_params):
         alpha, beta = self._write_value_concentrations(write_value_params)
         return Independent(Beta(alpha, beta), 1)  # joint over node_dim
+
+
+    def _distributions(self, action_logits, bridge_q, bridge_k, link_logits, write_value_params, valid_actions):
+        bridge_logits, bridge_mask = self._bridge_logits(bridge_q, bridge_k)
+        return (
+            Categorical_With_Mask(logits=action_logits, mask=valid_actions),
+            Categorical_With_Mask(logits=bridge_logits, mask=bridge_mask),
+            Bernoulli(logits=link_logits),
+            self._write_value_distribution(write_value_params),
+        )
+
+
+    @torch.no_grad()
+    def get_action(self, context, valid_actions=None):
+        """
+        context: (batch, T, packed_context_size); context[:, -1] is the new step.
+        Each call is one new window step: its key is appended to a rollout cache, and the bridge candidates are
+        every cached step of the current window (the window restarts when the core enters train mode, i.e. at learn()).
+        The cached keys equal those recomputed at training time since parameters only change at learn().
+
+        returns action (batch, T, packed_action_size) = [flag, edge_1 (window step), edge_2 (0: create, 1: link), write_value (node_dim)];
+        the graph memory resolves the window step to a node through its own head track.
+        """
+        if isinstance(context, np.ndarray):
+            # float: node values are continuous and would be truncated by a long cast
+            context = torch.tensor(context, dtype=torch.float32).to(self.device)
+        if isinstance(valid_actions, np.ndarray):
+            valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
+
+        batch_size = context.size(0)
+        context_size = context.size(1)
+
+        action_logits, bridge_q, bridge_k, link_logits, write_value_params, _ = self.compute(context)
+
+        cache = self._bridge_key_cache
+        if cache is not None and cache.size(0) != batch_size:
+            raise RuntimeError(f"bridge key cache batch {cache.size(0)} does not match context batch {batch_size}; call reset_bridge_cache()")
+        new_key = bridge_k[:, -1:]
+        bridge_k = new_key if cache is None else torch.cat([cache, new_key], dim=1)  # (batch, window_size, location_size)
+        self._bridge_key_cache = bridge_k
+
+        bridge_logits, bridge_mask = self._bridge_logits(bridge_q, bridge_k, offset=bridge_k.size(1) - context_size)
+
+        action_flag = Categorical_With_Mask(logits=action_logits, mask=valid_actions).sample()
+        bridge_step = Categorical_With_Mask(logits=bridge_logits, mask=bridge_mask).sample()  # (batch, T) window step
+        link = Bernoulli(logits=link_logits).sample()
+        write_value = self._write_value_distribution(write_value_params).sample().clamp(self.write_eps, 1.0 - self.write_eps)  # (batch, T, node_dim)
+
+        action = np.concatenate([
+            action_flag.unsqueeze(-1).cpu().numpy(),
+            bridge_step.unsqueeze(-1).cpu().numpy(),
+            link.unsqueeze(-1).cpu().numpy(),
+            write_value.cpu().numpy()
+        ], axis=-1)
+
+        return action.astype(float)
+
+
+    def _log_prob_and_entropy(self, dists, selected_action):
+        probs_flag, probs_bridge, probs_link, probs_write_value = dists
+
+        action_flag = selected_action[:, :, 0]
+        action_bridge_step = selected_action[:, :, 1]
+        action_link = selected_action[:, :, 2]
+        action_write_value = selected_action[:, :, 3:3 + self.node_dim].clamp(self.write_eps, 1.0 - self.write_eps)
+
+        # create-vs-link only matters on NAVIGATE; the link target only when NAVIGATE chose to link
+        is_navigate = action_flag.long() == self.navigate_flag
+        is_link = is_navigate & (action_link > 0.5)
+
+        log_prob_flag = probs_flag.log_prob(action_flag)
+        zeros = torch.zeros_like(log_prob_flag)
+        log_prob_bridge = torch.where(is_link, probs_bridge.log_prob(action_bridge_step), zeros)
+        log_prob_link = torch.where(is_navigate, probs_link.log_prob(action_link), zeros)
+        log_prob_write_value = probs_write_value.log_prob(action_write_value)
+
+        entropy_flag = probs_flag.entropy()
+        entropy_bridge = torch.where(is_link, probs_bridge.entropy(), zeros)
+        entropy_link = torch.where(is_navigate, probs_link.entropy(), zeros)
+        # mean, not sum: keeps the regularizer scale independent of node_dim (log-prob stays joint)
+        entropy_write_value = probs_write_value.base_dist.entropy().mean(dim=-1)
+
+        # layout [flag, edge_1, edge_2, write] matches the packed action
+        return torch.stack([
+            log_prob_flag, log_prob_bridge, log_prob_link, log_prob_write_value
+        ], dim=-1), torch.stack([
+            entropy_flag, entropy_bridge, entropy_link, entropy_write_value
+        ], dim=-1)
 
 
     def _graph_summary(self, graph, valid):
@@ -376,110 +451,6 @@ class Policy_Core(Minigrid_Policy_Core):
         return obs_loss.view(batch_size, context_size)
 
 
-    def _distributions(self, action_logits, bridge_q, bridge_k, link_logits, write_value_params, valid_actions):
-        bridge_logits, bridge_mask = self._bridge_logits(bridge_q, bridge_k)
-        return (
-            Categorical_With_Mask(logits=action_logits, mask=self._valid_mask(valid_actions)),
-            Categorical_With_Mask(logits=bridge_logits, mask=bridge_mask),
-            Bernoulli(logits=link_logits),
-            self._write_value_distribution(write_value_params),
-        )
-
-
-    def _log_prob_and_entropy(self, dists, selected_action):
-        probs_flag, probs_bridge, probs_link, probs_write_value = dists
-
-        action_flag = selected_action[:, :, 0]
-        action_bridge_step = selected_action[:, :, 1]
-        action_link = selected_action[:, :, 2]
-        action_write_value = selected_action[:, :, 3:3 + self.node_dim].clamp(self.write_eps, 1.0 - self.write_eps)
-
-        # create-vs-link only matters on NAVIGATE; the link target only when NAVIGATE chose to link
-        is_navigate = action_flag.long() == self.navigate_flag
-        is_link = is_navigate & (action_link > 0.5)
-
-        log_prob_flag = probs_flag.log_prob(action_flag)
-        zeros = torch.zeros_like(log_prob_flag)
-        log_prob_bridge = torch.where(is_link, probs_bridge.log_prob(action_bridge_step), zeros)
-        log_prob_link = torch.where(is_navigate, probs_link.log_prob(action_link), zeros)
-        log_prob_write_value = probs_write_value.log_prob(action_write_value)
-
-        entropy_flag = probs_flag.entropy()
-        entropy_bridge = torch.where(is_link, probs_bridge.entropy(), zeros)
-        entropy_link = torch.where(is_navigate, probs_link.entropy(), zeros)
-        # mean, not sum: keeps the regularizer scale independent of node_dim (log-prob stays joint)
-        entropy_write_value = probs_write_value.base_dist.entropy().mean(dim=-1)
-
-        # layout [flag, edge_1, edge_2, write] matches the packed action
-        return torch.stack([
-            log_prob_flag, log_prob_bridge, log_prob_link, log_prob_write_value
-        ], dim=-1), torch.stack([
-            entropy_flag, entropy_bridge, entropy_link, entropy_write_value
-        ], dim=-1)
-
-
-    @torch.no_grad()
-    def get_action(self, context, valid_actions=None):
-        """
-        context: (batch, T, packed_context_size); context[:, -1] is the new step.
-        Each call is one new window step: its key is appended to a rollout cache, and the bridge candidates are
-        every cached step of the current window (the window restarts when the core enters train mode, i.e. at learn()).
-        The cached keys equal those recomputed at training time since parameters only change at learn().
-
-        returns action (batch, T, packed_action_size) = [flag, edge_1 (window step), edge_2 (0: create, 1: link), write_value (node_dim)];
-        the graph memory resolves the window step to a node through its own head track.
-        """
-        if isinstance(context, np.ndarray):
-            # float: node values are continuous and would be truncated by a long cast
-            context = torch.tensor(context, dtype=torch.float32).to(self.device)
-
-        batch_size = context.size(0)
-        context_size = context.size(1)
-
-        action_logits, bridge_q, bridge_k, link_logits, write_value_params, _ = self.compute(context)
-
-        cache = self._bridge_key_cache
-        if cache is not None and cache.size(0) != batch_size:
-            raise RuntimeError(f"bridge key cache batch {cache.size(0)} does not match context batch {batch_size}; call reset_bridge_cache()")
-        new_key = bridge_k[:, -1:]
-        bridge_k = new_key if cache is None else torch.cat([cache, new_key], dim=1)  # (batch, window_size, location_size)
-        self._bridge_key_cache = bridge_k
-
-        bridge_logits, bridge_mask = self._bridge_logits(bridge_q, bridge_k, offset=bridge_k.size(1) - context_size)
-
-        action_flag = Categorical_With_Mask(logits=action_logits, mask=self._valid_mask(valid_actions)).sample()
-        bridge_step = Categorical_With_Mask(logits=bridge_logits, mask=bridge_mask).sample()  # (batch, T) window step
-        link = Bernoulli(logits=link_logits).sample()
-        write_value = self._write_value_distribution(write_value_params).sample().clamp(self.write_eps, 1.0 - self.write_eps)  # (batch, T, node_dim)
-
-        action = np.concatenate([
-            action_flag.unsqueeze(-1).cpu().numpy(),
-            bridge_step.unsqueeze(-1).cpu().numpy(),
-            link.unsqueeze(-1).cpu().numpy(),
-            write_value.cpu().numpy()
-        ], axis=-1)
-
-        return action.astype(float)
-
-
-    def unpack_action(self, packed_action):
-        # packed_action has shape (batch, packed_action_size); flag stays (batch, 1) so flag[i][0] is the env action
-        flag = packed_action[:, 0:1].astype(int)
-        position = packed_action[:, 1:1 + self.position_size].astype(float)
-        write_value = packed_action[:, 1 + self.position_size:].astype(float)
-        return flag, position, write_value
-
-
-    def pack_context(self, b_reward, b_flag, b_position, b_content):
-        batch_size = b_reward.shape[0]
-        return np.concatenate([
-            np.reshape(b_reward, (batch_size, 1)),
-            np.reshape(b_flag, (batch_size, 1)),
-            b_position,
-            b_content
-        ], axis=-1).astype(float)
-
-
     def _log_prob_with_value(self, context, selected_action, valid_actions):
         # context: (batch, context_size + 1, packed_context_size) tensor; also returns the write head params of the
         # first context_size steps so the aux loss can reuse this forward pass
@@ -505,6 +476,8 @@ class Policy_Core(Minigrid_Policy_Core):
         # Return log prob will only have context_size, but value will have context_size + 1
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
+        if isinstance(valid_actions, np.ndarray):
+            valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
 
         log_probs, entropy, values, _ = self._log_prob_with_value(context, selected_action, valid_actions)
         return log_probs, entropy, values
@@ -516,7 +489,28 @@ class Policy_Core(Minigrid_Policy_Core):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
         if isinstance(selected_action, np.ndarray):
             selected_action = torch.tensor(selected_action, dtype=torch.float32).to(self.device)
+        if isinstance(valid_actions, np.ndarray):
+            valid_actions = torch.tensor(valid_actions, dtype=torch.bool).to(self.device)
 
         log_probs, entropy, values, write_value_params = self._log_prob_with_value(context, selected_action, valid_actions)
         aux_loss = self._aux_loss(context, write_value_params, selected_action) if self.use_aux else None
         return log_probs, entropy, values, aux_loss
+
+
+    def unpack_action(self, packed_action):
+        # packed_action has shape (batch, packed_action_size); flag stays (batch, 1) so flag[i][0] is the env action
+        flag = packed_action[:, 0:1].astype(int)
+        position = packed_action[:, 1:1 + self.position_size].astype(float)
+        write_value = packed_action[:, 1 + self.position_size:].astype(float)
+        return flag, position, write_value
+
+
+    def pack_context(self, b_reward, b_flag, b_position, b_content):
+        batch_size = b_reward.shape[0]
+        return np.concatenate([
+            np.reshape(b_reward, (batch_size, 1)),
+            np.reshape(b_flag, (batch_size, 1)),
+            b_position,
+            b_content
+        ], axis=-1).astype(float)
+
