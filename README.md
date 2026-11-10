@@ -113,15 +113,12 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
     - [x] Fixed base model to clear position on done, truncated
     - [x] Separate model for high level and low level policy
 - [x] Model 74: Graph Memory
-    - [x] flipflop dataset
 - [x] Spatio-temporal learning
 - [x] Model 76: Cognitive Cartographer
-    - [x] minigrid block-unlock-pickup
-    - [ ] babyai boss level
-        - [x] update model
-    - [ ] atari montezuma's revenge
-        - [x] crack "ram" memory type: categorical vs continuous
-        - [x] update model
-- [ ] Simplified Cognitive map building
-    - [ ] "recognized" location linking
-    - [ ] External to internal action transfer
+- [x] Model 77: Simplified Cognitive map building
+    - [x] "recognized" location linking
+    - [x] External to internal action transfer
+- [x] flipflop dataset (model 76)
+- [x] minigrid block-unlock-pickup (model 76)
+- [ ] babyai boss level vs LSTM
+- [ ] atari montezuma's revenge
