@@ -7,7 +7,7 @@ from interfaces.network import Actor_Network, Policy_Value_Network
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
 from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
-from implementations.networks.torch.components.std_lstm import LSTM
+from implementations.networks.torch.components.std_lstm import LSTM, GRU
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
 from implementations.networks.torch.policy.babyai import Projector  # noqa: F401 -- per-component masking; use with model_76.COMPONENT_FLAGS
@@ -27,6 +27,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
                  hidden_size, layers, 
                  cnn_channels=128, cnn_blocks=2,
                  value_size=1,
+                 cell="lstm",
                  device=None, 
                  persistence_path=None, first_load_path=None):
         nn.Module.__init__(self)
@@ -51,15 +52,19 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
         self.position_size = 2
         self.content_size = internal_state_size * node_dim + goal_size + inventory_size + width * height * channel
-        # the write value is the LSTM cell state, not sampled
-        self.packed_action_size = 1 + 1 + self.position_size + node_dim
-        # previous LSTM cell state (+ a flag marking where it restarts) rides in the context:
+        # one recurrent layer per entry of layers, each with a node_dim state; the stacked state is the memory
+        # cell: "lstm" (state = unbounded cell states c) or "gru" (state = hidden states h in [-1, 1])
+        self.cell = cell
+        self.memory_size = len(layers) * node_dim
+        # the action carries the whole memory stack (not sampled); its top layer is the graph write value
+        self.packed_action_size = 1 + 1 + self.position_size + self.memory_size
+        # previous LSTM memory stack (+ a flag marking where it restarts) rides in the context:
         # acting reads it per step, learning slides the LSTM through time and only restarts from it at flagged steps
-        self.packed_context_size = 1 + 1 + 1 + self.position_size + 1 + node_dim + self.content_size
+        self.packed_context_size = 1 + 1 + 1 + self.position_size + 1 + self.memory_size + self.content_size
 
         self.memory_reset_pos = 1 + 1 + 1 + self.position_size
         self.memory_pos = self.memory_reset_pos + 1
-        self.internal_state_pos = self.memory_pos + node_dim
+        self.internal_state_pos = self.memory_pos + self.memory_size
         self.goal_pos = self.internal_state_pos + self.internal_state_size * node_dim
         self.inv_pos = self.goal_pos + goal_size
         self.obs_pos = self.inv_pos + inventory_size
@@ -98,9 +103,12 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             channels=cnn_channels, num_blocks=cnn_blocks
         )
 
-        # internal_state, goal, inv, obs (+ previous cell state) -> hidden, cell state
+        # internal_state, goal, inv, obs (+ previous memory stack) -> hidden, memory stack
         vec_dim = int_action_size + ext_action_size + hidden_size + hidden_size + hidden_size 
-        self.backbone = LSTM(
+        recurrent_classes = {"lstm": LSTM, "gru": GRU}
+        if cell not in recurrent_classes:
+            raise ValueError(f"cell must be one of {list(recurrent_classes)}, got {cell!r}")
+        self.backbone = recurrent_classes[cell](
             output_dims=hidden_size, 
             input_dims=vec_dim, 
             hidden_dims=node_dim, 
@@ -182,7 +190,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
         action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
         memory_reset = context[:, :, self.memory_reset_pos] > 0.5  # (batch_size, context_size)
-        prev_memory_state = context[:, :, self.memory_pos: self.internal_state_pos]  # (batch_size, context_size, node_dim)
+        prev_memory_state = context[:, :, self.memory_pos: self.internal_state_pos]  # (batch_size, context_size, memory_size)
         internal_state = context[:, :, self.internal_state_pos: self.goal_pos]  # (batch_size, context_size, internal_state_size * node_dim)
         goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
         inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
@@ -205,7 +213,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
 
         base_input = torch.concat([flag_onehot, action_onehot, goal_inv_features, internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
-        base_output, memory_state = self.backbone(base_input, prev_memory_state, memory_reset)  # (batch_size, context_size, hidden_size), (batch_size, context_size, node_dim)
+        base_output, memory_state = self.backbone(base_input, prev_memory_state, memory_reset)  # (batch_size, context_size, hidden_size), (batch_size, context_size, memory_size)
 
         int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
         ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
@@ -269,7 +277,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             probs_int, probs_ext, probs_edge_1, probs_edge_2 = self._make_distributions(
                 *outputs[:4], available_flags, available_actions
             )
-            write_value = outputs[4]  # (batch, context_size, node_dim)
+            memory_state = outputs[4]  # (batch, context_size, memory_size)
 
             action_int = probs_int.sample()
             action_ext = probs_ext.sample()
@@ -281,7 +289,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             action_ext.unsqueeze(-1).cpu().numpy(),
             edge_1.unsqueeze(-1).cpu().numpy(),
             edge_2.unsqueeze(-1).cpu().numpy(),
-            write_value.cpu().numpy()
+            memory_state.cpu().numpy()
         ], axis=-1)
 
         return action.astype(float)
@@ -309,12 +317,23 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         return log_probs, entropy, values
 
 
+    def unpack_action(self, packed_action):
+        # the graph write value is the top LSTM layer's cell state; see unpack_memory for the whole stack
+        int_part, ext_part, position, memory = super().unpack_action(packed_action)
+        return int_part, ext_part, position, memory[:, -self.node_dim:]
+
+
+    def unpack_memory(self, packed_action):
+        # (batch, memory_size): every LSTM layer's cell state, bottom layer first
+        return packed_action[:, 2 + self.position_size:].astype(float)
+
+
     def pack_context(self, b_reward=None, b_int=None, b_ext=None, b_position=None, b_memory_reset=None, b_memory=None, b_content=None):
-        # b_memory: previous LSTM cell state (batch, node_dim)
+        # b_memory: previous LSTM memory stack (batch, memory_size), see unpack_memory
         # b_memory_reset: (batch,) bool, True where the recurrence restarts from b_memory (e.g. an episode start with zeros)
         batch_size = next(b.shape[0] for b in (b_reward, b_int, b_ext, b_position, b_memory_reset, b_memory, b_content) if b is not None)
         if b_memory is None:
-            b_memory = np.zeros((batch_size, self.node_dim), dtype=float)
+            b_memory = np.zeros((batch_size, self.memory_size), dtype=float)
             b_memory_reset = np.ones((batch_size,), dtype=bool)
         if b_memory_reset is None:
             b_memory_reset = np.zeros((batch_size,), dtype=bool)
@@ -322,6 +341,6 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         return np.concatenate([
             packed_context[:, :self.memory_reset_pos],
             np.reshape(b_memory_reset, (batch_size, 1)),
-            np.reshape(b_memory, (batch_size, self.node_dim)),
+            np.reshape(b_memory, (batch_size, self.memory_size)),
             packed_context[:, self.memory_reset_pos:]
         ], axis=-1).astype(float)

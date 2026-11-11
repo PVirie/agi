@@ -144,6 +144,7 @@ if __name__ == "__main__":
     parser.add_argument("--scheme",                 "-sch", type=str, default="full", help="The scheme to use for the agent's decision making. Default is 'full'.")
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
+    parser.add_argument("--cell",                   "-cell", type=str, default="gru", choices=["lstm", "gru"], help="Recurrent cell of the policy memory. Default is 'gru'.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
     args = parser.parse_args()
 
@@ -169,7 +170,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_cell_{args.cell}"
     if args.st_train:
         experiment_path += "_stmean"
 
@@ -214,8 +215,8 @@ if __name__ == "__main__":
         layers = [1, 1, 1]
         cnn_channels = 64
         cnn_blocks = 2
-        minibatch_size = 4
-        rollout_length = 512
+        minibatch_size = 8
+        rollout_length = 256
     elif args.scale == "medium":
         # 19GB VRAM
         hidden_size = 128
@@ -225,8 +226,8 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 8
-        rollout_length = 512
+        minibatch_size = 16
+        rollout_length = 256
     else:
         # large 25GB VRAM
         hidden_size = 256
@@ -236,8 +237,8 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 16
-        rollout_length = 512
+        minibatch_size = 32
+        rollout_length = 256
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -250,11 +251,12 @@ if __name__ == "__main__":
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=0,
         hidden_size=hidden_size, layers=layers,
         cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
+        cell=args.cell,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
         policy_model=Projector(
-            policy_core, [0, 1, 2, 3],  # the write value is the LSTM cell state, not an RL action
+            policy_core, [0, 1, 2, 3],  # the write value is the recurrent memory state, not an RL action
             component_flags=model_81.COMPONENT_FLAGS,
         ),
         device=device, persistence_path=parameters_path,
@@ -269,7 +271,7 @@ if __name__ == "__main__":
         num_nodes=4096,
         max_edges_per_node=C,
         node_dim=node_dim,
-        # node values are unbounded LSTM cell states; empty slots use -1.0 as in babyai_76_cont
+        # node values are the top recurrent layer's state (unbounded for lstm, [-1, 1] for gru); empty slots use -1.0 as in babyai_76_cont
         start_node_value=0.0,
         empty_value=0.0,
     )

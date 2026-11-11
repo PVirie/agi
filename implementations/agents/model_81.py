@@ -40,9 +40,9 @@ COMPONENT_FLAGS = {
 
 class Model(Agent):
     """
-    Model 76 for a recurrent policy (e.g. babyai_lstm): the last action's write value is the policy's
-    memory state, which is fed back through pack_context(b_memory=...) and reset to zeros (flagged by b_memory_reset)
-    at episode boundaries.
+    Model 76 for a recurrent policy (e.g. babyai_lstm): the last action carries the policy's memory state
+    (policy_model.unpack_memory), which is fed back through pack_context(b_memory=...) and reset to zeros
+    (flagged by b_memory_reset) at episode boundaries. The graph write value (unpack_action) is part of that state.
     """
     
     def __init__(self, 
@@ -130,7 +130,7 @@ class Model(Agent):
         # get last action's position
         last_action = self.actions.get_last()
         int_action, ext_action, position, write_content = self.policy_model.unpack_action(last_action)
-        memory_state = np.copy(write_content)  # the policy's previous memory state
+        memory_state = np.copy(self.policy_model.unpack_memory(last_action))  # the policy's previous memory state
         memory_reset = np.zeros((batch_size,), dtype=bool)  # the policy restarts its recurrence here instead of sliding through
 
         memory_action = [Graph_Memory_Operation_Type.IDLE for _ in range(batch_size)]
