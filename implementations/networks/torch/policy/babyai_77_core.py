@@ -10,7 +10,7 @@ from implementations.networks.torch.components.wavenet import BasicWavenet
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.policy.minigrid import Policy_Core as Minigrid_Policy_Core
-from implementations.networks.torch.policy.babyai import Projector  # noqa: F401 -- re-exported for the task
+from implementations.networks.torch.policy.minigrid import Projector  # noqa: F401 -- re-exported for the task
 from utilities.safe_torch_module import Safe_nn_Module
 
 

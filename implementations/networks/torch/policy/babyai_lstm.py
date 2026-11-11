@@ -10,7 +10,7 @@ from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
 from implementations.networks.torch.components.std_lstm import LSTM, GRU
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
-from implementations.networks.torch.policy.babyai import Projector  # noqa: F401 -- per-component masking; use with model_76.COMPONENT_FLAGS
+from implementations.networks.torch.policy.minigrid import Projector as Base_Projector
 from utilities.safe_torch_module import Safe_nn_Module
 
 
@@ -344,3 +344,40 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             np.reshape(b_memory, (batch_size, self.memory_size)),
             packed_context[:, self.memory_reset_pos:]
         ], axis=-1).astype(float)
+
+
+class Projector(Base_Projector):
+
+    def __init__(self, master_core, selected_indices=[0, 1, 2, 3, 4], component_flags=None):
+        """
+        component_flags: {component_index: int-action flags} -- a component's (ext/edge_1/edge_2/write) log-prob
+                         and entropy only count on steps whose int-action flag is listed; omitted components always count.
+                         e.g. model_76.COMPONENT_FLAGS
+        """
+        super().__init__(master_core, selected_indices)
+        self.component_flags = {index: tuple(flags) for index, flags in (component_flags or {}).items()}
+
+    def _mask(self, all_logprobs, all_entropy, selected_action):
+        if not self.component_flags:
+            return all_logprobs, all_entropy
+        flag = torch.as_tensor(selected_action[:, :, 0], device=all_logprobs.device).long()  # (batch, context_size)
+        used = torch.ones_like(all_logprobs, dtype=torch.bool)  # (batch, context_size, num_components)
+        for index, flags in self.component_flags.items():
+            used[:, :, index] = torch.isin(flag, torch.tensor(flags, dtype=torch.long, device=flag.device))
+        # where (not multiply) so an unused component can never leak inf/nan into the sum
+        zeros = torch.zeros_like(all_logprobs)
+        return torch.where(used, all_logprobs, zeros), torch.where(used, all_entropy, zeros)
+
+    def _project(self, all_logprobs, all_entropy, selected_action):
+        all_logprobs, all_entropy = self._mask(all_logprobs, all_entropy, selected_action)
+        return all_logprobs[:, :, self.selected_indices].sum(dim=-1), all_entropy[:, :, self.selected_indices].sum(dim=-1)
+
+    def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy, values = self.master_core.get_log_probability_with_value(context, selected_action, valid_actions)
+        log_probs, entropy = self._project(all_logprobs, all_entropy, selected_action)
+        return log_probs, entropy, values
+
+    def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
+        all_logprobs, all_entropy, values, aux_loss = self.master_core.get_log_prob_with_value_aux(context, selected_action, valid_actions)
+        log_probs, entropy = self._project(all_logprobs, all_entropy, selected_action)
+        return log_probs, entropy, values, aux_loss
