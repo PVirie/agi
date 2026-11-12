@@ -18,7 +18,6 @@ class Model(Agent):
                  valid_action_collector: Context_Collector,
                  graph_memory: Graph_Memory,
                  action_map: dict,
-                 do_supervision: bool = False,
                  has_intrinsic_reward: bool = False
                  ):
         """
@@ -36,7 +35,6 @@ class Model(Agent):
         self.valid_actions = valid_action_collector
         self.graph_memory = graph_memory
 
-        self.do_supervision = do_supervision
         self.has_intrinsic_reward = has_intrinsic_reward
         self.reward_size = 2 if has_intrinsic_reward else 1
 

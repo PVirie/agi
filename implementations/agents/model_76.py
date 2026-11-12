@@ -44,7 +44,6 @@ class Model(Agent):
                  valid_action_collector: Context_Collector,
                  graph_memory: Graph_Memory,
                  max_num_thought_steps: int = 2,
-                 do_supervision: bool = False,
                  scheme: Scheme = Scheme.FULL,
                  has_intrinsic_reward: bool = False
                  ):
@@ -63,7 +62,6 @@ class Model(Agent):
         self.graph_memory = graph_memory
 
         self.max_num_thought_steps = max_num_thought_steps
-        self.do_supervision = do_supervision
         self.has_intrinsic_reward = has_intrinsic_reward
         self.reward_size = 2 if has_intrinsic_reward else 1
 

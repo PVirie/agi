@@ -40,9 +40,6 @@ COMPONENT_FLAGS = {
 
 class Model(Agent):
     """
-    Model 76 for a recurrent policy (e.g. babyai_lstm): the last action carries the policy's memory state
-    (policy_model.unpack_memory), which is fed back through pack_context(b_memory=...) and reset to zeros
-    (flagged by b_memory_reset) at episode boundaries. The graph write value (unpack_action) is part of that state.
     """
     
     def __init__(self, 
@@ -53,7 +50,6 @@ class Model(Agent):
                  valid_action_collector: Context_Collector,
                  graph_memory: Graph_Memory,
                  max_num_thought_steps: int = 2,
-                 do_supervision: bool = False,
                  scheme: Scheme = Scheme.FULL,
                  has_intrinsic_reward: bool = False
                  ):
@@ -72,7 +68,6 @@ class Model(Agent):
         self.graph_memory = graph_memory
 
         self.max_num_thought_steps = max_num_thought_steps
-        self.do_supervision = do_supervision
         self.has_intrinsic_reward = has_intrinsic_reward
         self.reward_size = 2 if has_intrinsic_reward else 1
 

@@ -270,7 +270,6 @@ if __name__ == "__main__":
         valid_action_collector=Collector(max_history=0),
         graph_memory=memory,
         max_num_thought_steps=args.max_thought_steps,
-        do_supervision=False,
         scheme=model_module.Scheme(args.scheme)
     )
 

@@ -295,7 +295,6 @@ if __name__ == "__main__":
         valid_action_collector=Collector(max_history=0),
         graph_memory=memory,
         action_map=action_map,
-        do_supervision=False,
         has_intrinsic_reward=env.has_intrinsic_reward
     )
 
