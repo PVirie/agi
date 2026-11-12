@@ -1,16 +1,14 @@
 import torch
 import torch.nn as nn
-from torch.distributions.categorical import Categorical
 import numpy as np
 
 from interfaces.network import Actor_Network, Policy_Value_Network
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
 from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
-from implementations.networks.torch.components.std_lstm import LSTM, GRU
-from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
+from implementations.networks.torch.components.std_lstm import Gumbel_Recurrent_Cell
+from implementations.networks.torch.components.transformer import InstructionTransformer, Cross_Modal_Fusion, get_padding_mask
 from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
-from implementations.networks.torch.policy.minigrid import Projector as Base_Projector
 from utilities.safe_torch_module import Safe_nn_Module
 
 
@@ -28,8 +26,25 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
                  cnn_channels=128, cnn_blocks=2,
                  value_size=1,
                  cell="lstm",
+                 fusion_queries=4, fusion_layers=1,
+                 gumbel_tau=1.0, gumbel_samples=8,
                  device=None, 
                  persistence_path=None, first_load_path=None):
+        """
+        Pipeline per step:
+            graph context (head + edge nodes) -> MLP ------------------------------+
+            instruction, inventory -> embedding -> transformer (graph cond token) --+-> cross-modal fusion -> latent
+            obs -> FiLM CNN (conditioned on the instruction CLS) -------------------+
+            latent (+ prev ext action), prev memory state, prev internal output
+                -> Gumbel_Recurrent_Cell -> internal output (int flag, edge_1, edge_2), memory state, hidden
+            hidden -> ext head, value head
+        Training signals:
+            ext head: RL; log-prob and entropy are the ext action's only
+            internal heads: backpropagation only, through the relaxed internal output fed into later steps
+            write value: the top recurrent layer's state, trained by backpropagation through time
+        fusion_queries, fusion_layers: learned queries and cross-attention layers of the fusion read
+        gumbel_tau, gumbel_samples: temperature and conditional-Gumbel draws of the internal-output relaxation
+        """
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="babyai_lstm_core", device=device, persistence_path=persistence_path)
         self.device = device
@@ -37,6 +52,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.int_action_size = int_action_size  # num classes for flag
         self.ext_action_size = ext_action_size
         self.internal_state_size = internal_state_size
+        self.edge_size = internal_state_size - 1  # edge heads pick one of the head node's edge slots
         self.goal_size = goal_size
         self.inventory_size = inventory_size
         self.width = width
@@ -58,18 +74,17 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.memory_size = len(layers) * node_dim
         # the action carries the whole memory stack (not sampled); its top layer is the graph write value
         self.packed_action_size = 1 + 1 + self.position_size + self.memory_size
-        # previous LSTM memory stack (+ a flag marking where it restarts) rides in the context:
-        # acting reads it per step, learning slides the LSTM through time and only restarts from it at flagged steps
+        # previous memory stack (+ a flag marking where it restarts) rides in the context:
+        # acting reads it per step, learning slides the recurrence through time and only restarts from it at flagged steps
         self.packed_context_size = 1 + 1 + 1 + self.position_size + 1 + self.memory_size + self.content_size
 
-        self.memory_reset_pos = 1 + 1 + 1 + self.position_size
+        self.position_pos = 1 + 1 + 1
+        self.memory_reset_pos = self.position_pos + self.position_size
         self.memory_pos = self.memory_reset_pos + 1
         self.internal_state_pos = self.memory_pos + self.memory_size
         self.goal_pos = self.internal_state_pos + self.internal_state_size * node_dim
         self.inv_pos = self.goal_pos + goal_size
         self.obs_pos = self.inv_pos + inventory_size
-
-        self.pad_token_id = pad_token_id
 
         self.goal_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
         self.inv_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for inventory tokens
@@ -83,9 +98,10 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             max_len=goal_size + inventory_size,
             use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
             pooling="cls",  # mean pooling dilutes order-dependent structure ("A then B" vs "B then A")
-            cond_dim=hidden_size,  # internal state token lets memory select which mission clause to attend
+            cond_dim=hidden_size,  # graph context token lets memory select which mission clause to attend
         )
 
+        # graph summary over the flattened context, so it keeps which slot holds which node
         self.internal_state_feature_extraction = ResNet(
             output_dims=hidden_size,
             input_dims=internal_state_size * node_dim,
@@ -93,7 +109,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             layers=[hidden_size for _ in layers]
         )
 
-        # vision conditioned via FiLM on the internal-state-aware instruction features
+        # vision conditioned via FiLM on the graph-aware instruction features
         self.conv_layers = FiLMMiniGridCNN(
             output_dims=hidden_size, 
             cond_dims=hidden_size,
@@ -103,37 +119,33 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             channels=cnn_channels, num_blocks=cnn_blocks
         )
 
-        # internal_state, goal, inv, obs (+ previous memory stack) -> hidden, memory stack
-        vec_dim = int_action_size + ext_action_size + hidden_size + hidden_size + hidden_size 
-        recurrent_classes = {"lstm": LSTM, "gru": GRU}
-        if cell not in recurrent_classes:
-            raise ValueError(f"cell must be one of {list(recurrent_classes)}, got {cell!r}")
-        self.backbone = recurrent_classes[cell](
-            output_dims=hidden_size, 
-            input_dims=vec_dim, 
-            hidden_dims=node_dim, 
-            layers=[hidden_size for _ in layers]
+        self.fusion = Cross_Modal_Fusion(
+            hidden_size=hidden_size,
+            node_dim=node_dim,
+            num_nodes=internal_state_size,
+            map_channels=cnn_channels,
+            num_cells=width * height,
+            num_queries=fusion_queries,
+            num_layers=fusion_layers,
         )
 
-        self.head_int = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, int_action_size)   # int_action_size classes
+        # internal heads [int flag, edge_1, edge_2] live in the cell: their samples feed back into the recurrence.
+        # the previous ext action is a plain input: its effect goes through the environment, which is not differentiable
+        self.recurrent_cell = Gumbel_Recurrent_Cell(
+            output_dims=hidden_size,
+            input_dims=hidden_size + ext_action_size,
+            hidden_dims=node_dim,
+            layers=[hidden_size for _ in layers],
+            head_sizes=[int_action_size, self.edge_size, self.edge_size],
+            cell=cell,
+            gumbel_tau=gumbel_tau,
+            gumbel_samples=gumbel_samples,
         )
+
         self.head_ext = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, ext_action_size)   # ext_action_size classes
-        )
-        self.head_edge_1 = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, internal_state_size - 1)
-        )
-        self.head_edge_2 = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, internal_state_size - 1)
+            nn.Linear(hidden_size, ext_action_size)
         )
 
         self.head_value = nn.Sequential(
@@ -155,8 +167,8 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.goal_feature_extraction.reset_parameters()
         self.internal_state_feature_extraction.reset_parameters()
         self.conv_layers.reset_parameters()
-
-        self.backbone.reset_parameters()
+        self.fusion.reset_parameters()
+        self.recurrent_cell.reset_parameters()
 
         def init_actor_weights(m):
             if isinstance(m, nn.Linear):
@@ -168,10 +180,10 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-        self.head_int.apply(init_actor_weights)
         self.head_ext.apply(init_actor_weights)
-        self.head_edge_1.apply(init_actor_weights)
-        self.head_edge_2.apply(init_actor_weights)
+        # internal heads [int flag, edge_1, edge_2] inside the recurrent cell
+        for head in self.recurrent_cell.heads:
+            head.apply(init_actor_weights)
 
         def init_value_weights(m):
             if isinstance(m, nn.Linear):
@@ -182,49 +194,70 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.head_value.apply(init_value_weights)
 
 
-    def compute(self, context):
-        # context has shape (batch, context_size, self.packed_context_size)
-        batch_size = context.size(0)
-        context_size = context.size(1)
+    def encode(self, internal_state, goal, inv, obs):
+        # internal_state: (batch, context_size, internal_state_size * node_dim); goal, inv: token ids; obs: flattened grid
+        # returns the fused latent (batch, context_size, hidden_size); every step is independent, so time is batched
+        batch_size, context_size = internal_state.shape[:2]
+        n = batch_size * context_size
 
-        flag_onehot = torch.nn.functional.one_hot(context[:, :, 1].long(), num_classes=self.int_action_size).float()
-        action_onehot = torch.nn.functional.one_hot(context[:, :, 2].long(), num_classes=self.ext_action_size).float()
-        memory_reset = context[:, :, self.memory_reset_pos] > 0.5  # (batch_size, context_size)
-        prev_memory_state = context[:, :, self.memory_pos: self.internal_state_pos]  # (batch_size, context_size, memory_size)
-        internal_state = context[:, :, self.internal_state_pos: self.goal_pos]  # (batch_size, context_size, internal_state_size * node_dim)
-        goal = context[:, :, self.goal_pos: (self.goal_pos + self.goal_size)]  # (batch_size, context_size, goal_size)
-        inv = context[:, :, self.inv_pos: (self.inv_pos + self.inventory_size)]  # (batch_size, context_size, inventory_size)
-        obs = context[:, :, self.obs_pos: ]  # (batch_size, context_size, obs_size)
-
-        internal_state_features = self.internal_state_feature_extraction(internal_state)  # (batch_size, context_size, hidden_size)
+        graph_summary = self.internal_state_feature_extraction(internal_state)  # (batch_size, context_size, hidden_size)
 
         goal_inv = torch.concat([goal, inv], dim=-1)  # (batch_size, context_size, goal_size + inventory_size)
         padding_mask = get_padding_mask(goal_inv, self.pad_token_id)  # (batch_size, context_size, goal_size + inventory_size)
-        
-        goal_embedded = self.goal_embedding(goal.long())  # (batch_size, context_size, goal_size, embedding_dim)
-        inv_embedded = self.inv_embedding(inv.long())  # (batch_size, context_size, inventory_size, embedding_dim)
+        goal_inv_embedded = torch.concat([
+            self.goal_embedding(goal.long()),
+            self.inv_embedding(inv.long())
+        ], dim=2)  # (batch_size, context_size, goal_size + inventory_size, embedding_dim)
+        instruction_summary, instruction_tokens = self.goal_feature_extraction(
+            goal_inv_embedded, padding_mask, cond=graph_summary, return_tokens=True
+        )  # (batch_size, context_size, hidden_size), (batch_size, context_size, goal_size + inventory_size, hidden_size)
 
-        goal_inv_embedded = torch.concat([goal_embedded, inv_embedded], dim=2)  # (batch_size, context_size, goal_size + inventory_size, embedding_dim)
-        goal_inv_features = self.goal_feature_extraction(goal_inv_embedded, padding_mask, cond=internal_state_features)  # (batch_size, context_size, hidden_size)
+        obs = torch.reshape(obs, (n, self.height, self.width, self.channel))
+        obs_summary, obs_map = self.conv_layers(obs, instruction_summary.reshape(n, self.hidden_size), return_map=True)
 
-        obs_features = torch.reshape(obs, (batch_size * context_size, self.height, self.width, self.channel))  # (batch_size * context_size, height, width, channel)
-        cond = goal_inv_features.reshape(batch_size * context_size, self.hidden_size)
-        obs_features = self.conv_layers(obs_features, cond)  # (batch_size * context_size, hidden_size)
-        obs_features = obs_features.view(batch_size, context_size, self.hidden_size) # (batch_size, context_size, hidden_size)
+        latent = self.fusion(
+            graph_nodes=internal_state.reshape(n, self.internal_state_size, self.node_dim),
+            graph_summary=graph_summary.reshape(n, self.hidden_size),
+            instruction_tokens=instruction_tokens.reshape(n, -1, self.hidden_size),
+            instruction_mask=padding_mask.reshape(n, -1),
+            instruction_summary=instruction_summary.reshape(n, self.hidden_size),
+            obs_map=obs_map,
+            obs_summary=obs_summary,
+        )
+        return latent.view(batch_size, context_size, self.hidden_size)
 
-        base_input = torch.concat([flag_onehot, action_onehot, goal_inv_features, internal_state_features, obs_features], dim=-1)  # (batch_size, context_size, vec_dim)
-        base_output, memory_state = self.backbone(base_input, prev_memory_state, memory_reset)  # (batch_size, context_size, hidden_size), (batch_size, context_size, memory_size)
 
-        int_logits = self.head_int(base_output)  # (batch_size, context_size, int_action_size)
-        ext_logits = self.head_ext(base_output)  # (batch_size, context_size, ext_action_size)
-        edge_1_logits = self.head_edge_1(base_output)  # (batch_size, context_size, C)
-        edge_2_logits = self.head_edge_2(base_output)  # (batch_size, context_size, C)
+    def compute(self, context, available_flags=None, sample=False):
+        # context has shape (batch, context_size, self.packed_context_size); available_flags: int-flag valid mask or None
+        # sample: also draw the internal actions at every step; the ext action is sampled from the returned ext logits
+        prev_ext = context[:, :, 2].long()  # (batch_size, context_size)
+        prev_internal = torch.concat([
+            context[:, :, 1:2],
+            context[:, :, self.position_pos: self.memory_reset_pos]
+        ], dim=-1).long()  # (batch_size, context_size, 3) [int flag, edge_1, edge_2]
+        memory_reset = context[:, :, self.memory_reset_pos] > 0.5  # (batch_size, context_size)
+        prev_memory_state = context[:, :, self.memory_pos: self.internal_state_pos]  # (batch_size, context_size, memory_size)
+        internal_state = context[:, :, self.internal_state_pos: self.goal_pos]  # (batch_size, context_size, internal_state_size * node_dim)
+        goal = context[:, :, self.goal_pos: self.inv_pos]  # (batch_size, context_size, goal_size)
+        inv = context[:, :, self.inv_pos: self.obs_pos]  # (batch_size, context_size, inventory_size)
+        obs = context[:, :, self.obs_pos:]  # (batch_size, context_size, obs_size)
 
-        values = self.head_value(base_output)  # (batch_size, context_size, value_size)
+        latent = self.encode(internal_state, goal, inv, obs)  # (batch_size, context_size, hidden_size)
+
+        prev_ext_one_hot = nn.functional.one_hot(prev_ext, num_classes=self.ext_action_size).float()
+
+        internal_logits, memory_state, hidden, internal_samples = self.recurrent_cell(
+            torch.concat([latent, prev_ext_one_hot], dim=-1), prev_internal, prev_memory_state, memory_reset,
+            masks=[available_flags, None, None], sample=sample
+        )  # [(batch_size, context_size, size)] * 3, (batch_size, context_size, memory_size), (batch_size, context_size, hidden_size), (batch_size, context_size, 3) or None
+
+        ext_logits = self.head_ext(hidden)  # (batch_size, context_size, ext_action_size)
+
+        values = self.head_value(hidden)  # (batch_size, context_size, value_size)
         if self.value_size == 1:
             values = values.squeeze(-1)  # (batch_size, context_size)
 
-        return int_logits, ext_logits, edge_1_logits, edge_2_logits, memory_state, values
+        return ext_logits, internal_logits, memory_state, values, internal_samples
 
 
     def _split_valid_actions(self, valid_actions):
@@ -237,33 +270,6 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         return valid_actions[:, :, :self.int_action_size], valid_actions[:, :, self.int_action_size:]
 
 
-    def _make_distributions(self, logits_int, logits_ext, edge_1_logits, edge_2_logits, available_flags, available_actions):
-        return (
-            Categorical_With_Mask(logits=logits_int, mask=available_flags),
-            Categorical_With_Mask(logits=logits_ext, mask=available_actions),
-            Categorical(logits=edge_1_logits),
-            Categorical(logits=edge_2_logits),
-        )
-
-
-    def _log_prob_entropy(self, dists, selected_action):
-        probs_int, probs_ext, probs_edge_1, probs_edge_2 = dists
-
-        log_probs = torch.stack([
-            probs_int.log_prob(selected_action[:, :, 0]),
-            probs_ext.log_prob(selected_action[:, :, 1]),
-            probs_edge_1.log_prob(selected_action[:, :, 2]),
-            probs_edge_2.log_prob(selected_action[:, :, 3])
-        ], dim=-1)
-        entropy = torch.stack([
-            probs_int.entropy(),
-            probs_ext.entropy(),
-            probs_edge_1.entropy(),
-            probs_edge_2.entropy()
-        ], dim=-1)
-        return log_probs, entropy
-    
-
     def get_action(self, context, valid_actions=None):
 
         if isinstance(context, np.ndarray):
@@ -273,22 +279,13 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         available_flags, available_actions = self._split_valid_actions(valid_actions)
 
         with torch.no_grad():
-            outputs = self.compute(context)
-            probs_int, probs_ext, probs_edge_1, probs_edge_2 = self._make_distributions(
-                *outputs[:4], available_flags, available_actions
-            )
-            memory_state = outputs[4]  # (batch, context_size, memory_size)
-
-            action_int = probs_int.sample()
-            action_ext = probs_ext.sample()
-            edge_1 = probs_edge_1.sample()
-            edge_2 = probs_edge_2.sample()
+            ext_logits, _, memory_state, _, internal_samples = self.compute(context, available_flags, sample=True)
+            ext_action = Categorical_With_Mask(logits=ext_logits, mask=available_actions).sample()
 
         action = np.concatenate([
-            action_int.unsqueeze(-1).cpu().numpy(),
-            action_ext.unsqueeze(-1).cpu().numpy(),
-            edge_1.unsqueeze(-1).cpu().numpy(),
-            edge_2.unsqueeze(-1).cpu().numpy(),
+            internal_samples[:, :, 0:1].cpu().numpy(),  # int flag
+            ext_action.unsqueeze(-1).cpu().numpy(),
+            internal_samples[:, :, 1:3].cpu().numpy(),  # edge_1, edge_2
             memory_state.cpu().numpy()
         ], axis=-1)
 
@@ -302,19 +299,22 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
         # now context has shape (batch, context_size + 1, self.packed_context_size)
-        # Return log prob will only have context_size, but value will have context_size + 1
+        # returns the ext action's log-prob and entropy (batch, context_size) and values (batch, context_size + 1).
+        # the internal heads have no log-prob: they are trained by the gradient of these terms (and the value loss)
+        # flowing back through the relaxed internal outputs that the recurrence feeds into later steps
 
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
+        if isinstance(selected_action, np.ndarray):
+            selected_action = torch.tensor(selected_action, dtype=torch.float32).to(self.device)
 
         available_flags, available_actions = self._split_valid_actions(valid_actions)
 
-        outputs = self.compute(context)
-        values = outputs[5]  # keep all contexts: the last one is the bootstrap value
+        ext_logits, _, _, values, _ = self.compute(context, available_flags)
+        # values keep all contexts: the last one is the bootstrap value
         # drop the last context for logprob: it is the observation after the last action
-        dists = self._make_distributions(*(o[:, :-1, :] for o in outputs[:4]), available_flags, available_actions)
-        log_probs, entropy = self._log_prob_entropy(dists, selected_action)
-        return log_probs, entropy, values
+        probs_ext = Categorical_With_Mask(logits=ext_logits[:, :-1, :], mask=available_actions)
+        return probs_ext.log_prob(selected_action[:, :, 1]), probs_ext.entropy(), values
 
 
     def unpack_action(self, packed_action):
@@ -346,38 +346,82 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         ], axis=-1).astype(float)
 
 
-class Projector(Base_Projector):
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    np.random.seed(0)
 
-    def __init__(self, master_core, selected_indices=[0, 1, 2, 3, 4], component_flags=None):
-        """
-        component_flags: {component_index: int-action flags} -- a component's (ext/edge_1/edge_2/write) log-prob
-                         and entropy only count on steps whose int-action flag is listed; omitted components always count.
-                         e.g. model_76.COMPONENT_FLAGS
-        """
-        super().__init__(master_core, selected_indices)
-        self.component_flags = {index: tuple(flags) for index, flags in (component_flags or {}).items()}
+    C, B, T = 3, 4, 5
+    core = Policy_Core(
+        int_action_size=6, ext_action_size=8,
+        node_dim=8, internal_state_size=1 + C,
+        goal_size=5, inventory_size=3,
+        width=7, height=7, channel=3,
+        dict_size=32, embedding_dim=8, pad_token_id=0,
+        hidden_size=32, layers=[1, 1],
+        cnn_channels=16, cnn_blocks=1,
+        cell="gru",
+        device=torch.device("cpu"),
+    )
 
-    def _mask(self, all_logprobs, all_entropy, selected_action):
-        if not self.component_flags:
-            return all_logprobs, all_entropy
-        flag = torch.as_tensor(selected_action[:, :, 0], device=all_logprobs.device).long()  # (batch, context_size)
-        used = torch.ones_like(all_logprobs, dtype=torch.bool)  # (batch, context_size, num_components)
-        for index, flags in self.component_flags.items():
-            used[:, :, index] = torch.isin(flag, torch.tensor(flags, dtype=torch.long, device=flag.device))
-        # where (not multiply) so an unused component can never leak inf/nan into the sum
-        zeros = torch.zeros_like(all_logprobs)
-        return torch.where(used, all_logprobs, zeros), torch.where(used, all_entropy, zeros)
+    def random_content():
+        return np.concatenate([
+            np.random.uniform(-1, 1, (B, (1 + C) * 8)),
+            np.random.randint(0, 32, (B, 5 + 3)),
+            np.random.randint(0, 10, (B, 7 * 7 * 3)),
+        ], axis=-1)
 
-    def _project(self, all_logprobs, all_entropy, selected_action):
-        all_logprobs, all_entropy = self._mask(all_logprobs, all_entropy, selected_action)
-        return all_logprobs[:, :, self.selected_indices].sum(dim=-1), all_entropy[:, :, self.selected_indices].sum(dim=-1)
+    valid = np.random.rand(B, T + 1, 6 + 8) > 0.3
+    valid[:, :, 0] = True
+    valid[:, :, 6] = True
 
-    def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy, values = self.master_core.get_log_probability_with_value(context, selected_action, valid_actions)
-        log_probs, entropy = self._project(all_logprobs, all_entropy, selected_action)
-        return log_probs, entropy, values
+    # act one step at a time as model_81 does: the context carries the executed action and the memory stack
+    contexts, actions = [], []
+    last_action = np.zeros((B, core.packed_action_size))
+    for t in range(T + 1):
+        context = core.pack_context(
+            b_reward=np.zeros(B),
+            b_int=last_action[:, 0].astype(int),
+            b_ext=last_action[:, 1:2].astype(int),
+            b_position=last_action[:, 2:4],
+            b_memory_reset=np.full(B, t == 0),
+            b_memory=core.unpack_memory(last_action),
+            b_content=random_content(),
+        )
+        last_action = core.get_action(context[:, None], valid[:, t:t + 1])[:, -1]
+        contexts.append(context)
+        actions.append(last_action)
+    contexts = torch.tensor(np.stack(contexts, axis=1), dtype=torch.float32)
+    actions = torch.tensor(np.stack(actions, axis=1), dtype=torch.float32)
+    valid = torch.tensor(valid)
+    assert (valid[..., :6].gather(-1, actions[..., 0:1].long()).all() and valid[..., 6:].gather(-1, actions[..., 1:2].long()).all()), "sampled actions must be valid"
 
-    def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
-        all_logprobs, all_entropy, values, aux_loss = self.master_core.get_log_prob_with_value_aux(context, selected_action, valid_actions)
-        log_probs, entropy = self._project(all_logprobs, all_entropy, selected_action)
-        return log_probs, entropy, values, aux_loss
+    # learning slides through time with relaxed feedback, yet reproduces acting exactly
+    flags = core._split_valid_actions(valid[:, :T])[0]
+    ext_logits, internal_logits, memory_state, values, _ = core.compute(contexts, flags)
+    assert torch.allclose(memory_state, actions[:, :, 4:], atol=1e-5), "unrolled memory differs from the acted memory"
+    with torch.no_grad():
+        for t in range(T + 1):
+            step_ext, step_internal = core.compute(contexts[:, t:t + 1])[:2]
+            for head, step_head in zip([ext_logits] + internal_logits, [step_ext] + step_internal):
+                assert torch.allclose(head[:, t], step_head[:, 0], atol=1e-5), f"unrolled logits differ from acting at step {t}"
+    assert values.shape == (B, T + 1)
+
+    # RL sees the ext action only
+    log_probs, entropy, values, aux = core.get_log_prob_with_value_aux(contexts, actions[:, :T], valid[:, :T])
+    assert log_probs.shape == (B, T) and entropy.shape == (B, T) and aux is None
+    assert torch.isfinite(log_probs).all(), "acted ext actions must have finite log-probs"
+
+    # a loss on step 1's ext log-prob reaches the internal heads only through step 0's relaxed internal output
+    def internal_head_grads(contexts):
+        core.zero_grad()
+        log_probs = core.get_log_probability_with_value(contexts, actions[:, :T], valid[:, :T])[0]
+        log_probs[:, 1].sum().backward()
+        return [sum(p.grad.abs().sum().item() for p in head.parameters() if p.grad is not None)
+                for head in core.recurrent_cell.heads]
+
+    assert all(g > 0 for g in internal_head_grads(contexts)), "internal heads must be trained by later steps' losses"
+    restarted = contexts.clone()
+    restarted[:, 1, core.memory_reset_pos] = 1.0
+    assert all(g == 0 for g in internal_head_grads(restarted)), "a restart must cut the internal-output gradient path"
+
+    print("All tests passed!")

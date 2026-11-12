@@ -27,7 +27,6 @@ from utilities.episode_recorder import Episode_Recorder
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import model_81
-from implementations.networks.torch.policy.babyai_lstm import Projector
 from implementations.networks.torch.policy.babyai_lstm import Policy_Core
 from implementations.learning_algorithms.torch.ppo_graph import PPO
 from implementations.collectors.states import State_Sequence as Collector
@@ -253,10 +252,8 @@ if __name__ == "__main__":
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(
-        policy_model=Projector(
-            policy_core, [0, 1, 2, 3],  # the write value is the recurrent memory state, not an RL action
-            component_flags=model_81.COMPONENT_FLAGS,
-        ),
+        # RL trains the ext action only; the internal actions and the write value learn by backpropagation through the policy's recurrence
+        policy_model=policy_core,
         device=device, persistence_path=parameters_path,
         lr=1e-4, minibatch_size=minibatch_size,
         gamma=0.99,

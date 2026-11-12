@@ -244,16 +244,20 @@ class FiLMMiniGridCNN(nn.Module):
         self.fc.apply(init_weights)
 
 
-    def forward(self, x, cond):
+    def forward(self, x, cond, return_map=False):
         # x: (B, H, W, C) with per-channel categorical indices, cond: (B, cond_dims)
+        # return_map: also return the FiLM-modulated feature map (B, channels, H, W), e.g. as per-cell attention tokens
         embedded = [self.embeddings[c](x[..., c].long()) for c in range(self.input_channels)]
         x = torch.cat(embedded, dim=-1)  # (B, H, W, C * embedding_dim)
         x = x.permute(0, 3, 1, 2)  # (B, C * embedding_dim, H, W)
         x = self.stem(x)
         for block in self.blocks:
             x = block(x, cond)
+        feature_map = x
         x = torch.flatten(x, start_dim=1)
         x = self.fc(x)
+        if return_map:
+            return x, feature_map
         return x
 
 

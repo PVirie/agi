@@ -65,14 +65,16 @@ class InstructionTransformer(nn.Module):
             trunc_normal_(self.cls_token, std=0.02)
 
 
-    def forward(self, x, mask, cond=None):
+    def forward(self, x, mask, cond=None, return_tokens=False):
         """
         Args:
             x: Input tensor of shape (Batch, Seq, L, E)
             mask: Binary mask (1 for real, 0 for padding) of shape (Batch, Seq, L)
             cond: (Batch, Seq, cond_dim); required iff cond_dim was set
+            return_tokens: also return the per-token encodings (Batch, Seq, L, d_model), prefix tokens excluded;
+                           padding positions are not zeroed, mask them with `mask`
         Returns:
-            pooled_output: (Batch, Seq, E)
+            pooled_output: (Batch, Seq, d_model), or (pooled_output, tokens) if return_tokens
         """
         if (cond is None) != (self.cond_dim is None):
             raise ValueError("cond must be given exactly when the transformer was built with cond_dim")
@@ -117,17 +119,121 @@ class InstructionTransformer(nn.Module):
         encoded = self.transformer_encoder(x_reshaped, src_key_padding_mask=src_key_padding_mask)
 
         if self.pooling == "cls":
-            return encoded[:, 0, :].reshape(B, S, self.d_model)
+            pooled = encoded[:, 0, :]
+        else:
+            # --- MASKED MEAN POOLING ---
+            # Ensure we don't include padding in our feature average
+            masked_encoded = encoded[:, num_prefix:, :] * flat_mask.unsqueeze(-1)
+            sum_encoded = torch.sum(masked_encoded, dim=1)
+            token_counts = torch.sum(flat_mask, dim=1, keepdim=True).clamp(min=1e-9)
+            pooled = sum_encoded / token_counts # (B*S, d_model)
 
-        # --- MASKED MEAN POOLING ---
-        # Ensure we don't include padding in our feature average
-        masked_encoded = encoded[:, num_prefix:, :] * flat_mask.unsqueeze(-1)
-        sum_encoded = torch.sum(masked_encoded, dim=1)
-        token_counts = torch.sum(flat_mask, dim=1, keepdim=True).clamp(min=1e-9)
-        
-        pooled = sum_encoded / token_counts # (B*S, d_model)
+        pooled = pooled.reshape(B, S, self.d_model)
+        if return_tokens:
+            return pooled, encoded[:, num_prefix:, :].reshape(B, S, L, self.d_model)
+        return pooled
 
-        return pooled.view(B, S, self.d_model)
+
+class Cross_Attention_Block(nn.Module):
+    """Pre-LN block: queries attend over (already normalized) tokens, then an MLP."""
+
+    def __init__(self, hidden_size, nhead, mlp_ratio=2):
+        super().__init__()
+        self.query_norm = nn.LayerNorm(hidden_size)
+        self.attention = nn.MultiheadAttention(hidden_size, nhead, batch_first=True)
+        self.mlp_norm = nn.LayerNorm(hidden_size)
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size * mlp_ratio),
+            nn.GELU(),
+            nn.Linear(hidden_size * mlp_ratio, hidden_size)
+        )
+
+
+    def reset_parameters(self):
+        self.apply(init_weights)
+        self.attention._reset_parameters()
+
+
+    def forward(self, queries, tokens, key_padding_mask=None):
+        queries = queries + self.attention(self.query_norm(queries), tokens, tokens, key_padding_mask=key_padding_mask, need_weights=False)[0]
+        return queries + self.mlp(self.mlp_norm(queries))
+
+
+class Cross_Modal_Fusion(nn.Module):
+    """
+    Mixes one step's three input paths into a single latent with a Perceiver-style read.
+    Tokens (each tagged with a modality embedding):
+      - graph nodes: shared node MLP + slot embedding (slot 0 is the head node, slot i the i-th edge, which the edge heads index)
+      - instruction / inventory tokens: the instruction transformer's outputs, padding masked out
+      - observation cells: the FiLM CNN feature map + a 2D cell embedding
+    num_queries learned queries, shifted by the graph summary and the instruction CLS (what to look for depends on the
+    memory and the mission), cross-attend over all tokens. The latent mixes the read-out queries with the pooled paths
+    (graph summary, CLS, CNN vector), so attention only adds to the plain concatenation.
+    """
+
+    def __init__(self, hidden_size, node_dim, num_nodes, map_channels, num_cells, num_queries=4, num_layers=1, nhead=8):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_queries = num_queries
+
+        self.node_projection = nn.Sequential(
+            nn.Linear(node_dim, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+        self.slot_embedding = nn.Parameter(torch.zeros(1, num_nodes, hidden_size))
+        self.cell_projection = nn.Linear(map_channels, hidden_size)
+        self.cell_embedding = nn.Parameter(torch.zeros(1, num_cells, hidden_size))
+        self.type_embedding = nn.Parameter(torch.zeros(3, hidden_size))  # graph, instruction, observation
+        self.token_norm = nn.LayerNorm(hidden_size)
+
+        self.queries = nn.Parameter(torch.zeros(1, num_queries, hidden_size))
+        self.query_condition = nn.Linear(2 * hidden_size, hidden_size)
+        self.blocks = nn.ModuleList([Cross_Attention_Block(hidden_size, nhead) for _ in range(num_layers)])
+
+        self.output_layer = nn.Sequential(
+            nn.Linear((num_queries + 3) * hidden_size, hidden_size),
+            nn.LayerNorm(hidden_size)
+        )
+
+
+    def reset_parameters(self):
+        self.node_projection.apply(init_weights)
+        self.cell_projection.apply(init_weights)
+        self.token_norm.apply(init_weights)
+        self.query_condition.apply(init_weights)
+        self.output_layer.apply(init_weights)
+        for block in self.blocks:
+            block.reset_parameters()
+        for parameter in (self.slot_embedding, self.cell_embedding, self.type_embedding, self.queries):
+            trunc_normal_(parameter, std=0.02)
+
+
+    def forward(self, graph_nodes, graph_summary, instruction_tokens, instruction_mask, instruction_summary, obs_map, obs_summary):
+        """
+        graph_nodes: (N, num_nodes, node_dim); graph_summary: (N, hidden)
+        instruction_tokens: (N, L, hidden); instruction_mask: (N, L), 1 for real tokens; instruction_summary: (N, hidden)
+        obs_map: (N, map_channels, H, W); obs_summary: (N, hidden)
+        Returns: latent (N, hidden)
+        """
+        n = graph_nodes.size(0)
+        graph_tokens = self.node_projection(graph_nodes) + self.slot_embedding + self.type_embedding[0]
+        instruction_tokens = instruction_tokens + self.type_embedding[1]
+        obs_tokens = self.cell_projection(obs_map.flatten(2).transpose(1, 2)) + self.cell_embedding + self.type_embedding[2]
+        tokens = self.token_norm(torch.concat([graph_tokens, instruction_tokens, obs_tokens], dim=1))
+
+        # graph and observation tokens are always present, so no row is fully masked
+        key_padding_mask = torch.concat([
+            torch.zeros(n, graph_tokens.size(1), dtype=torch.bool, device=tokens.device),
+            instruction_mask == 0,
+            torch.zeros(n, obs_tokens.size(1), dtype=torch.bool, device=tokens.device),
+        ], dim=1)
+
+        queries = self.queries + self.query_condition(torch.concat([graph_summary, instruction_summary], dim=-1)).unsqueeze(1)
+        for block in self.blocks:
+            queries = block(queries, tokens, key_padding_mask)
+
+        return self.output_layer(torch.concat([queries.flatten(1), graph_summary, instruction_summary, obs_summary], dim=-1))
 
 
 def get_padding_mask(x, pad_token_id):

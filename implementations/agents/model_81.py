@@ -4,7 +4,7 @@ from interfaces.agent import Agent
 from interfaces.network import Actor_Network, Value_Network
 from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
-from implementations.agents.model_base import make_valid_mask, apply_cascading_masks, make_component_flags
+from implementations.agents.model_base import make_valid_mask, apply_cascading_masks
 
 
 # int-action flag -> graph memory op; selected independently of the ext action
@@ -15,12 +15,6 @@ INT_FLAG_OPS = {
     3: Graph_Memory_Operation_Type.CREATE,
     4: Graph_Memory_Operation_Type.LINK,
     5: Graph_Memory_Operation_Type.ROTATE,
-}
-# policy component index (edge_1, edge_2) -> flags on which that component is used;
-# ext is chosen on every step and the write value has no log-prob, so neither is listed
-COMPONENT_FLAGS = {
-    index: flags for index, flags in make_component_flags(INT_FLAG_OPS, INT_FLAG_OPS.keys()).items()
-    if index not in (1, 4)
 }
 
 
