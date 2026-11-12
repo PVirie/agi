@@ -10,6 +10,10 @@ MINIGRID_ACTIONS = [
     "left", "right", "forward", "pickup", "drop", "toggle", "done"
 ]
 
+# idle (None) actions allowed per episode before it is truncated; counted separately from
+# the env's own max_steps, so an episode lasts at most max_steps + MAX_IDLE_STEPS steps
+MAX_IDLE_STEPS = 1024
+
 
 class BonusType(Enum):
     NONE = 0
@@ -80,6 +84,7 @@ class Multi_Environment:
         self.total_return = [0] * total
         self.total_aux_return = [0] * total
         self.total_length = [0] * total
+        self.total_idle = [0] * total # idle (None) actions in the current episode
         self.cumulative_length = [0] * total # env transitions since the run started; never reset per episode
         self.total_duration = [0] * total # store the start time of the episode for each env, misnoming but consistent with other statistics
 
@@ -95,9 +100,33 @@ class Multi_Environment:
             self.total_return[i] = 0
             self.total_aux_return[i] = 0
             self.total_length[i] = 0
+            self.total_idle[i] = 0
             self.cumulative_length[i] = 0
             self.total_duration[i] = time.perf_counter()
         return self.return_obs, self.return_infos
+
+
+    def _finish_episode(self, i):
+        obs, _ = self.envs[i].reset() # You must manually reset!
+        # MiniGrid/BabyAI only emit a positive reward (1 - 0.9*steps/max_steps) on task completion
+        success = self.total_return[i] > 0
+        self.return_infos[i] = {
+            "episode": {
+                "r": self.total_return[i],
+                "aug_r": self.total_aux_return[i],
+                # failed episodes report no length (recorded as blank, skipped by tasks/plot.py)
+                "l": self.total_length[i] if success else None,
+                "e": self.cumulative_length[i],
+                "t": time.perf_counter() - self.total_duration[i],
+                "s": 1.0 if success else 0.0
+            }
+        }
+        self.total_return[i] = 0
+        self.total_aux_return[i] = 0
+        self.total_length[i] = 0
+        self.total_idle[i] = 0
+        self.total_duration[i] = time.perf_counter()
+        return obs
 
 
     def step(self, actions):
@@ -105,7 +134,13 @@ class Multi_Environment:
             if actions[i] is None:
                 self.return_rewards[i] = np.zeros(self.reward_size, dtype=np.float32)
                 self.return_terminations[i] = False
-                self.return_truncations[i] = False
+                self.return_infos[i] = None
+                self.total_idle[i] += 1
+                # too many idle actions: truncate so an agent that only thinks cannot stall the episode forever
+                truncation = self.total_idle[i] > MAX_IDLE_STEPS
+                self.return_truncations[i] = truncation
+                if truncation:
+                    self.return_obs[i] = self.obs_to_object(self._finish_episode(i))
                 continue
             obs, reward, termination, truncation, info = env.step(actions[i])
             # OriginalRewardWrapper records the pre-bonus reward; whatever Bonus added on top is intrinsic
@@ -124,24 +159,7 @@ class Multi_Environment:
             self.total_length[i] += 1
             self.cumulative_length[i] += 1
             if termination or truncation:
-                obs, _ = env.reset() # You must manually reset!
-                # MiniGrid/BabyAI only emit a positive reward (1 - 0.9*steps/max_steps) on task completion
-                success = self.total_return[i] > 0
-                self.return_infos[i] = {
-                    "episode": {
-                        "r": self.total_return[i],
-                        "aug_r": self.total_aux_return[i],
-                        # failed episodes report no length (recorded as blank, skipped by tasks/plot.py)
-                        "l": self.total_length[i] if success else None,
-                        "e": self.cumulative_length[i],
-                        "t": time.perf_counter() - self.total_duration[i],
-                        "s": 1.0 if success else 0.0
-                    }
-                }
-                self.total_return[i] = 0
-                self.total_aux_return[i] = 0
-                self.total_length[i] = 0
-                self.total_duration[i] = time.perf_counter()
+                obs = self._finish_episode(i)
             self.return_obs[i] = self.obs_to_object(obs)
         return self.return_obs, self.return_rewards, self.return_terminations, self.return_truncations, self.return_infos
 

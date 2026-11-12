@@ -121,7 +121,7 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] flipflop dataset (model 76)
 - [x] minigrid block-unlock-pickup (model 76)
 - [ ] Model 81:
-    - [ ] Simplify 76 actions
+    - [x] Simplify 76 actions
     - [ ] Gradient though all internal actions
 - [ ] babyai boss level vs LSTM
 - [ ] atari montezuma's revenge

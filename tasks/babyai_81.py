@@ -140,8 +140,6 @@ if __name__ == "__main__":
     parser.add_argument("--reset",                  "-r",   action="store_true")
     parser.add_argument("--hours",                  "-hr",  type=float, default=0.05, help="Number of hours to train the agent. Fractional hours allowed.")
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
-    parser.add_argument("--max-thought-steps",      "-mts", type=int, default=2, help="Maximum number of thought steps the agent can take before being forced to act externally.")
-    parser.add_argument("--scheme",                 "-sch", type=str, default="full", help="The scheme to use for the agent's decision making. Default is 'full'.")
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--cell",                   "-cell", type=str, default="gru", choices=["lstm", "gru"], help="Recurrent cell of the policy memory. Default is 'gru'.")
@@ -170,7 +168,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_scheme_{args.scheme}_mts_{args.max_thought_steps}_cell_{args.cell}"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}"
     if args.st_train:
         experiment_path += "_stmean"
 
@@ -243,7 +241,7 @@ if __name__ == "__main__":
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
     policy_core = Policy_Core(
-        int_action_size=7, ext_action_size=7,
+        int_action_size=len(model_81.INT_FLAG_OPS), ext_action_size=7 + 1,  # last ext slot = idle (no env step)
         node_dim=node_dim,
         internal_state_size=1 + C,
         goal_size=mission_size, inventory_size=inventory_size,
@@ -275,17 +273,13 @@ if __name__ == "__main__":
         start_node_value=0.0,
         empty_value=0.0,
     )
-    model_module = model_81
-    agent_class = model_81.Model
-    agent = agent_class(
+    agent = model_81.Model(
         policy_model=policy_core,
         trainer=ppo_learner,
         context_collector=Collector(max_history=0),
         action_collector=Collector(max_history=0),
         valid_action_collector=Collector(max_history=0),
         graph_memory=memory,
-        max_num_thought_steps=args.max_thought_steps,
-        scheme=model_module.Scheme(args.scheme),
         has_intrinsic_reward=env.has_intrinsic_reward
     )
 

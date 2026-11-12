@@ -1,5 +1,4 @@
 import numpy as np
-from enum import Enum
 from interfaces.learning import RL_Learner
 from interfaces.agent import Agent
 from interfaces.network import Actor_Network, Value_Network
@@ -8,33 +7,20 @@ from interfaces.data_structure import Context_Collector
 from implementations.agents.model_base import make_valid_mask, apply_cascading_masks, make_component_flags
 
 
-class Scheme(str, Enum):
-    FULL = "full"
-
-
-# int-action flag -> graph memory op; external flags also act in the env, thought flags do not
-EXTERNAL_FLAG_OPS = {
-    1: Graph_Memory_Operation_Type.WRITE,
-    2: Graph_Memory_Operation_Type.CREATE,
+# int-action flag -> graph memory op; selected independently of the ext action
+INT_FLAG_OPS = {
+    0: Graph_Memory_Operation_Type.IDLE,
+    1: Graph_Memory_Operation_Type.MOVE,
+    2: Graph_Memory_Operation_Type.WRITE,
+    3: Graph_Memory_Operation_Type.CREATE,
+    4: Graph_Memory_Operation_Type.LINK,
+    5: Graph_Memory_Operation_Type.ROTATE,
 }
-THOUGHT_FLAG_OPS = {
-    3: Graph_Memory_Operation_Type.LINK,
-    4: Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.MOVE,
-    5: Graph_Memory_Operation_Type.CREATE,
-    6: Graph_Memory_Operation_Type.ROTATE,
-}
-# flags whose op consumes the action's write value
-WRITE_VALUE_FLAGS = tuple(sorted(
-    flag for flag, op in {**EXTERNAL_FLAG_OPS, **THOUGHT_FLAG_OPS}.items()
-    if op & (Graph_Memory_Operation_Type.WRITE | Graph_Memory_Operation_Type.CREATE)
-))
-# flags whose step acts in the env (consumes the ext action); flag 0 is the external no-op
-EXTERNAL_FLAGS = (0, *sorted(EXTERNAL_FLAG_OPS))
-# policy component index (int, ext, edge_1, edge_2) -> flags on which that component is used;
-# the write value is the policy's deterministic LSTM cell state, so it has no log-prob component
+# policy component index (edge_1, edge_2) -> flags on which that component is used;
+# ext is chosen on every step and the write value has no log-prob, so neither is listed
 COMPONENT_FLAGS = {
-    index: flags for index, flags in make_component_flags({**EXTERNAL_FLAG_OPS, **THOUGHT_FLAG_OPS}, EXTERNAL_FLAGS).items()
-    if index != 4
+    index: flags for index, flags in make_component_flags(INT_FLAG_OPS, INT_FLAG_OPS.keys()).items()
+    if index not in (1, 4)
 }
 
 
@@ -49,8 +35,6 @@ class Model(Agent):
                  action_collector: Context_Collector, 
                  valid_action_collector: Context_Collector,
                  graph_memory: Graph_Memory,
-                 max_num_thought_steps: int = 2,
-                 scheme: Scheme = Scheme.FULL,
                  has_intrinsic_reward: bool = False
                  ):
         """
@@ -67,13 +51,12 @@ class Model(Agent):
         self.valid_actions = valid_action_collector
         self.graph_memory = graph_memory
 
-        self.max_num_thought_steps = max_num_thought_steps
         self.has_intrinsic_reward = has_intrinsic_reward
         self.reward_size = 2 if has_intrinsic_reward else 1
 
-        if scheme == Scheme.FULL:
-            self.valid_int_actions = [0, 1, 2, 3, 4, 5, 6]
-            self.observe_external_int_actions = [0, 1, 2]
+        self.valid_int_actions = list(INT_FLAG_OPS.keys())
+        # the last ext action slot means "idle": no env step this turn
+        self.idle_ext_action = self.policy_model.ext_action_size - 1
 
         self.reset()
 
@@ -88,7 +71,7 @@ class Model(Agent):
         self.last_truncates = []
         self.last_cause_times = []
 
-        self.thought_steps = None
+        self.resetted = True
 
 
     def choose_action(self, 
@@ -100,8 +83,8 @@ class Model(Agent):
         current_cl = len(self.rewards)
 
         # initialize
-        if self.thought_steps is None:
-            self.thought_steps = [0 for _ in range(batch_size)]
+        if self.resetted:
+            self.resetted = False
             self.obs.append(
                 np.zeros((batch_size, self.policy_model.packed_context_size), dtype=np.float32)
             )
@@ -133,13 +116,11 @@ class Model(Agent):
             flag = int_action[i].item()
             if r:
                 memory_action[i] = Graph_Memory_Operation_Type.RESET
-            elif not idle:
-                memory_action[i] |= EXTERNAL_FLAG_OPS.get(flag, Graph_Memory_Operation_Type.IDLE)
-            elif idle:
-                reward[i] = 0
-                memory_action[i] |= THOUGHT_FLAG_OPS.get(flag, Graph_Memory_Operation_Type.IDLE)
+            else:
+                memory_action[i] |= INT_FLAG_OPS.get(flag, Graph_Memory_Operation_Type.IDLE)              
+                if idle:
+                    reward[i] = 0
             if d or t:
-                self.thought_steps[i] = 0
                 # reset position and the policy's memory state
                 position[i, :] = np.zeros_like(position[i, :])
                 memory_state[i, :] = np.zeros_like(memory_state[i, :])
@@ -179,10 +160,11 @@ class Model(Agent):
         self.rewards[-1] = reward
         self.valid_actions.update_last(
             make_valid_mask([
-                self.observe_external_int_actions if self.thought_steps[i] == self.max_num_thought_steps else self.valid_int_actions 
-                for i in range(batch_size)
+                self.valid_int_actions for _ in range(batch_size)
             ], self.policy_model.int_action_size),
-            make_valid_mask(next_available_actions, self.policy_model.ext_action_size)
+            make_valid_mask([
+                list(available) + [self.idle_ext_action] for available in next_available_actions
+            ], self.policy_model.ext_action_size)
         )
 
         # if (any(last_dones) or any(last_truncates) or force_train) and current_cl > 1:
@@ -230,14 +212,10 @@ class Model(Agent):
         # extract output here
         int_action, ext_action, position, write_content = self.policy_model.unpack_action(packed_action)
 
-        # check flag for external observation override and update thought steps
-        return_action = [None for _ in range(batch_size)]
-        for i in range(batch_size):
-            flag = int_action[i].item()
-            self.thought_steps[i] += 1
-            if flag in self.observe_external_int_actions:
-                return_action[i] = ext_action[i]
-                self.thought_steps[i] = 0
+        return_action = [
+            ext_action[i] if int(ext_action[i].item()) != self.idle_ext_action else None
+            for i in range(batch_size)
+        ]
 
         # populate last states
         self.obs.append(
