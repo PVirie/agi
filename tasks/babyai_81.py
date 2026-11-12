@@ -208,7 +208,7 @@ if __name__ == "__main__":
         hidden_size = 128
         embedding_dim = 32
         node_dim = 64
-        C = 4
+        C = 3
         layers = [1, 1, 1]
         cnn_channels = 64
         cnn_blocks = 2
@@ -219,7 +219,7 @@ if __name__ == "__main__":
         hidden_size = 128
         embedding_dim = 32
         node_dim = 128
-        C = 8
+        C = 7
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
@@ -230,11 +230,11 @@ if __name__ == "__main__":
         hidden_size = 256
         embedding_dim = 32
         node_dim = 128
-        C = 15
+        C = 7
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 32
+        minibatch_size = 16
         rollout_length = 256
 
     parameters_path = f"{experiment_path}/parameters"
