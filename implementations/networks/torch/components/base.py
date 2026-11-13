@@ -76,39 +76,6 @@ class Categorical_With_Mask(Categorical):
         return new
     
 
-def gumbel_rao_straight_through(logits, index, tau=1.0, num_samples=1, mask=None):
-    """
-    Straight-through Gumbel-Rao one-hot (Paulus et al., 2021) of a category that was already drawn.
-    Forward: exactly one_hot(index). Backward: the gradient of E[softmax((logits + G) / tau) | argmax(logits + G) = index],
-    estimated with num_samples Gumbel draws conditioned on that argmax. Conditioning on the drawn index (instead of
-    reusing its noise, as plain ST Gumbel-softmax would) lets the relaxation be rebuilt for a replayed rollout action.
-
-    logits: (..., K); index: (...) integer; mask: (..., K) bool, False marks an impossible category.
-    Returns: (..., K)
-    """
-    if mask is not None:
-        # finite (not -inf) so the truncated-Gumbel arithmetic below never meets inf - inf
-        logits = torch.where(mask, logits, torch.full_like(logits, -1e9))
-    index = index.long()
-    hard = F.one_hot(index, num_classes=logits.size(-1)).to(logits.dtype)
-
-    # the noise is a constant, as in ST Gumbel-softmax: only its distribution is conditioned on index
-    with torch.no_grad():
-        detached = logits.detach()
-        tiny = torch.finfo(logits.dtype).tiny
-        uniform = torch.rand((num_samples,) + tuple(logits.shape), device=logits.device, dtype=logits.dtype)
-        gumbels = -torch.log(-torch.log(uniform.clamp(min=tiny, max=1.0 - 1e-7)))
-        # the max of the perturbed logits is Gumbel(logsumexp(logits)) and sits at index
-        top = torch.logsumexp(detached, dim=-1, keepdim=True) + gumbels.gather(-1, index.unsqueeze(-1).expand((num_samples,) + tuple(index.shape) + (1,)))
-        # every other perturbed logit is Gumbel(logit) truncated below that max
-        others = -torch.logaddexp(-top, -(detached + gumbels))
-        noise = torch.where(hard.bool(), top, others) - detached
-
-    soft = torch.softmax((logits + noise) / tau, dim=-1).mean(dim=0)
-    # soft - soft.detach() is exactly 0 in the forward pass, so the output equals the hard one-hot bit for bit
-    return hard + (soft - soft.detach())
-
-
 def batched_backward_fill_with_mask(flag: torch.Tensor):
     """
     Backward fills the array positions with the index of the next '1'.
@@ -145,26 +112,3 @@ def batched_backward_fill_with_mask(flag: torch.Tensor):
     mask = ~mask
     
     return backward_filled, mask
-
-if __name__ == "__main__":
-    torch.manual_seed(0)
-
-    logits = torch.tensor([0.5, -1.0, 2.0, 0.0, 1.0], requires_grad=True)
-    index = torch.tensor([2, 0, 4])
-    out = gumbel_rao_straight_through(logits.expand(3, -1), index, num_samples=4)
-    assert torch.equal(out, F.one_hot(index, 5).float()), "forward must be the exact one-hot"
-
-    # Rao-Blackwellization keeps the ST Gumbel-softmax gradient in expectation
-    n, tau = 1000000, 0.7
-    weights = torch.randn(5)
-    drawn = Categorical(logits=logits.detach()).sample((n,))
-    rao_grad, = torch.autograd.grad((gumbel_rao_straight_through(logits.expand(n, -1), drawn, tau=tau) * weights).sum() / n, logits)
-    gumbels = -torch.log(-torch.log(torch.rand(n, 5)))
-    st_grad, = torch.autograd.grad((torch.softmax((logits + gumbels) / tau, dim=-1) * weights).sum() / n, logits)
-    assert torch.allclose(rao_grad, st_grad, atol=0.02), f"Gumbel-Rao gradient {rao_grad} != ST Gumbel-softmax gradient {st_grad}"
-
-    mask = torch.tensor([True, False, True, True, False])
-    masked_grad, = torch.autograd.grad((gumbel_rao_straight_through(logits.expand(64, -1), torch.full((64,), 2), mask=mask.expand(64, -1)) * weights).sum(), logits)
-    assert torch.isfinite(masked_grad).all() and (masked_grad[~mask] == 0).all(), f"masked categories must get no gradient: {masked_grad}"
-
-    print("All tests passed!")

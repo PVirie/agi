@@ -216,14 +216,14 @@ if __name__ == "__main__":
         rollout_length = 256
     elif args.scale == "medium":
         # 19GB VRAM
-        hidden_size = 128
+        hidden_size = 256
         embedding_dim = 32
         node_dim = 128
         C = 7
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 16
+        minibatch_size = 12
         rollout_length = 256
     else:
         # large 25GB VRAM

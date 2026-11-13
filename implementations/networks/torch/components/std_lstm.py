@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask, gumbel_rao_straight_through
+from implementations.networks.torch.components.base import init_weights, Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
 
 
@@ -171,34 +171,34 @@ def _step_mask(mask, t):
     return mask[:, t]
 
 
-class Gumbel_Recurrent_Cell(nn.Module):
+class Soft_Feedback_Recurrent_Cell(nn.Module):
     """
-    A Recurrent_Stack step that owns categorical output heads trained by backpropagation instead of RL:
-        (x_t, state_{t-1}, head outputs_{t-1}) -> (head logits_t, state_t, output_t)
-    Each head's previous output is fed back as a one-hot. Its forward value is always the category that was actually
-    taken (supplied by the caller, e.g. replayed from a rollout), so acting and learning see identical inputs.
-    Where the recurrence slides on (t > 0, no reset) its gradient is the straight-through Gumbel-Rao relaxation of the
-    step t - 1 logits, so losses on later steps backpropagate through the discrete choice into the heads;
-    where it restarts the feedback is a constant one-hot.
+    A Recurrent_Stack step that owns categorical output heads whose probabilities are fed back into the next step:
+        (x_t, state_{t-1}, head probabilities_{t-1}) -> (head logits_t, state_t, head probabilities_t, output_t)
+    The feedback is a deterministic function of the logits (their masked softmax), so losses on later steps
+    backpropagate directly through the logits into the heads. Samples drawn from the heads are only returned, never fed back.
+    Where the recurrence slides on (t > 0, no reset) the feedback is the step t - 1 probabilities computed here;
+    at t = 0 and where reset is True it is prev_feedback[:, t], a constant (e.g. stored probabilities or zeros).
 
-    forward(x (batch, time, input_dims), prev_outputs (batch, time, num_heads) integer, prev_state (batch, time, state_dims),
+    forward(x (batch, time, input_dims), prev_feedback (batch, time, feedback_dims), prev_state (batch, time, state_dims),
             reset (batch, time) bool or None, masks list (num_heads) of (batch, time or fewer, size) bool or None, sample)
-        -> (logits list (num_heads) of (batch, time, size), state (batch, time, state_dims), output (batch, time, output_dims),
+        -> (logits list (num_heads) of (batch, time, size), state (batch, time, state_dims),
+            feedback (batch, time, feedback_dims), output (batch, time, output_dims),
             samples (batch, time, num_heads) long if sample else None)
+    feedback_dims = sum(head_sizes), the heads' probabilities concatenated in head order.
     """
 
-    def __init__(self, output_dims, input_dims, hidden_dims, layers, head_sizes, cell="lstm", gumbel_tau=1.0, gumbel_samples=8):
+    def __init__(self, output_dims, input_dims, hidden_dims, layers, head_sizes, cell="lstm"):
         super().__init__()
         self.head_sizes = list(head_sizes)
-        self.gumbel_tau = gumbel_tau
-        self.gumbel_samples = gumbel_samples
+        self.feedback_dims = sum(self.head_sizes)
 
         recurrent_classes = {"lstm": LSTM, "gru": GRU}
         if cell not in recurrent_classes:
             raise ValueError(f"cell must be one of {list(recurrent_classes)}, got {cell!r}")
         self.recurrence = recurrent_classes[cell](
             output_dims=output_dims,
-            input_dims=input_dims + sum(self.head_sizes),
+            input_dims=input_dims + self.feedback_dims,
             hidden_dims=hidden_dims,
             layers=layers
         )
@@ -220,43 +220,31 @@ class Gumbel_Recurrent_Cell(nn.Module):
             head.apply(init_weights)
 
 
-    def forward(self, x, prev_outputs, prev_state, reset=None, masks=None, sample=False):
+    def forward(self, x, prev_feedback, prev_state, reset=None, masks=None, sample=False):
         masks = masks if masks is not None else [None] * len(self.heads)
-        prev_outputs = prev_outputs.long()
-        prev_one_hot = torch.concat([
-            nn.functional.one_hot(prev_outputs[..., h], num_classes=size).float()
-            for h, size in enumerate(self.head_sizes)
-        ], dim=-1)
-        relax = torch.is_grad_enabled()  # the relaxation only changes gradients, never the forward value
 
-        step_logits, states, outputs, samples = [], [], [], []
+        step_logits, states, feedbacks, outputs, samples = [], [], [], [], []
         state = prev_state[:, 0]
-        logits = None
+        feedback = prev_feedback[:, 0]
         for t in range(x.size(1)):
-            feedback = prev_one_hot[:, t]
-            if t > 0:
-                restart = reset[:, t, None] if reset is not None else torch.zeros_like(feedback[:, :1], dtype=torch.bool)
+            if t > 0 and reset is not None:
+                restart = reset[:, t, None]
                 state = torch.where(restart, prev_state[:, t], state)
-                if relax:
-                    relaxed = torch.concat([
-                        gumbel_rao_straight_through(
-                            l, prev_outputs[:, t, h], tau=self.gumbel_tau, num_samples=self.gumbel_samples, mask=_step_mask(m, t - 1)
-                        )
-                        for h, (l, m) in enumerate(zip(logits, masks))
-                    ], dim=-1)
-                    feedback = torch.where(restart, feedback, relaxed)
+                feedback = torch.where(restart, prev_feedback[:, t], feedback)
 
             output, state = self.recurrence.step(torch.concat([x[:, t], feedback], dim=-1), state)
             logits = [head(output) for head in self.heads]
+            distributions = [Categorical_With_Mask(logits=l, mask=_step_mask(m, t)) for l, m in zip(logits, masks)]
+            feedback = torch.concat([d.probs for d in distributions], dim=-1)
 
             if sample:
-                samples.append(torch.stack([
-                    Categorical_With_Mask(logits=l, mask=_step_mask(m, t)).sample() for l, m in zip(logits, masks)
-                ], dim=-1))
+                samples.append(torch.stack([d.sample() for d in distributions], dim=-1))
 
             step_logits.append(logits)
             states.append(state)
+            feedbacks.append(feedback)
             outputs.append(output)
 
         all_logits = [torch.stack(head_logits, dim=1) for head_logits in zip(*step_logits)]
-        return all_logits, torch.stack(states, dim=1), torch.stack(outputs, dim=1), (torch.stack(samples, dim=1) if sample else None)
+        return (all_logits, torch.stack(states, dim=1), torch.stack(feedbacks, dim=1), torch.stack(outputs, dim=1),
+                torch.stack(samples, dim=1) if sample else None)
