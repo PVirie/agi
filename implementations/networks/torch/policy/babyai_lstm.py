@@ -6,7 +6,7 @@ from interfaces.network import Actor_Network, Policy_Value_Network
 from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_resnet import ResNet
 from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
-from implementations.networks.torch.components.std_lstm import Soft_Feedback_Recurrent_Cell
+from implementations.networks.torch.components.std_lstm import Straight_Through_Recurrent_Cell
 from implementations.networks.torch.components.transformer import InstructionTransformer, Cross_Modal_Fusion, get_padding_mask
 from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
 from utilities.safe_torch_module import Safe_nn_Module
@@ -34,13 +34,12 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             graph context (head + edge nodes) -> MLP ------------------------------+
             instruction, inventory -> embedding -> transformer (graph cond token) --+-> cross-modal fusion -> latent
             obs -> FiLM CNN (conditioned on the instruction CLS) -------------------+
-            latent (+ prev ext action), prev recurrent state, prev internal probabilities
-                -> Soft_Feedback_Recurrent_Cell -> internal logits (int flag, edge_1, edge_2), recurrent state, internal probabilities, hidden
+            latent (+ prev ext action), prev memory state, prev internal output
+                -> Straight_Through_Recurrent_Cell -> internal output (int flag, edge_1, edge_2), memory state, hidden
             hidden -> ext head, value head
         Training signals:
             ext head: RL; log-prob and entropy are the ext action's only
-            internal heads: backpropagation only, through their probabilities fed into later steps
-            (the sampled internal actions drive the graph memory but are not fed back),
+            internal heads: backpropagation only, straight-through the sampled one-hot fed into later steps,
             plus their entropy as the aux loss (get_log_prob_with_value_aux, weighted by the learner's aux_coef)
             write value: the top recurrent layer's state, trained by backpropagation through time
         fusion_queries, fusion_layers: learned queries and cross-attention layers of the fusion read
@@ -68,15 +67,13 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
         self.position_size = 2
         self.content_size = internal_state_size * node_dim + goal_size + inventory_size + width * height * channel
-        # memory = [internal head probabilities fed back to the next step, recurrent state stack]
-        # one recurrent layer per entry of layers, each with a node_dim state
+        # one recurrent layer per entry of layers, each with a node_dim state; the stacked state is the memory
         # cell: "lstm" (state = unbounded cell states c) or "gru" (state = hidden states h in [-1, 1])
         self.cell = cell
-        self.feedback_size = int_action_size + 2 * self.edge_size
-        self.memory_size = self.feedback_size + len(layers) * node_dim
-        # the action carries the whole memory (not sampled); its last node_dim entries (the top layer) are the graph write value
+        self.memory_size = len(layers) * node_dim
+        # the action carries the whole memory stack (not sampled); its top layer is the graph write value
         self.packed_action_size = 1 + 1 + self.position_size + self.memory_size
-        # previous memory (+ a flag marking where it restarts) rides in the context:
+        # previous memory stack (+ a flag marking where it restarts) rides in the context:
         # acting reads it per step, learning slides the recurrence through time and only restarts from it at flagged steps
         self.packed_context_size = 1 + 1 + 1 + self.position_size + 1 + self.memory_size + self.content_size
 
@@ -131,9 +128,9 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             num_layers=fusion_layers,
         )
 
-        # internal heads [int flag, edge_1, edge_2] live in the cell: their probabilities feed back into the recurrence.
+        # internal heads [int flag, edge_1, edge_2] live in the cell: their samples feed back into the recurrence.
         # the previous ext action is a plain input: its effect goes through the environment, which is not differentiable
-        self.recurrent_cell = Soft_Feedback_Recurrent_Cell(
+        self.recurrent_cell = Straight_Through_Recurrent_Cell(
             output_dims=hidden_size,
             input_dims=hidden_size + ext_action_size,
             hidden_dims=node_dim,
@@ -231,10 +228,12 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         # context has shape (batch, context_size, self.packed_context_size); available_flags: int-flag valid mask or None
         # sample: also draw the internal actions at every step; the ext action is sampled from the returned ext logits
         prev_ext = context[:, :, 2].long()  # (batch_size, context_size)
+        prev_internal = torch.concat([
+            context[:, :, 1:2],
+            context[:, :, self.position_pos: self.memory_reset_pos]
+        ], dim=-1).long()  # (batch_size, context_size, 3) [int flag, edge_1, edge_2]
         memory_reset = context[:, :, self.memory_reset_pos] > 0.5  # (batch_size, context_size)
-        prev_memory = context[:, :, self.memory_pos: self.internal_state_pos]  # (batch_size, context_size, memory_size)
-        prev_feedback = prev_memory[:, :, :self.feedback_size]  # (batch_size, context_size, feedback_size)
-        prev_state = prev_memory[:, :, self.feedback_size:]  # (batch_size, context_size, len(layers) * node_dim)
+        prev_memory_state = context[:, :, self.memory_pos: self.internal_state_pos]  # (batch_size, context_size, memory_size)
         internal_state = context[:, :, self.internal_state_pos: self.goal_pos]  # (batch_size, context_size, internal_state_size * node_dim)
         goal = context[:, :, self.goal_pos: self.inv_pos]  # (batch_size, context_size, goal_size)
         inv = context[:, :, self.inv_pos: self.obs_pos]  # (batch_size, context_size, inventory_size)
@@ -244,11 +243,10 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
         prev_ext_one_hot = nn.functional.one_hot(prev_ext, num_classes=self.ext_action_size).float()
 
-        internal_logits, state, feedback, hidden, internal_samples = self.recurrent_cell(
-            torch.concat([latent, prev_ext_one_hot], dim=-1), prev_feedback, prev_state, memory_reset,
+        internal_logits, memory_state, hidden, internal_samples = self.recurrent_cell(
+            torch.concat([latent, prev_ext_one_hot], dim=-1), prev_internal, prev_memory_state, memory_reset,
             masks=[available_flags, None, None], sample=sample
-        )  # [(batch_size, context_size, size)] * 3, (batch_size, context_size, len(layers) * node_dim), (batch_size, context_size, feedback_size), (batch_size, context_size, hidden_size), (batch_size, context_size, 3) or None
-        memory_state = torch.concat([feedback, state], dim=-1)  # (batch_size, context_size, memory_size)
+        )  # [(batch_size, context_size, size)] * 3, (batch_size, context_size, memory_size), (batch_size, context_size, hidden_size), (batch_size, context_size, 3) or None
 
         ext_logits = self.head_ext(hidden)  # (batch_size, context_size, ext_action_size)
 
@@ -306,7 +304,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         # returns the ext action's log-prob and entropy (batch, context_size), values (batch, context_size + 1),
         # and the internal heads' entropy summed over heads (batch, context_size).
         # the internal heads have no log-prob: they are trained by the gradient of these terms (and the value loss)
-        # flowing back through the internal probabilities that the recurrence feeds into later steps
+        # flowing back straight-through the sampled internal outputs that the recurrence feeds into later steps
 
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
@@ -327,19 +325,18 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
 
     def unpack_action(self, packed_action):
-        # the graph write value is the top recurrent layer's state (the memory's last node_dim entries); see unpack_memory
+        # the graph write value is the top recurrent layer's state; see unpack_memory for the whole stack
         int_part, ext_part, position, memory = super().unpack_action(packed_action)
         return int_part, ext_part, position, memory[:, -self.node_dim:]
 
 
     def unpack_memory(self, packed_action):
-        # (batch, memory_size): [internal head probabilities (feedback_size), every recurrent layer's state, bottom layer first]
-        # zeros mean "no previous output" and a fresh state, e.g. at an episode start
+        # (batch, memory_size): every recurrent layer's state, bottom layer first
         return packed_action[:, 2 + self.position_size:].astype(float)
 
 
     def pack_context(self, b_reward=None, b_int=None, b_ext=None, b_position=None, b_memory_reset=None, b_memory=None, b_content=None):
-        # b_memory: previous memory (batch, memory_size), see unpack_memory
+        # b_memory: previous memory stack (batch, memory_size), see unpack_memory
         # b_memory_reset: (batch,) bool, True where the recurrence restarts from b_memory (e.g. an episode start with zeros)
         batch_size = next(b.shape[0] for b in (b_reward, b_int, b_ext, b_position, b_memory_reset, b_memory, b_content) if b is not None)
         if b_memory is None:
@@ -405,8 +402,8 @@ if __name__ == "__main__":
     valid = torch.tensor(valid)
     assert (valid[..., :6].gather(-1, actions[..., 0:1].long()).all() and valid[..., 6:].gather(-1, actions[..., 1:2].long()).all()), "sampled actions must be valid"
 
-    # learning slides through time with differentiable feedback, yet reproduces acting exactly (flag masks shape the fed-back probabilities)
-    flags = core._split_valid_actions(valid)[0]
+    # learning slides through time with straight-through feedback, yet reproduces acting exactly
+    flags = core._split_valid_actions(valid[:, :T])[0]
     ext_logits, internal_logits, memory_state, values, _ = core.compute(contexts, flags)
     assert torch.allclose(memory_state, actions[:, :, 4:], atol=1e-5), "unrolled memory differs from the acted memory"
     with torch.no_grad():
@@ -423,17 +420,21 @@ if __name__ == "__main__":
     assert torch.isfinite(aux).all() and (aux < 0).all(), "aux must be the negative internal entropy"
     assert torch.equal(core.get_log_probability_with_value(contexts, actions[:, :T], valid[:, :T])[0], log_probs)
 
-    # a loss on step 1's ext log-prob reaches the internal heads only through step 0's fed-back probabilities
+    # a loss on step 1's ext log-prob reaches the internal heads only straight-through step 0's sampled output
     def internal_head_grads(contexts):
         core.zero_grad()
         log_probs = core.get_log_probability_with_value(contexts, actions[:, :T], valid[:, :T])[0]
         log_probs[:, 1].sum().backward()
-        return [sum(p.grad.abs().sum().item() for p in head.parameters() if p.grad is not None)
-                for head in core.recurrent_cell.heads]
+        return [torch.cat([p.grad.flatten() for p in head.parameters()]) for head in core.recurrent_cell.heads]
 
-    assert all(g > 0 for g in internal_head_grads(contexts)), "internal heads must be trained by later steps' losses"
+    assert all(g.abs().sum() > 0 for g in internal_head_grads(contexts)), "internal heads must be trained by later steps' losses"
     restarted = contexts.clone()
     restarted[:, 1, core.memory_reset_pos] = 1.0
-    assert all(g == 0 for g in internal_head_grads(restarted)), "a restart must cut the internal-output gradient path"
+    assert all(g.abs().sum() == 0 for g in internal_head_grads(restarted)), "a restart must cut the internal-output gradient path"
+
+    # the gradient is evaluated at the output actually taken: replaying a different step 0 flag changes it
+    other_flag = contexts.clone()
+    other_flag[:, 1, 1] = (other_flag[:, 1, 1] + 1) % 6
+    assert not torch.allclose(internal_head_grads(contexts)[0], internal_head_grads(other_flag)[0]), "the gradient must depend on the taken output"
 
     print("All tests passed!")

@@ -171,34 +171,32 @@ def _step_mask(mask, t):
     return mask[:, t]
 
 
-class Soft_Feedback_Recurrent_Cell(nn.Module):
+class Straight_Through_Recurrent_Cell(nn.Module):
     """
-    A Recurrent_Stack step that owns categorical output heads whose probabilities are fed back into the next step:
-        (x_t, state_{t-1}, head probabilities_{t-1}) -> (head logits_t, state_t, head probabilities_t, output_t)
-    The feedback is a deterministic function of the logits (their masked softmax), so losses on later steps
-    backpropagate directly through the logits into the heads. Samples drawn from the heads are only returned, never fed back.
-    Where the recurrence slides on (t > 0, no reset) the feedback is the step t - 1 probabilities computed here;
-    at t = 0 and where reset is True it is prev_feedback[:, t], a constant (e.g. stored probabilities or zeros).
+    A Recurrent_Stack step that owns categorical output heads whose sampled outputs are fed back into the next step:
+        (x_t, state_{t-1}, head outputs_{t-1}) -> (head logits_t, state_t, output_t)
+    Each head's previous output is fed back as a one-hot. Its forward value is always the category that was actually
+    taken (supplied by the caller, e.g. replayed from a rollout), so acting and learning see identical inputs.
+    Where the recurrence slides on (t > 0, no reset) its gradient is straight-through the step t - 1 masked softmax
+    (one_hot + p - p.detach()), so losses on later steps backpropagate, evaluated at the taken category, into the heads;
+    where it restarts the feedback is a constant one-hot.
 
-    forward(x (batch, time, input_dims), prev_feedback (batch, time, feedback_dims), prev_state (batch, time, state_dims),
+    forward(x (batch, time, input_dims), prev_outputs (batch, time, num_heads) integer, prev_state (batch, time, state_dims),
             reset (batch, time) bool or None, masks list (num_heads) of (batch, time or fewer, size) bool or None, sample)
-        -> (logits list (num_heads) of (batch, time, size), state (batch, time, state_dims),
-            feedback (batch, time, feedback_dims), output (batch, time, output_dims),
+        -> (logits list (num_heads) of (batch, time, size), state (batch, time, state_dims), output (batch, time, output_dims),
             samples (batch, time, num_heads) long if sample else None)
-    feedback_dims = sum(head_sizes), the heads' probabilities concatenated in head order.
     """
 
     def __init__(self, output_dims, input_dims, hidden_dims, layers, head_sizes, cell="lstm"):
         super().__init__()
         self.head_sizes = list(head_sizes)
-        self.feedback_dims = sum(self.head_sizes)
 
         recurrent_classes = {"lstm": LSTM, "gru": GRU}
         if cell not in recurrent_classes:
             raise ValueError(f"cell must be one of {list(recurrent_classes)}, got {cell!r}")
         self.recurrence = recurrent_classes[cell](
             output_dims=output_dims,
-            input_dims=input_dims + self.feedback_dims,
+            input_dims=input_dims + sum(self.head_sizes),
             hidden_dims=hidden_dims,
             layers=layers
         )
@@ -220,31 +218,35 @@ class Soft_Feedback_Recurrent_Cell(nn.Module):
             head.apply(init_weights)
 
 
-    def forward(self, x, prev_feedback, prev_state, reset=None, masks=None, sample=False):
+    def forward(self, x, prev_outputs, prev_state, reset=None, masks=None, sample=False):
         masks = masks if masks is not None else [None] * len(self.heads)
+        prev_one_hot = torch.concat([
+            nn.functional.one_hot(prev_outputs[..., h].long(), num_classes=size).float()
+            for h, size in enumerate(self.head_sizes)
+        ], dim=-1)
 
-        step_logits, states, feedbacks, outputs, samples = [], [], [], [], []
+        step_logits, states, outputs, samples = [], [], [], []
         state = prev_state[:, 0]
-        feedback = prev_feedback[:, 0]
+        probs = None
         for t in range(x.size(1)):
-            if t > 0 and reset is not None:
-                restart = reset[:, t, None]
+            feedback = prev_one_hot[:, t]
+            if t > 0:
+                restart = reset[:, t, None] if reset is not None else torch.zeros_like(feedback[:, :1], dtype=torch.bool)
                 state = torch.where(restart, prev_state[:, t], state)
-                feedback = torch.where(restart, prev_feedback[:, t], feedback)
+                # p - p.detach() is exactly 0 in the forward pass, so the input stays the taken one-hot bit for bit
+                feedback = torch.where(restart, feedback, feedback + (probs - probs.detach()))
 
             output, state = self.recurrence.step(torch.concat([x[:, t], feedback], dim=-1), state)
             logits = [head(output) for head in self.heads]
             distributions = [Categorical_With_Mask(logits=l, mask=_step_mask(m, t)) for l, m in zip(logits, masks)]
-            feedback = torch.concat([d.probs for d in distributions], dim=-1)
+            probs = torch.concat([d.probs for d in distributions], dim=-1)
 
             if sample:
                 samples.append(torch.stack([d.sample() for d in distributions], dim=-1))
 
             step_logits.append(logits)
             states.append(state)
-            feedbacks.append(feedback)
             outputs.append(output)
 
         all_logits = [torch.stack(head_logits, dim=1) for head_logits in zip(*step_logits)]
-        return (all_logits, torch.stack(states, dim=1), torch.stack(feedbacks, dim=1), torch.stack(outputs, dim=1),
-                torch.stack(samples, dim=1) if sample else None)
+        return all_logits, torch.stack(states, dim=1), torch.stack(outputs, dim=1), (torch.stack(samples, dim=1) if sample else None)
