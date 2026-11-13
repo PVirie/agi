@@ -100,10 +100,9 @@ class Recurrent_Stack(nn.Module):
     One cell_class per entry of layers (a single res block of that width each); layer l reads layer l - 1's output.
     The state is the concatenation of every layer's state, bottom layer first, so the top layer is state[..., -hidden_dims:].
 
-    forward(x (batch, time, input_dims), prev_state (batch, time, len(layers) * hidden_dims), reset (batch, time) bool or None)
-        -> (output (batch, time, output_dims), state (batch, time, len(layers) * hidden_dims))
-    Slides through time: step t takes the state computed at step t - 1 (so gradients flow back through time),
-    except at t = 0 and where reset is True, which take prev_state[:, t] (e.g. a stored state or zeros at an episode start).
+    step(x (batch, input_dims), prev_state (batch, len(layers) * hidden_dims))
+        -> (output (batch, output_dims), state (batch, len(layers) * hidden_dims))
+    One time step; the caller slides it through time (see Straight_Through_Recurrent_Cell).
     """
 
     cell_class = None
@@ -139,19 +138,6 @@ class Recurrent_Stack(nn.Module):
             x, cell_state = cell(x, cell_state)
             states.append(cell_state)
         return x, torch.concat(states, dim=-1)
-
-
-    def forward(self, x, prev_state, reset=None):
-        outputs = []
-        states = []
-        state = prev_state[:, 0]
-        for t in range(x.size(1)):
-            if t > 0 and reset is not None:
-                state = torch.where(reset[:, t, None], prev_state[:, t], state)
-            output, state = self.step(x[:, t], state)
-            outputs.append(output)
-            states.append(state)
-        return torch.stack(outputs, dim=1), torch.stack(states, dim=1)
 
 
 class LSTM(Recurrent_Stack):

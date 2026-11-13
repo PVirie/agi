@@ -1,7 +1,7 @@
 import numpy as np
 from interfaces.learning import RL_Learner
 from interfaces.agent import Agent
-from interfaces.network import Actor_Network, Value_Network
+from interfaces.network import Actor_Network
 from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
 from interfaces.data_structure import Context_Collector
 from implementations.agents.model_base import make_valid_mask, apply_cascading_masks
@@ -60,7 +60,6 @@ class Model(Agent):
         self.actions.clear()
         self.valid_actions.clear()
         self.rewards = []
-        self.last_idles = []
         self.last_dones = []
         self.last_truncates = []
         self.last_cause_times = []
@@ -92,7 +91,6 @@ class Model(Agent):
             self.rewards.append(
                 np.zeros((batch_size, self.reward_size), dtype=np.float32)
             )
-            self.last_idles.append([False for _ in range(batch_size)])
             self.last_dones.append([False for _ in range(batch_size)])
             self.last_truncates.append([True for _ in range(batch_size)])
         
@@ -119,7 +117,6 @@ class Model(Agent):
                 position[i, :] = np.zeros_like(position[i, :])
                 memory_state[i, :] = np.zeros_like(memory_state[i, :])
                 memory_reset[i] = True
-            self.last_idles[-1][i] = idle
             self.last_dones[-1][i] = d
             self.last_truncates[-1][i] = t
 
@@ -187,7 +184,6 @@ class Model(Agent):
             self.actions.mark(skip_last=True)
             self.valid_actions.mark(skip_last=True)
             self.rewards = self.rewards[left_over_slide]
-            self.last_idles = self.last_idles[left_over_slide]
             self.last_dones = self.last_dones[left_over_slide]
             self.last_truncates = self.last_truncates[left_over_slide]
 
@@ -221,7 +217,6 @@ class Model(Agent):
             np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
         )
         self.rewards.append(np.zeros((batch_size, self.reward_size), dtype=np.float32))
-        self.last_idles.append([return_action[i] is None for i in range(batch_size)])
         self.last_dones.append([False for _ in range(batch_size)])
         self.last_truncates.append([False for _ in range(batch_size)])
 

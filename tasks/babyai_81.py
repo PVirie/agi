@@ -18,7 +18,7 @@ from utilities.package_install import install
 install("minigrid")
 install("gymnasium[other]")
 
-from utilities import scatter, format_float
+from utilities import format_float
 from utilities.minigrid.environments import Multi_Environment, BonusType
 from utilities.minigrid.babyai_language import shorten_mission
 from utilities.tokenizer import Text_Tokenizer
@@ -94,7 +94,7 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
         stat_recorder.record(stat_row)
 
         steps += 1
-        # log extrinsic rewards only; with the position bonus the training reward is nonzero on almost every step
+        # log extrinsic rewards only
         if any([r[0] != 0 for r in rewards]) and verbose:
             logging.info(f"{steps}| Rewards: {', '.join([format_float(r[0]) for r in rewards])}")
 
@@ -269,7 +269,7 @@ if __name__ == "__main__":
         num_nodes=4096,
         max_edges_per_node=C,
         node_dim=node_dim,
-        # node values are the top recurrent layer's state (unbounded for lstm, [-1, 1] for gru); empty slots use -1.0 as in babyai_76_cont
+        # node values are the top recurrent layer's state (unbounded for lstm, [-1, 1] for gru)
         start_node_value=0.0,
         empty_value=0.0,
     )

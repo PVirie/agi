@@ -18,7 +18,7 @@ from utilities.package_install import install
 install("minigrid")
 install("gymnasium[other]")
 
-from utilities import scatter, format_float
+from utilities import format_float
 from utilities.minigrid.environments import Multi_Environment, BonusType
 from utilities.minigrid.babyai_language import shorten_mission
 from utilities.tokenizer import Text_Tokenizer
