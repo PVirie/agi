@@ -143,6 +143,7 @@ if __name__ == "__main__":
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
     parser.add_argument("--cell",                   "-cell", type=str, default="gru", choices=["lstm", "gru"], help="Recurrent cell of the policy memory. Default is 'gru'.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
+    parser.add_argument("--int-ent-coef",           "-ient", type=float, default=0.01, help="Entropy coefficient of the internal heads (the policy's aux loss). Default is 0.01.")
     args = parser.parse_args()
 
 
@@ -259,6 +260,8 @@ if __name__ == "__main__":
         gamma=0.99,
         gae_lambda=0.95,
         ent_coef=args.ent_coef,
+        # the policy's aux loss is the internal heads' negative entropy (logged as aux_loss)
+        aux_coef=args.int_ent_coef,
         use_graph=args.st_train,
     )
     memory = Graph_Memory(

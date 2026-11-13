@@ -40,7 +40,8 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         Training signals:
             ext head: RL; log-prob and entropy are the ext action's only
             internal heads: backpropagation only, through their probabilities fed into later steps
-            (the sampled internal actions drive the graph memory but are not fed back)
+            (the sampled internal actions drive the graph memory but are not fed back),
+            plus their entropy as the aux loss (get_log_prob_with_value_aux, weighted by the learner's aux_coef)
             write value: the top recurrent layer's state, trained by backpropagation through time
         fusion_queries, fusion_layers: learned queries and cross-attention layers of the fusion read
         """
@@ -291,13 +292,19 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
     
 
     def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
-        log_probs, entropy, values = self.get_log_probability_with_value(context, selected_action, valid_actions)
-        return log_probs, entropy, values, None  # no auxiliary loss
+        log_probs, entropy, values, internal_entropy = self._evaluate(context, selected_action, valid_actions)
+        # aux loss (batch, context_size): minimizing it maximizes the internal heads' entropy, keeping their softmax from collapsing
+        return log_probs, entropy, values, -internal_entropy
 
 
     def get_log_probability_with_value(self, context, selected_action, valid_actions=None):
+        return self._evaluate(context, selected_action, valid_actions)[:3]
+
+
+    def _evaluate(self, context, selected_action, valid_actions=None):
         # now context has shape (batch, context_size + 1, self.packed_context_size)
-        # returns the ext action's log-prob and entropy (batch, context_size) and values (batch, context_size + 1).
+        # returns the ext action's log-prob and entropy (batch, context_size), values (batch, context_size + 1),
+        # and the internal heads' entropy summed over heads (batch, context_size).
         # the internal heads have no log-prob: they are trained by the gradient of these terms (and the value loss)
         # flowing back through the internal probabilities that the recurrence feeds into later steps
 
@@ -308,11 +315,15 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
         available_flags, available_actions = self._split_valid_actions(valid_actions)
 
-        ext_logits, _, _, values, _ = self.compute(context, available_flags)
+        ext_logits, internal_logits, _, values, _ = self.compute(context, available_flags)
         # values keep all contexts: the last one is the bootstrap value
-        # drop the last context for logprob: it is the observation after the last action
+        # drop the last context for everything else: it is the observation after the last action
         probs_ext = Categorical_With_Mask(logits=ext_logits[:, :-1, :], mask=available_actions)
-        return probs_ext.log_prob(selected_action[:, :, 1]), probs_ext.entropy(), values
+        internal_entropy = sum(
+            Categorical_With_Mask(logits=l[:, :-1, :], mask=m).entropy()
+            for l, m in zip(internal_logits, [available_flags, None, None])
+        )
+        return probs_ext.log_prob(selected_action[:, :, 1]), probs_ext.entropy(), values, internal_entropy
 
 
     def unpack_action(self, packed_action):
@@ -405,10 +416,12 @@ if __name__ == "__main__":
                 assert torch.allclose(head[:, t], step_head[:, 0], atol=1e-5), f"unrolled logits differ from acting at step {t}"
     assert values.shape == (B, T + 1)
 
-    # RL sees the ext action only
+    # RL sees the ext action only; the internal heads' entropy is the aux loss
     log_probs, entropy, values, aux = core.get_log_prob_with_value_aux(contexts, actions[:, :T], valid[:, :T])
-    assert log_probs.shape == (B, T) and entropy.shape == (B, T) and aux is None
+    assert log_probs.shape == (B, T) and entropy.shape == (B, T) and aux.shape == (B, T)
     assert torch.isfinite(log_probs).all(), "acted ext actions must have finite log-probs"
+    assert torch.isfinite(aux).all() and (aux < 0).all(), "aux must be the negative internal entropy"
+    assert torch.equal(core.get_log_probability_with_value(contexts, actions[:, :T], valid[:, :T])[0], log_probs)
 
     # a loss on step 1's ext log-prob reaches the internal heads only through step 0's fed-back probabilities
     def internal_head_grads(contexts):

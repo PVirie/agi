@@ -266,7 +266,12 @@ class PPO(RL_Learner, Safe_nn_Module):
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.all_parameters, self.max_grad_norm)
+                grad_norm = nn.utils.clip_grad_norm_(self.all_parameters, self.max_grad_norm)
+                if not torch.isfinite(grad_norm):
+                    # stepping would write NaN into every weight and Adam moment; drop this minibatch instead
+                    logging.warning(f"PPO: skipped a minibatch update with non-finite grad norm {grad_norm.item()}")
+                    self.optimizer.zero_grad()
+                    continue
                 self.optimizer.step()
 
             if self.target_kl is not None and approx_kl > self.target_kl:
