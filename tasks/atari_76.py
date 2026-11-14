@@ -21,7 +21,7 @@ install("gymnasium[atari, other]")
 
 import ale_py
 from utilities.atari.environments import Multi_Atari_Environment, ATARI_ACTIONS
-from utilities.episode_recorder import Episode_Recorder
+from utilities.episode_recorder import Episode_Recorder, CUMSUM, prefixed_headers
 from utilities import format_float
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -42,6 +42,11 @@ DIAGNOSTIC_KEYS = [
     "entropy", "approx_kl", "pg_loss", "v_loss", "aux_loss",
 ]
 
+# per-env episode statistics, in the order run() fills stat_row;
+# env_steps receives each episode's length and is summed so the count continues across resumed runs
+STAT_COLUMNS = [("env_steps", CUMSUM), "return", "length", "excess_degree", "graph_nodes"]
+DIAGNOSTIC_COLUMNS = [("env_steps", CUMSUM)] + DIAGNOSTIC_KEYS
+
 async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
     observations, info = env.reset(seed=env_seed)
@@ -55,6 +60,7 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
     session_return_update_alpha = 0.9
     start_time = time.perf_counter()
     steps = 0
+    last_diagnostic_env_steps = 0
     while True:
         elapsed_time = time.perf_counter() - start_time
         should_stop = elapsed_time > max_running_time  # run for the specified max time
@@ -94,7 +100,7 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
                     metrics[1][i],
                 ])
             else:
-                stat_row.extend([None, None, None, None, None])
+                stat_row.extend([None] * len(STAT_COLUMNS))
         stat_recorder.record(stat_row)
 
         steps += 1
@@ -112,7 +118,9 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
             diagnostics = {**env.diagnostics(), **ppo_learner.last_stats}
             logging.info(f"{steps}| Diagnostics: " + ", ".join(f"{k}={diagnostics[k]:.4g}" for k in DIAGNOSTIC_KEYS if k in diagnostics))
-            diagnostic_recorder.record([env.total_env_steps()] + [diagnostics.get(k) for k in DIAGNOSTIC_KEYS])
+            # env_steps is a cumsum column: record this interval's steps so the count continues across resumed runs
+            diagnostic_recorder.record([env.total_env_steps() - last_diagnostic_env_steps] + [diagnostics.get(k) for k in DIAGNOSTIC_KEYS])
+            last_diagnostic_env_steps = env.total_env_steps()
             diagnostic_recorder.write()
             if torch.cuda.is_available():
                 # running maxima since process start, never reset: this is the probe measurement
@@ -261,8 +269,8 @@ if __name__ == "__main__":
         persistence_path=parameters_path,
     )
 
-    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=[f"{gid}/{stat}" for gid in game_ids for stat in ["env_steps", "return", "length", "excess_degree", "graph_nodes"]])
-    diagnostic_recorder = Episode_Recorder(f"{experiment_path}/diagnostics", headers=["env_steps"] + DIAGNOSTIC_KEYS)
+    stat_recorder = Episode_Recorder(f"{experiment_path}/statistics", headers=prefixed_headers(game_ids, STAT_COLUMNS))
+    diagnostic_recorder = Episode_Recorder(f"{experiment_path}/diagnostics", headers=DIAGNOSTIC_COLUMNS)
     
     if args.scale == "small":
         # 12/16 GB

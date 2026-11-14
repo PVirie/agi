@@ -130,7 +130,7 @@ class Multi_Atari_Environment:
         self.total_return = [0] * total
         self.total_aux_return = [0] * total
         self.total_length = [0] * total
-        self.cumulative_length = [0] * total # agent-env transitions since the run started; never reset per episode
+        self.env_steps = 0 # agent-env transitions in this session; the persistent count is the cumsum of "e" in Episode_Recorder
         self.total_duration = [0] * total # start time of the episode for each env, misnoming but consistent with other statistics
 
         # game-reward counters since the last diagnostics() call
@@ -157,10 +157,10 @@ class Multi_Atari_Environment:
             self.total_return[i] = 0
             self.total_aux_return[i] = 0
             self.total_length[i] = 0
-            self.cumulative_length[i] = 0
             self.total_duration[i] = time.perf_counter()
             if self.rnd is not None:
                 self.rnd.reset_episode(i)
+        self.env_steps = 0
         return self.return_obs, self.return_infos
 
 
@@ -207,7 +207,7 @@ class Multi_Atari_Environment:
             self.total_return[i] += game_reward
             self.total_aux_return[i] += total_reward
             self.total_length[i] += 1
-            self.cumulative_length[i] += 1
+            self.env_steps += 1
             self.diagnostic_steps += 1
             self.diagnostic_rewarded_steps += int(game_reward != 0)
             self.diagnostic_game_reward += game_reward
@@ -219,7 +219,8 @@ class Multi_Atari_Environment:
                     "aug_r": self.total_aux_return[i],
                     # failed episodes report no length (recorded as blank, skipped by tasks/plot.py)
                     "l": self.total_length[i] if success else None,
-                    "e": self.cumulative_length[i],
+                    # env transitions of the episode regardless of success
+                    "e": self.total_length[i],
                     "t": time.perf_counter() - self.total_duration[i],
                     "s": 1.0 if success else 0.0
                 }
@@ -242,7 +243,7 @@ class Multi_Atari_Environment:
 
 
     def total_env_steps(self):
-        return sum(self.cumulative_length)
+        return self.env_steps
 
 
     def diagnostics(self):
@@ -293,5 +294,4 @@ class Multi_Atari_Environment:
         self.total_return = None
         self.total_aux_return = None
         self.total_length = None
-        self.cumulative_length = None
         self.total_duration = None

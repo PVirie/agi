@@ -85,7 +85,7 @@ class Multi_Environment:
         self.total_aux_return = [0] * total
         self.total_length = [0] * total
         self.total_idle = [0] * total # idle (None) actions in the current episode
-        self.cumulative_length = [0] * total # env transitions since the run started; never reset per episode
+        self.env_steps = 0 # env transitions in this session; the persistent count is the cumsum of "e" in Episode_Recorder
         self.total_duration = [0] * total # store the start time of the episode for each env, misnoming but consistent with other statistics
 
 
@@ -101,8 +101,8 @@ class Multi_Environment:
             self.total_aux_return[i] = 0
             self.total_length[i] = 0
             self.total_idle[i] = 0
-            self.cumulative_length[i] = 0
             self.total_duration[i] = time.perf_counter()
+        self.env_steps = 0
         return self.return_obs, self.return_infos
 
 
@@ -116,7 +116,8 @@ class Multi_Environment:
                 "aug_r": self.total_aux_return[i],
                 # failed episodes report no length (recorded as blank, skipped by tasks/plot.py)
                 "l": self.total_length[i] if success else None,
-                "e": self.cumulative_length[i],
+                # env transitions of the episode regardless of success
+                "e": self.total_length[i],
                 "t": time.perf_counter() - self.total_duration[i],
                 "s": 1.0 if success else 0.0
             }
@@ -157,7 +158,7 @@ class Multi_Environment:
             self.total_return[i] += extrinsic_reward
             self.total_aux_return[i] += reward
             self.total_length[i] += 1
-            self.cumulative_length[i] += 1
+            self.env_steps += 1
             if termination or truncation:
                 obs = self._finish_episode(i)
             self.return_obs[i] = self.obs_to_object(obs)
@@ -165,7 +166,7 @@ class Multi_Environment:
 
 
     def total_env_steps(self):
-        return sum(self.cumulative_length)
+        return self.env_steps
 
 
     def get_available_actions(self):
