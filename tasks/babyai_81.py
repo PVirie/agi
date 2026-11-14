@@ -149,7 +149,7 @@ if __name__ == "__main__":
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
-    parser.add_argument("--cell",                   "-cell", type=str, default="gru", choices=["lstm", "gru"], help="Recurrent cell of the policy memory. Default is 'gru'.")
+    parser.add_argument("--cell",                   "-cell", type=str, default="residual", choices=["lstm", "gru", "residual"], help="Recurrent cell of the policy memory. Default is 'gru'.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
     parser.add_argument("--int-ent-coef",           "-ient", type=float, default=0.01, help="Entropy coefficient of the internal heads (the policy's aux loss). Default is 0.01.")
     args = parser.parse_args()

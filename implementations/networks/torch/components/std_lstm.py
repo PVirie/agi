@@ -93,6 +93,49 @@ class GRU_Cell(nn.Module):
         return output, state
 
 
+class Residual_Cell(nn.Module):
+    """
+    One residual recurrent layer over a caller-supplied state s, with no gates or squashing on the carried path:
+    f = trunk([x, LN(s)]), s' = s + U gelu(f).
+    ds'/ds = I + (a learned term), so gradients always have an untouched path back through time.
+    s is unbounded; it is only read through a LayerNorm, so its scale never saturates anything downstream.
+    """
+
+    def __init__(self, output_dims, input_dims, hidden_dims, layers):
+        super().__init__()
+        self.hidden_dims = hidden_dims
+
+        self.trunk = ResNet(
+            output_dims=output_dims,
+            input_dims=input_dims + hidden_dims,
+            hidden_dims=output_dims,
+            layers=layers
+        )
+        # eps 1: near-linear while s is small (incl. the zero initial state, where eps 1e-5 would amplify gradients ~300x),
+        # normalizing once s has grown
+        self.state_norm = nn.LayerNorm(hidden_dims, eps=1.0)
+        self.norm = nn.LayerNorm(output_dims)
+        self.update_layer = nn.Linear(output_dims, hidden_dims)
+        self.output_layer = nn.Linear(output_dims + hidden_dims, output_dims)
+
+
+    def reset_parameters(self):
+        self.trunk.reset_parameters()
+        self.state_norm.reset_parameters()
+        self.norm.reset_parameters()
+        self.output_layer.apply(init_weights)
+        # small updates: start near the identity recurrence (carry the state), as the LSTM forget-gate bias
+        nn.init.orthogonal_(self.update_layer.weight, gain=0.1)
+        nn.init.zeros_(self.update_layer.bias)
+
+
+    def forward(self, x, prev_state):
+        features = self.norm(self.trunk(torch.concat([x, self.state_norm(prev_state)], dim=-1)))
+        state = prev_state + self.update_layer(nn.functional.gelu(features))
+        output = self.output_layer(torch.concat([features, self.state_norm(state)], dim=-1))
+        return output, state
+
+
 class Recurrent_Stack(nn.Module):
     """
     Multi-layer recurrent network whose initial states are supplied by the caller instead of being carried internally,
@@ -150,6 +193,11 @@ class GRU(Recurrent_Stack):
     cell_class = GRU_Cell
 
 
+class Residual_RNN(Recurrent_Stack):
+    """Recurrent_Stack of Residual_Cell; the state is every layer's (unbounded) residual state s."""
+    cell_class = Residual_Cell
+
+
 def _step_mask(mask, t):
     # masks may cover fewer steps than the input (learning passes none for the bootstrap step)
     if mask is None or t >= mask.size(1):
@@ -177,7 +225,7 @@ class Straight_Through_Recurrent_Cell(nn.Module):
         super().__init__()
         self.head_sizes = list(head_sizes)
 
-        recurrent_classes = {"lstm": LSTM, "gru": GRU}
+        recurrent_classes = {"lstm": LSTM, "gru": GRU, "residual": Residual_RNN}
         if cell not in recurrent_classes:
             raise ValueError(f"cell must be one of {list(recurrent_classes)}, got {cell!r}")
         self.recurrence = recurrent_classes[cell](

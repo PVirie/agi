@@ -68,7 +68,8 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.position_size = 2
         self.content_size = internal_state_size * node_dim + goal_size + inventory_size + width * height * channel
         # one recurrent layer per entry of layers, each with a node_dim state; the stacked state is the memory
-        # cell: "lstm" (state = unbounded cell states c) or "gru" (state = hidden states h in [-1, 1])
+        # cell: "lstm" (state = unbounded cell states c), "gru" (state = hidden states h in [-1, 1])
+        # or "residual" (state = unbounded residual states s, s' = s + update)
         self.cell = cell
         self.memory_size = len(layers) * node_dim
         # the action carries the whole memory stack (not sampled); its top layer is the graph write value
