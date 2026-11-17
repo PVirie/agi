@@ -35,6 +35,16 @@ def shorten_mission(mission):
     return " ".join(mission.split())
 
 
+# Each sub-goal is exactly one action phrase ("next to" belongs to "put", not a goal of its own).
+_SUB_GOAL_TOKENS = {VERBS[v] + d for v in ("go to", "pick up", "open", "put") for d in DETERMINERS.values()}
+
+
+def count_sub_goals(mission):
+    # Accepts a full or a compact mission (shorten_mission is idempotent on compact ones).
+    #   "pick up a ball and go to the box after you open the door" -> 3
+    return sum(w in _SUB_GOAL_TOKENS for w in shorten_mission(mission).split())
+
+
 def compact_vocabulary():
     words = [v + d for v in VERBS.values() for d in DETERMINERS.values()]
     words += [t for t in TYPES.values()] + [c + "-" + t for c in COLORS.values() for t in TYPES.values()]
@@ -62,12 +72,18 @@ if __name__ == "__main__":
     import contextlib
     import gymnasium as gym
     import minigrid  # noqa: F401  (registers BabyAI envs)
+    from minigrid.envs.babyai.core.verifier import ActionInstr, SeqInstr
+
+    def count_instr_leaves(instr):
+        if isinstance(instr, SeqInstr):
+            return count_instr_leaves(instr.instr_a) + count_instr_leaves(instr.instr_b)
+        return 1 if isinstance(instr, ActionInstr) else 0
 
     seeds_per_env = int(sys.argv[1]) if len(sys.argv) > 1 else 50
     vocabulary = set(compact_vocabulary())
     env_ids = sorted(e for e in gym.registry if e.startswith("BabyAI-"))
 
-    checked, failures, oov = 0, [], set()
+    checked, failures, oov, goal_failures = 0, [], set(), []
     seen = set()
     for env_id in env_ids:
         env = gym.make(env_id)
@@ -84,6 +100,9 @@ if __name__ == "__main__":
             oov.update(w for w in short.split() if w not in vocabulary)
             if restored != mission:
                 failures.append((env_id, mission, short, restored))
+            expected_goals = count_instr_leaves(env.unwrapped.instrs)
+            if count_sub_goals(mission) != expected_goals or count_sub_goals(short) != expected_goals:
+                goal_failures.append((env_id, mission, count_sub_goals(mission), expected_goals))
         env.close()
 
     print(f"\nchecked {checked} unique missions from {len(env_ids)} envs")
@@ -91,4 +110,7 @@ if __name__ == "__main__":
     for env_id, mission, short, restored in failures[:20]:
         print(f"[FAIL] {env_id}\n  original: {mission}\n  short:    {short}\n  restored: {restored}")
     print(f"round-trip failures: {len(failures)}")
-    sys.exit(1 if failures else 0)
+    for env_id, mission, counted, expected in goal_failures[:20]:
+        print(f"[GOAL FAIL] {env_id}\n  mission: {mission}\n  counted {counted}, instrs have {expected}")
+    print(f"sub-goal count failures: {len(goal_failures)}")
+    sys.exit(1 if failures or goal_failures else 0)

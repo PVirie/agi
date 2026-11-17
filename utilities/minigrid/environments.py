@@ -5,6 +5,7 @@ import time
 from enum import Enum
 
 from .custom_wrappers import InventoryWrapper, OriginalRewardWrapper
+from .babyai_language import count_sub_goals
 
 MINIGRID_ACTIONS = [
     "left", "right", "forward", "pickup", "drop", "toggle", "done"
@@ -107,6 +108,9 @@ class Multi_Environment:
 
 
     def _finish_episode(self, i):
+        # read the finished episode's mission before reset replaces it; every mission is at least one goal
+        # (non-BabyAI MiniGrid missions, e.g. "get to the green goal square", have no parsable action phrase)
+        goal_count = max(1, count_sub_goals(self.envs[i].unwrapped.mission))
         obs, _ = self.envs[i].reset() # You must manually reset!
         # MiniGrid/BabyAI only emit a positive reward (1 - 0.9*steps/max_steps) on task completion
         success = self.total_return[i] > 0
@@ -118,6 +122,8 @@ class Multi_Environment:
                 "l": self.total_length[i] if success else None,
                 # env transitions of the episode regardless of success
                 "e": self.total_length[i],
+                # sub-goals in the solved mission (BabyAI rewards only full completion)
+                "m": goal_count if success else None,
                 "t": time.perf_counter() - self.total_duration[i],
                 "s": 1.0 if success else 0.0
             }
