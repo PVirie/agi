@@ -52,8 +52,8 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
     last_reset = [False for _ in observations]
 
     total_returns = [0 for _ in observations]
-    # sub-goals per successful episode, pooled over envs since the last log
-    sub_goals_solved, successful_episodes = 0, 0
+    # per mission sub-goal count: [successful, total] finished episodes, pooled over envs since the last log
+    sub_goal_outcomes = {}
     session_return_update_alpha = 0.9
     start_time = time.perf_counter()
     steps = 0
@@ -85,10 +85,9 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
         for i in range(len(observations)):
             if terminations[i] or truncations[i]:
                 total_score = infos[i]["episode"]["r"]
-                # "m" is None for failed episodes
-                if infos[i]["episode"]["m"] is not None:
-                    sub_goals_solved += infos[i]["episode"]["m"]
-                    successful_episodes += 1
+                outcome = sub_goal_outcomes.setdefault(infos[i]["episode"]["m"], [0, 0])
+                outcome[0] += int(infos[i]["episode"]["s"])
+                outcome[1] += 1
                 total_returns[i] = (
                     session_return_update_alpha * total_returns[i]
                     + (1 - session_return_update_alpha) * total_score
@@ -115,9 +114,9 @@ async def run(env, agent, rollout_length=16, verbose=False, env_seed=None):
 
         if steps % (rollout_length * 2) == 0 or should_stop:
             logging.info(f"{steps}| Returns: {', '.join([format_float(s) for s in total_returns])}")
-            if successful_episodes > 0:
-                logging.info(f"{steps}| Avg sub-goals solved: {sub_goals_solved / successful_episodes:.3f} over {successful_episodes} successful episodes")
-                sub_goals_solved, successful_episodes = 0, 0
+            if sub_goal_outcomes:
+                logging.info(f"{steps}| Success by sub-goals: " + ", ".join(f"{k}: {s}/{n}" for k, (s, n) in sorted(sub_goal_outcomes.items())))
+                sub_goal_outcomes = {}
             logging.info(f"{steps}| Selected actions: {actions}")
 
             diagnostics = ppo_learner.last_stats
@@ -241,19 +240,19 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 12
+        minibatch_size = 16
         rollout_length = 256
     else:
         # large 25GB VRAM
         hidden_size = 256
         embedding_dim = 32
-        node_dim = 128
+        node_dim = 256
         C = 7
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 16
-        rollout_length = 256
+        minibatch_size = 8
+        rollout_length = 512
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)

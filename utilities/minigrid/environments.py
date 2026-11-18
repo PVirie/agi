@@ -122,8 +122,8 @@ class Multi_Environment:
                 "l": self.total_length[i] if success else None,
                 # env transitions of the episode regardless of success
                 "e": self.total_length[i],
-                # sub-goals in the solved mission (BabyAI rewards only full completion)
-                "m": goal_count if success else None,
+                # sub-goals in the episode's mission, reported for failed episodes too (pair with "s")
+                "m": goal_count,
                 "t": time.perf_counter() - self.total_duration[i],
                 "s": 1.0 if success else 0.0
             }
