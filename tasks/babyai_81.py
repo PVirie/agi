@@ -184,7 +184,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_a"
     if args.st_train:
         experiment_path += "_stmean"
 
@@ -232,18 +232,7 @@ if __name__ == "__main__":
         minibatch_size = 8
         rollout_length = 256
     elif args.scale == "medium":
-        # 19GB VRAM
-        hidden_size = 256
-        embedding_dim = 32
-        node_dim = 128
-        C = 7
-        layers = [1, 1, 1, 1]
-        cnn_channels = 128
-        cnn_blocks = 2
-        minibatch_size = 16
-        rollout_length = 256
-    else:
-        # large 25GB VRAM
+        # 8.xGB VRAM
         hidden_size = 256
         embedding_dim = 32
         node_dim = 256
@@ -251,8 +240,19 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 8
-        rollout_length = 512
+        minibatch_size = 32
+        rollout_length = 64
+    else:
+        # large 9.3GB VRAM
+        hidden_size = 256
+        embedding_dim = 32
+        node_dim = 256
+        C = 7
+        layers = [1, 1, 1, 1]
+        cnn_channels = 128
+        cnn_blocks = 2
+        minibatch_size = 64
+        rollout_length = 64
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
