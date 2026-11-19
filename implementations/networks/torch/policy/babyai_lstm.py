@@ -39,10 +39,13 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             ext head: RL; log-prob and entropy are the ext action's only
             internal heads: backpropagation only, straight-through the sampled one-hot fed into later steps,
             plus their entropy as the aux loss (get_log_prob_with_value_aux, weighted by the learner's aux_coef)
-            write value: the top recurrent layer's state, trained by backpropagation through time
-        Graph nodes are transformer tokens after the instruction and inventory: they are never padding, and the
-        positional encoding tells the slots apart (slot 0 is the head node, slot i the i-th edge, which the edge heads index).
+            write value: the first node_dim entries of the top recurrent layer's state, trained by backpropagation through time
+        Graph nodes are transformer tokens after the instruction and inventory (projected to embedding_dim if node_dim differs):
+        they are never padding, and the positional encoding tells the slots apart
+        (slot 0 is the head node, slot i the i-th edge, which the edge heads index).
         """
+        if node_dim > hidden_size:
+            raise ValueError(f"node_dim ({node_dim}) must not exceed hidden_size ({hidden_size}): the write value is a slice of the recurrent state")
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="babyai_lstm_core", device=device, persistence_path=persistence_path)
         self.device = device
@@ -66,12 +69,12 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
         self.position_size = 2
         self.content_size = internal_state_size * node_dim + goal_size + inventory_size + width * height * channel
-        # one recurrent layer per entry of layers, each with a node_dim state; the stacked state is the memory
+        # one recurrent layer per entry of layers, each with a hidden_size state; the stacked state is the memory
         # cell: "lstm" (state = unbounded cell states c), "gru" (state = hidden states h in [-1, 1])
         # or "residual" (state = unbounded residual states s, s' = s + update)
         self.cell = cell
-        self.memory_size = len(layers) * node_dim
-        # the action carries the whole memory stack (not sampled); its top layer is the graph write value
+        self.memory_size = len(layers) * hidden_size
+        # the action carries the whole memory stack (not sampled); the first node_dim of its top layer is the graph write value
         self.packed_action_size = 1 + 1 + self.position_size + self.memory_size
         # previous memory stack (+ a flag marking where it restarts) rides in the context:
         # acting reads it per step, learning slides the recurrence through time and only restarts from it at flagged steps
@@ -120,7 +123,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.recurrent_cell = Straight_Through_Recurrent_Cell(
             output_dims=hidden_size,
             input_dims=hidden_size + ext_action_size,
-            hidden_dims=node_dim,
+            hidden_dims=hidden_size,
             layers=[hidden_size for _ in layers],
             head_sizes=[int_action_size, self.edge_size, self.edge_size],
             cell=cell,
@@ -307,9 +310,10 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
 
     def unpack_action(self, packed_action):
-        # the graph write value is the top recurrent layer's state; see unpack_memory for the whole stack
+        # the graph write value is the first node_dim entries of the top recurrent layer's state; see unpack_memory for the whole stack
         int_part, ext_part, position, memory = super().unpack_action(packed_action)
-        return int_part, ext_part, position, memory[:, -self.node_dim:]
+        top_layer = memory[:, -self.hidden_size:]
+        return int_part, ext_part, position, top_layer[:, :self.node_dim]
 
 
     def unpack_memory(self, packed_action):
@@ -339,7 +343,7 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
 
-    C, B, T, D = 3, 4, 5, 12  # node_dim D != embedding_dim, so nodes are projected
+    C, B, T, D = 3, 4, 5, 12  # node_dim D != embedding_dim (projected) and < hidden_size (the write value is a slice of the top layer)
     core = Policy_Core(
         int_action_size=6, ext_action_size=8,
         node_dim=D, internal_state_size=1 + C,
@@ -403,6 +407,9 @@ if __name__ == "__main__":
     flags = core._split_valid_actions(valid[:, :T])[0]
     ext_logits, internal_logits, memory_state, values, _ = core.compute(contexts, flags)
     assert torch.allclose(memory_state, actions[:, :, 4:], atol=1e-5), "unrolled memory differs from the acted memory"
+    write_value = core.unpack_action(actions[:, -1].numpy())[3]
+    assert core.memory_size == 2 * 32 and write_value.shape == (B, D), "the memory stack is hidden_size per layer, the write value node_dim"
+    assert np.allclose(write_value, actions[:, -1, 4 + 32: 4 + 32 + D].numpy()), "the write value is the first node_dim of the top layer"
     with torch.no_grad():
         for t in range(T + 1):
             step_ext, step_internal = core.compute(contexts[:, t:t + 1])[:2]
