@@ -1,3 +1,5 @@
+from enum import Enum
+
 import torch
 import torch.nn as nn
 
@@ -205,14 +207,19 @@ def _step_mask(mask, t):
     return mask[:, t]
 
 
+class Sample_Type(Enum):
+    CATEGORICAL = "categorical"
+    CONTINUOUS = "continuous"
+
+
 class Straight_Through_Recurrent_Cell(nn.Module):
     """
     A Recurrent_Stack step that owns output heads whose sampled outputs are fed back into the next step:
         (x_t, state_{t-1}, head outputs_{t-1}) -> (head params_t, state_t, output_t)
-    heads: list of (sample_type, size), one per head:
-        "categorical": a category among size (params: size logits); output 1 slot (the index), fed back as a one-hot
-        "continuous": a point in [0, 1]^size, independent Beta(1 + softplus(a), 1 + softplus(b)) per dim
-                      (params: 2 * size); output size slots, fed back as is
+    heads: list of (Sample_Type, size), one per head:
+        CATEGORICAL: a category among size (params: size logits); output 1 slot (the index), fed back as a one-hot
+        CONTINUOUS: a point in [0, 1]^size, independent Beta(1 + softplus(a), 1 + softplus(b)) per dim
+                    (params: 2 * size); output size slots, fed back as is
     Each head's previous output is fed back with its forward value always the output that was actually taken (supplied by
     the caller, e.g. replayed from a rollout), so acting and learning see identical inputs.
     Where the recurrence slides on (t > 0, no reset) its gradient is straight-through the step t - 1 expected output
@@ -226,16 +233,14 @@ class Straight_Through_Recurrent_Cell(nn.Module):
     output_size is the heads' output slots concatenated in order; masks apply to categorical heads only.
     """
 
-    sample_types = ("categorical", "continuous")
-
     def __init__(self, output_dims, input_dims, hidden_dims, layers, heads, cell="lstm"):
         super().__init__()
+        for sample_type, _ in heads:
+            if not isinstance(sample_type, Sample_Type):
+                raise ValueError(f"head sample type must be a Sample_Type, got {sample_type!r}")
         self.head_specs = [(sample_type, int(size)) for sample_type, size in heads]
-        for sample_type, _ in self.head_specs:
-            if sample_type not in self.sample_types:
-                raise ValueError(f"head sample type must be one of {list(self.sample_types)}, got {sample_type!r}")
         self.num_heads = len(self.head_specs)
-        self.output_widths = [1 if t == "categorical" else size for t, size in self.head_specs]
+        self.output_widths = [1 if t == Sample_Type.CATEGORICAL else size for t, size in self.head_specs]
         self.output_size = sum(self.output_widths)
         self.output_slices = []
         offset = 0
@@ -258,7 +263,7 @@ class Straight_Through_Recurrent_Cell(nn.Module):
             nn.Sequential(
                 nn.Linear(output_dims, output_dims),
                 nn.GELU(),
-                nn.Linear(output_dims, size if sample_type == "categorical" else 2 * size)
+                nn.Linear(output_dims, size if sample_type == Sample_Type.CATEGORICAL else 2 * size)
             )
             for sample_type, size in self.head_specs
         ])
@@ -272,7 +277,7 @@ class Straight_Through_Recurrent_Cell(nn.Module):
 
     def distribution(self, h, params, mask=None):
         sample_type, _ = self.head_specs[h]
-        if sample_type == "categorical":
+        if sample_type == Sample_Type.CATEGORICAL:
             return Categorical_With_Mask(logits=params, mask=mask)
         if mask is not None:
             raise ValueError(f"head {h} is continuous and cannot be masked")
@@ -288,7 +293,7 @@ class Straight_Through_Recurrent_Cell(nn.Module):
         total = 0
         for h, (p, m) in enumerate(zip(params, masks)):
             entropy = self.distribution(h, p, m).entropy()
-            total = total + (entropy if self.head_specs[h][0] == "categorical" else entropy.mean(dim=-1))
+            total = total + (entropy if self.head_specs[h][0] == Sample_Type.CATEGORICAL else entropy.mean(dim=-1))
         return total
 
 
@@ -297,7 +302,7 @@ class Straight_Through_Recurrent_Cell(nn.Module):
         parts = []
         for (sample_type, size), output_slice in zip(self.head_specs, self.output_slices):
             taken = prev_outputs[..., output_slice]
-            if sample_type == "categorical":
+            if sample_type == Sample_Type.CATEGORICAL:
                 taken = nn.functional.one_hot(taken[..., 0].long(), num_classes=size).float()
             parts.append(taken.float())
         return torch.concat(parts, dim=-1)
@@ -322,13 +327,13 @@ class Straight_Through_Recurrent_Cell(nn.Module):
             params = [head(output) for head in self.heads]
             distributions = [self.distribution(h, p, _step_mask(m, t)) for h, (p, m) in enumerate(zip(params, masks))]
             expected = torch.concat([
-                d.probs if sample_type == "categorical" else d.mean
+                d.probs if sample_type == Sample_Type.CATEGORICAL else d.mean
                 for d, (sample_type, _) in zip(distributions, self.head_specs)
             ], dim=-1)
 
             if sample:
                 samples.append(torch.concat([
-                    d.sample().unsqueeze(-1).float() if sample_type == "categorical" else d.sample()
+                    d.sample().unsqueeze(-1).float() if sample_type == Sample_Type.CATEGORICAL else d.sample()
                     for d, (sample_type, _) in zip(distributions, self.head_specs)
                 ], dim=-1))
 

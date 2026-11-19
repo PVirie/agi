@@ -5,7 +5,7 @@ import numpy as np
 from interfaces.network import Actor_Network, Policy_Value_Network
 from implementations.networks.torch.components.base import Categorical_With_Mask, init_weights
 from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
-from implementations.networks.torch.components.std_lstm import Straight_Through_Recurrent_Cell
+from implementations.networks.torch.components.std_lstm import Sample_Type, Straight_Through_Recurrent_Cell
 from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
 from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
 from utilities.safe_torch_module import Safe_nn_Module
@@ -131,10 +131,10 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             hidden_dims=hidden_size,
             layers=[hidden_size for _ in layers],
             heads=[
-                ("categorical", int_action_size),
-                ("categorical", self.edge_size),
-                ("categorical", self.edge_size),
-                ("continuous", node_dim),
+                (Sample_Type.CATEGORICAL, int_action_size),
+                (Sample_Type.CATEGORICAL, self.edge_size),
+                (Sample_Type.CATEGORICAL, self.edge_size),
+                (Sample_Type.CONTINUOUS, node_dim),
             ],
             cell=cell,
         )
