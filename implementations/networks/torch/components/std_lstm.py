@@ -207,30 +207,48 @@ def _step_mask(mask, t):
 
 class Straight_Through_Recurrent_Cell(nn.Module):
     """
-    A Recurrent_Stack step that owns categorical output heads whose sampled outputs are fed back into the next step:
-        (x_t, state_{t-1}, head outputs_{t-1}) -> (head logits_t, state_t, output_t)
-    Each head's previous output is fed back as a one-hot. Its forward value is always the category that was actually
-    taken (supplied by the caller, e.g. replayed from a rollout), so acting and learning see identical inputs.
-    Where the recurrence slides on (t > 0, no reset) its gradient is straight-through the step t - 1 masked softmax
-    (one_hot + p - p.detach()), so losses on later steps backpropagate, evaluated at the taken category, into the heads;
-    where it restarts the feedback is a constant one-hot.
+    A Recurrent_Stack step that owns output heads whose sampled outputs are fed back into the next step:
+        (x_t, state_{t-1}, head outputs_{t-1}) -> (head params_t, state_t, output_t)
+    heads: list of (sample_type, size), one per head:
+        "categorical": a category among size (params: size logits); output 1 slot (the index), fed back as a one-hot
+        "continuous": a point in [0, 1]^size, independent Beta(1 + softplus(a), 1 + softplus(b)) per dim
+                      (params: 2 * size); output size slots, fed back as is
+    Each head's previous output is fed back with its forward value always the output that was actually taken (supplied by
+    the caller, e.g. replayed from a rollout), so acting and learning see identical inputs.
+    Where the recurrence slides on (t > 0, no reset) its gradient is straight-through the step t - 1 expected output
+    (taken + E - E.detach(); E = the masked softmax or the Beta mean), so losses on later steps backpropagate,
+    evaluated at the taken output, into the heads; where it restarts the feedback is a constant.
 
-    forward(x (batch, time, input_dims), prev_outputs (batch, time, num_heads) integer, prev_state (batch, time, state_dims),
+    forward(x (batch, time, input_dims), prev_outputs (batch, time, output_size), prev_state (batch, time, state_dims),
             reset (batch, time) bool or None, masks list (num_heads) of (batch, time or fewer, size) bool or None, sample)
-        -> (logits list (num_heads) of (batch, time, size), state (batch, time, state_dims), output (batch, time, output_dims),
-            samples (batch, time, num_heads) long if sample else None)
+        -> (params list (num_heads) of (batch, time, param_size), state (batch, time, state_dims), output (batch, time, output_dims),
+            samples (batch, time, output_size) if sample else None)
+    output_size is the heads' output slots concatenated in order; masks apply to categorical heads only.
     """
 
-    def __init__(self, output_dims, input_dims, hidden_dims, layers, head_sizes, cell="lstm"):
+    sample_types = ("categorical", "continuous")
+
+    def __init__(self, output_dims, input_dims, hidden_dims, layers, heads, cell="lstm"):
         super().__init__()
-        self.head_sizes = list(head_sizes)
+        self.head_specs = [(sample_type, int(size)) for sample_type, size in heads]
+        for sample_type, _ in self.head_specs:
+            if sample_type not in self.sample_types:
+                raise ValueError(f"head sample type must be one of {list(self.sample_types)}, got {sample_type!r}")
+        self.num_heads = len(self.head_specs)
+        self.output_widths = [1 if t == "categorical" else size for t, size in self.head_specs]
+        self.output_size = sum(self.output_widths)
+        self.output_slices = []
+        offset = 0
+        for width in self.output_widths:
+            self.output_slices.append(slice(offset, offset + width))
+            offset += width
 
         recurrent_classes = {"lstm": LSTM, "gru": GRU, "residual": Residual_RNN}
         if cell not in recurrent_classes:
             raise ValueError(f"cell must be one of {list(recurrent_classes)}, got {cell!r}")
         self.recurrence = recurrent_classes[cell](
             output_dims=output_dims,
-            input_dims=input_dims + sum(self.head_sizes),
+            input_dims=input_dims + sum(size for _, size in self.head_specs),
             hidden_dims=hidden_dims,
             layers=layers
         )
@@ -240,9 +258,9 @@ class Straight_Through_Recurrent_Cell(nn.Module):
             nn.Sequential(
                 nn.Linear(output_dims, output_dims),
                 nn.GELU(),
-                nn.Linear(output_dims, size)
+                nn.Linear(output_dims, size if sample_type == "categorical" else 2 * size)
             )
-            for size in self.head_sizes
+            for sample_type, size in self.head_specs
         ])
 
 
@@ -252,35 +270,71 @@ class Straight_Through_Recurrent_Cell(nn.Module):
             head.apply(init_weights)
 
 
-    def forward(self, x, prev_outputs, prev_state, reset=None, masks=None, sample=False):
-        masks = masks if masks is not None else [None] * len(self.heads)
-        prev_one_hot = torch.concat([
-            nn.functional.one_hot(prev_outputs[..., h].long(), num_classes=size).float()
-            for h, size in enumerate(self.head_sizes)
-        ], dim=-1)
+    def distribution(self, h, params, mask=None):
+        sample_type, _ = self.head_specs[h]
+        if sample_type == "categorical":
+            return Categorical_With_Mask(logits=params, mask=mask)
+        if mask is not None:
+            raise ValueError(f"head {h} is continuous and cannot be masked")
+        # concentrations >= 1: unimodal, bounded density, and the entropy peaks at the uniform
+        alpha, beta = (1.0 + nn.functional.softplus(params)).chunk(2, dim=-1)
+        return torch.distributions.Beta(alpha, beta)
 
-        step_logits, states, outputs, samples = [], [], [], []
+
+    def entropy(self, params, masks=None):
+        # (...,) summed over heads; a continuous head's differential entropy is averaged over its dims,
+        # so every head weighs as a single variable
+        masks = masks if masks is not None else [None] * self.num_heads
+        total = 0
+        for h, (p, m) in enumerate(zip(params, masks)):
+            entropy = self.distribution(h, p, m).entropy()
+            total = total + (entropy if self.head_specs[h][0] == "categorical" else entropy.mean(dim=-1))
+        return total
+
+
+    def _feedback(self, prev_outputs):
+        # forward value of every head's previous output as the recurrence reads it: one-hot index or the value itself
+        parts = []
+        for (sample_type, size), output_slice in zip(self.head_specs, self.output_slices):
+            taken = prev_outputs[..., output_slice]
+            if sample_type == "categorical":
+                taken = nn.functional.one_hot(taken[..., 0].long(), num_classes=size).float()
+            parts.append(taken.float())
+        return torch.concat(parts, dim=-1)
+
+
+    def forward(self, x, prev_outputs, prev_state, reset=None, masks=None, sample=False):
+        masks = masks if masks is not None else [None] * self.num_heads
+        prev_feedback = self._feedback(prev_outputs)
+
+        step_params, states, outputs, samples = [], [], [], []
         state = prev_state[:, 0]
-        probs = None
+        expected = None
         for t in range(x.size(1)):
-            feedback = prev_one_hot[:, t]
+            feedback = prev_feedback[:, t]
             if t > 0:
                 restart = reset[:, t, None] if reset is not None else torch.zeros_like(feedback[:, :1], dtype=torch.bool)
                 state = torch.where(restart, prev_state[:, t], state)
-                # p - p.detach() is exactly 0 in the forward pass, so the input stays the taken one-hot bit for bit
-                feedback = torch.where(restart, feedback, feedback + (probs - probs.detach()))
+                # E - E.detach() is exactly 0 in the forward pass, so the input stays the taken output bit for bit
+                feedback = torch.where(restart, feedback, feedback + (expected - expected.detach()))
 
             output, state = self.recurrence.step(torch.concat([x[:, t], feedback], dim=-1), state)
-            logits = [head(output) for head in self.heads]
-            distributions = [Categorical_With_Mask(logits=l, mask=_step_mask(m, t)) for l, m in zip(logits, masks)]
-            probs = torch.concat([d.probs for d in distributions], dim=-1)
+            params = [head(output) for head in self.heads]
+            distributions = [self.distribution(h, p, _step_mask(m, t)) for h, (p, m) in enumerate(zip(params, masks))]
+            expected = torch.concat([
+                d.probs if sample_type == "categorical" else d.mean
+                for d, (sample_type, _) in zip(distributions, self.head_specs)
+            ], dim=-1)
 
             if sample:
-                samples.append(torch.stack([d.sample() for d in distributions], dim=-1))
+                samples.append(torch.concat([
+                    d.sample().unsqueeze(-1).float() if sample_type == "categorical" else d.sample()
+                    for d, (sample_type, _) in zip(distributions, self.head_specs)
+                ], dim=-1))
 
-            step_logits.append(logits)
+            step_params.append(params)
             states.append(state)
             outputs.append(output)
 
-        all_logits = [torch.stack(head_logits, dim=1) for head_logits in zip(*step_logits)]
-        return all_logits, torch.stack(states, dim=1), torch.stack(outputs, dim=1), (torch.stack(samples, dim=1) if sample else None)
+        all_params = [torch.stack(head_params, dim=1) for head_params in zip(*step_params)]
+        return all_params, torch.stack(states, dim=1), torch.stack(outputs, dim=1), (torch.stack(samples, dim=1) if sample else None)

@@ -33,19 +33,17 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             graph context (head + edge nodes) -> node projection ---+-> transformer -> CLS --+-> linear -> latent
             obs -> FiLM CNN (conditioned on the CLS) ----------------------------------------+
             latent (+ prev ext action), prev memory state, prev internal output
-                -> Straight_Through_Recurrent_Cell -> internal output (int flag, edge_1, edge_2), memory state, hidden
+                -> Straight_Through_Recurrent_Cell -> internal output (int flag, edge_1, edge_2, write value), memory state, hidden
             hidden -> ext head, value head
         Training signals:
             ext head: RL; log-prob and entropy are the ext action's only
-            internal heads: backpropagation only, straight-through the sampled one-hot fed into later steps,
-            plus their entropy as the aux loss (get_log_prob_with_value_aux, weighted by the learner's aux_coef)
-            write value: the first node_dim entries of the top recurrent layer's state, trained by backpropagation through time
+            internal heads: backpropagation only, straight-through the sampled output fed into later steps,
+            plus their entropy as the aux loss (get_log_prob_with_value_aux, weighted by the learner's aux_coef);
+            int flag and edges are categorical (fed back as one-hots), the graph write value is continuous in [0, 1]^node_dim
         Graph nodes are transformer tokens after the instruction and inventory (projected to embedding_dim if node_dim differs):
         they are never padding, and the positional encoding tells the slots apart
         (slot 0 is the head node, slot i the i-th edge, which the edge heads index).
         """
-        if node_dim > hidden_size:
-            raise ValueError(f"node_dim ({node_dim}) must not exceed hidden_size ({hidden_size}): the write value is a slice of the recurrent state")
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="babyai_lstm_core", device=device, persistence_path=persistence_path)
         self.device = device
@@ -74,14 +72,21 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         # or "residual" (state = unbounded residual states s, s' = s + update)
         self.cell = cell
         self.memory_size = len(layers) * hidden_size
-        # the action carries the whole memory stack (not sampled); the first node_dim of its top layer is the graph write value
-        self.packed_action_size = 1 + 1 + self.position_size + self.memory_size
-        # previous memory stack (+ a flag marking where it restarts) rides in the context:
-        # acting reads it per step, learning slides the recurrence through time and only restarts from it at flagged steps
-        self.packed_context_size = 1 + 1 + 1 + self.position_size + 1 + self.memory_size + self.content_size
+        # the internal outputs [int flag, edge_1, edge_2, write value (node_dim)] are contiguous, in the recurrent cell's head order,
+        # in both the action and the context; ext comes before them
+        self.internal_output_size = 1 + self.position_size + node_dim
+        # action: [ext, internal outputs, memory stack (not sampled)]
+        self.packed_action_size = 1 + self.internal_output_size + self.memory_size
+        # context: [reward, ext, internal outputs, memory reset, memory stack, content]
+        # the previous internal outputs and memory stack (+ a flag marking where it restarts) ride in the context:
+        # acting reads them per step, learning slides the recurrence through time and only restarts from them at flagged steps
+        self.packed_context_size = 1 + 1 + self.internal_output_size + 1 + self.memory_size + self.content_size
 
-        self.position_pos = 1 + 1 + 1
-        self.memory_reset_pos = self.position_pos + self.position_size
+        self.ext_pos = 1
+        self.internal_pos = self.ext_pos + 1
+        self.position_pos = self.internal_pos + 1
+        self.write_pos = self.position_pos + self.position_size
+        self.memory_reset_pos = self.write_pos + node_dim
         self.memory_pos = self.memory_reset_pos + 1
         self.internal_state_pos = self.memory_pos + self.memory_size
         self.goal_pos = self.internal_state_pos + self.internal_state_size * node_dim
@@ -118,14 +123,19 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             nn.LayerNorm(hidden_size)
         )
 
-        # internal heads [int flag, edge_1, edge_2] live in the cell: their samples feed back into the recurrence.
+        # internal heads [int flag, edge_1, edge_2, write value] live in the cell: their samples feed back into the recurrence.
         # the previous ext action is a plain input: its effect goes through the environment, which is not differentiable
         self.recurrent_cell = Straight_Through_Recurrent_Cell(
             output_dims=hidden_size,
             input_dims=hidden_size + ext_action_size,
             hidden_dims=hidden_size,
             layers=[hidden_size for _ in layers],
-            head_sizes=[int_action_size, self.edge_size, self.edge_size],
+            heads=[
+                ("categorical", int_action_size),
+                ("categorical", self.edge_size),
+                ("categorical", self.edge_size),
+                ("continuous", node_dim),
+            ],
             cell=cell,
         )
 
@@ -168,7 +178,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
                     nn.init.constant_(m.bias, 0)
 
         self.head_ext.apply(init_actor_weights)
-        # internal heads [int flag, edge_1, edge_2] inside the recurrent cell
+        # internal heads [int flag, edge_1, edge_2, write value] inside the recurrent cell
         for head in self.recurrent_cell.heads:
             head.apply(init_actor_weights)
 
@@ -212,11 +222,8 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
     def compute(self, context, available_flags=None, sample=False):
         # context has shape (batch, context_size, self.packed_context_size); available_flags: int-flag valid mask or None
         # sample: also draw the internal actions at every step; the ext action is sampled from the returned ext logits
-        prev_ext = context[:, :, 2].long()  # (batch_size, context_size)
-        prev_internal = torch.concat([
-            context[:, :, 1:2],
-            context[:, :, self.position_pos: self.memory_reset_pos]
-        ], dim=-1).long()  # (batch_size, context_size, 3) [int flag, edge_1, edge_2]
+        prev_ext = context[:, :, self.ext_pos].long()  # (batch_size, context_size)
+        prev_internal = context[:, :, self.internal_pos: self.memory_reset_pos]  # (batch_size, context_size, 3 + node_dim) [int flag, edge_1, edge_2, write value]
         memory_reset = context[:, :, self.memory_reset_pos] > 0.5  # (batch_size, context_size)
         prev_memory_state = context[:, :, self.memory_pos: self.internal_state_pos]  # (batch_size, context_size, memory_size)
         internal_state = context[:, :, self.internal_state_pos: self.goal_pos]  # (batch_size, context_size, internal_state_size * node_dim)
@@ -228,10 +235,10 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
         prev_ext_one_hot = nn.functional.one_hot(prev_ext, num_classes=self.ext_action_size).float()
 
-        internal_logits, memory_state, hidden, internal_samples = self.recurrent_cell(
+        internal_params, memory_state, hidden, internal_samples = self.recurrent_cell(
             torch.concat([latent, prev_ext_one_hot], dim=-1), prev_internal, prev_memory_state, memory_reset,
-            masks=[available_flags, None, None], sample=sample
-        )  # [(batch_size, context_size, size)] * 3, (batch_size, context_size, memory_size), (batch_size, context_size, hidden_size), (batch_size, context_size, 3) or None
+            masks=[available_flags, None, None, None], sample=sample
+        )  # [(batch_size, context_size, param_size)] * 4, (batch_size, context_size, memory_size), (batch_size, context_size, hidden_size), (batch_size, context_size, 3 + node_dim) or None
 
         ext_logits = self.head_ext(hidden)  # (batch_size, context_size, ext_action_size)
 
@@ -239,7 +246,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         if self.value_size == 1:
             values = values.squeeze(-1)  # (batch_size, context_size)
 
-        return ext_logits, internal_logits, memory_state, values, internal_samples
+        return ext_logits, internal_params, memory_state, values, internal_samples
 
 
     def _split_valid_actions(self, valid_actions):
@@ -264,14 +271,8 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             ext_logits, _, memory_state, _, internal_samples = self.compute(context, available_flags, sample=True)
             ext_action = Categorical_With_Mask(logits=ext_logits, mask=available_actions).sample()
 
-        action = np.concatenate([
-            internal_samples[:, :, 0:1].cpu().numpy(),  # int flag
-            ext_action.unsqueeze(-1).cpu().numpy(),
-            internal_samples[:, :, 1:3].cpu().numpy(),  # edge_1, edge_2
-            memory_state.cpu().numpy()
-        ], axis=-1)
-
-        return action.astype(float)
+        action = torch.concat([ext_action.unsqueeze(-1).float(), internal_samples, memory_state], dim=-1)
+        return action.cpu().numpy().astype(float)
     
 
     def get_log_prob_with_value_aux(self, context, selected_action, valid_actions=None):
@@ -289,7 +290,8 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         # returns the ext action's log-prob and entropy (batch, context_size), values (batch, context_size + 1),
         # and the internal heads' entropy summed over heads (batch, context_size).
         # the internal heads have no log-prob: they are trained by the gradient of these terms (and the value loss)
-        # flowing back straight-through the sampled internal outputs that the recurrence feeds into later steps
+        # flowing back straight-through the sampled internal outputs that the recurrence feeds into later steps.
+        # the write value's entropy is averaged over its node_dim dims, so it weighs as one head
 
         if isinstance(context, np.ndarray):
             context = torch.tensor(context, dtype=torch.float32).to(self.device)
@@ -298,44 +300,64 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
         available_flags, available_actions = self._split_valid_actions(valid_actions)
 
-        ext_logits, internal_logits, _, values, _ = self.compute(context, available_flags)
+        ext_logits, internal_params, _, values, _ = self.compute(context, available_flags)
         # values keep all contexts: the last one is the bootstrap value
         # drop the last context for everything else: it is the observation after the last action
         probs_ext = Categorical_With_Mask(logits=ext_logits[:, :-1, :], mask=available_actions)
-        internal_entropy = sum(
-            Categorical_With_Mask(logits=l[:, :-1, :], mask=m).entropy()
-            for l, m in zip(internal_logits, [available_flags, None, None])
+        internal_entropy = self.recurrent_cell.entropy(
+            [p[:, :-1, :] for p in internal_params], [available_flags, None, None, None]
         )
-        return probs_ext.log_prob(selected_action[:, :, 1]), probs_ext.entropy(), values, internal_entropy
+        return probs_ext.log_prob(selected_action[:, :, 0]), probs_ext.entropy(), values, internal_entropy
 
 
     def unpack_action(self, packed_action):
-        # the graph write value is the first node_dim entries of the top recurrent layer's state; see unpack_memory for the whole stack
-        int_part, ext_part, position, memory = super().unpack_action(packed_action)
-        top_layer = memory[:, -self.hidden_size:]
-        return int_part, ext_part, position, top_layer[:, :self.node_dim]
+        # packed_action (batch, packed_action_size): [ext, int flag, edge_1, edge_2, write value, memory stack]
+        # returns int flag (batch,), ext action (batch, 1), position (edge_1, edge_2) (batch, 2),
+        # and the sampled graph write value (batch, node_dim) in [0, 1]; see unpack_memory for the memory stack
+        internal = packed_action[:, 1: 1 + self.internal_output_size]
+        int_part = internal[:, 0].astype(int)
+        ext_part = packed_action[:, 0:1].astype(int)
+        position = internal[:, 1: 1 + self.position_size].astype(float)
+        write_value = internal[:, 1 + self.position_size:].astype(float)
+        return int_part, ext_part, position, write_value
 
 
     def unpack_memory(self, packed_action):
         # (batch, memory_size): every recurrent layer's state, bottom layer first
-        return packed_action[:, 2 + self.position_size:].astype(float)
+        return packed_action[:, 1 + self.internal_output_size:].astype(float)
 
 
-    def pack_context(self, b_reward=None, b_int=None, b_ext=None, b_position=None, b_memory_reset=None, b_memory=None, b_content=None):
+    def pack_context(self, b_reward=None, b_int=None, b_ext=None, b_position=None, b_write=None, b_memory_reset=None, b_memory=None, b_content=None):
+        # b_write: previous write value (batch, node_dim), see unpack_action; fed back into the recurrence like the other internal outputs
         # b_memory: previous memory stack (batch, memory_size), see unpack_memory
         # b_memory_reset: (batch,) bool, True where the recurrence restarts from b_memory (e.g. an episode start with zeros)
-        batch_size = next(b.shape[0] for b in (b_reward, b_int, b_ext, b_position, b_memory_reset, b_memory, b_content) if b is not None)
+        batch_size = next(b.shape[0] for b in (b_reward, b_int, b_ext, b_position, b_write, b_memory_reset, b_memory, b_content) if b is not None)
+        if b_reward is None:
+            b_reward = np.zeros((batch_size,), dtype=float)
+        if b_int is None:
+            b_int = np.zeros((batch_size,), dtype=int)
+        if b_ext is None:
+            b_ext = np.zeros((batch_size, 1), dtype=int)
+        if b_position is None:
+            b_position = np.zeros((batch_size, self.position_size), dtype=float)
+        if b_content is None:
+            b_content = np.zeros((batch_size, self.content_size), dtype=float)
+        if b_write is None:
+            b_write = np.zeros((batch_size, self.node_dim), dtype=float)
         if b_memory is None:
             b_memory = np.zeros((batch_size, self.memory_size), dtype=float)
             b_memory_reset = np.ones((batch_size,), dtype=bool)
         if b_memory_reset is None:
             b_memory_reset = np.zeros((batch_size,), dtype=bool)
-        packed_context = super().pack_context(b_reward=b_reward, b_int=b_int, b_ext=b_ext, b_position=b_position, b_content=b_content)
         return np.concatenate([
-            packed_context[:, :self.memory_reset_pos],
+            np.reshape(b_reward, (batch_size, 1)),
+            np.reshape(b_ext, (batch_size, 1)),
+            np.reshape(b_int, (batch_size, 1)),
+            np.reshape(b_position, (batch_size, self.position_size)),
+            np.reshape(b_write, (batch_size, self.node_dim)),
             np.reshape(b_memory_reset, (batch_size, 1)),
             np.reshape(b_memory, (batch_size, self.memory_size)),
-            packed_context[:, self.memory_reset_pos:]
+            np.reshape(b_content, (batch_size, self.content_size))
         ], axis=-1).astype(float)
 
 
@@ -343,7 +365,7 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
 
-    C, B, T, D = 3, 4, 5, 12  # node_dim D != embedding_dim (projected) and < hidden_size (the write value is a slice of the top layer)
+    C, B, T, D = 3, 4, 5, 12  # node_dim D != embedding_dim (projected)
     core = Policy_Core(
         int_action_size=6, ext_action_size=8,
         node_dim=D, internal_state_size=1 + C,
@@ -386,11 +408,13 @@ if __name__ == "__main__":
     contexts, actions = [], []
     last_action = np.zeros((B, core.packed_action_size))
     for t in range(T + 1):
+        last_int, last_ext, last_position, last_write = core.unpack_action(last_action)
         context = core.pack_context(
             b_reward=np.zeros(B),
-            b_int=last_action[:, 0].astype(int),
-            b_ext=last_action[:, 1:2].astype(int),
-            b_position=last_action[:, 2:4],
+            b_int=last_int,
+            b_ext=last_ext,
+            b_position=last_position,
+            b_write=last_write,
             b_memory_reset=np.full(B, t == 0),
             b_memory=core.unpack_memory(last_action),
             b_content=random_content(),
@@ -401,15 +425,17 @@ if __name__ == "__main__":
     contexts = torch.tensor(np.stack(contexts, axis=1), dtype=torch.float32)
     actions = torch.tensor(np.stack(actions, axis=1), dtype=torch.float32)
     valid = torch.tensor(valid)
-    assert (valid[..., :6].gather(-1, actions[..., 0:1].long()).all() and valid[..., 6:].gather(-1, actions[..., 1:2].long()).all()), "sampled actions must be valid"
+    assert (valid[..., :6].gather(-1, actions[..., 1:2].long()).all() and valid[..., 6:].gather(-1, actions[..., 0:1].long()).all()), "sampled actions must be valid"
 
     # learning slides through time with straight-through feedback, yet reproduces acting exactly
     flags = core._split_valid_actions(valid[:, :T])[0]
     ext_logits, internal_logits, memory_state, values, _ = core.compute(contexts, flags)
-    assert torch.allclose(memory_state, actions[:, :, 4:], atol=1e-5), "unrolled memory differs from the acted memory"
+    assert torch.allclose(memory_state, actions[:, :, 4 + D:], atol=1e-5), "unrolled memory differs from the acted memory"
+    assert np.allclose(core.unpack_memory(actions[:, -1].numpy()), actions[:, -1, 4 + D:].numpy())
     write_value = core.unpack_action(actions[:, -1].numpy())[3]
     assert core.memory_size == 2 * 32 and write_value.shape == (B, D), "the memory stack is hidden_size per layer, the write value node_dim"
-    assert np.allclose(write_value, actions[:, -1, 4 + 32: 4 + 32 + D].numpy()), "the write value is the first node_dim of the top layer"
+    assert ((write_value >= 0) & (write_value <= 1)).all() and np.unique(write_value).size > 1, "the write value is sampled in [0, 1]^node_dim"
+    assert internal_logits[3].shape == (B, T + 1, 2 * D), "the write head outputs one Beta (alpha, beta) per dim"
     with torch.no_grad():
         for t in range(T + 1):
             step_ext, step_internal = core.compute(contexts[:, t:t + 1])[:2]
@@ -436,9 +462,12 @@ if __name__ == "__main__":
     restarted[:, 1, core.memory_reset_pos] = 1.0
     assert all(g.abs().sum() == 0 for g in internal_head_grads(restarted)), "a restart must cut the internal-output gradient path"
 
-    # the gradient is evaluated at the output actually taken: replaying a different step 0 flag changes it
+    # the gradient is evaluated at the output actually taken: replaying a different step 0 flag or write value changes it
     other_flag = contexts.clone()
-    other_flag[:, 1, 1] = (other_flag[:, 1, 1] + 1) % 6
+    other_flag[:, 1, core.internal_pos] = (other_flag[:, 1, core.internal_pos] + 1) % 6
     assert not torch.allclose(internal_head_grads(contexts)[0], internal_head_grads(other_flag)[0]), "the gradient must depend on the taken output"
+    other_write = contexts.clone()
+    other_write[:, 1, core.write_pos: core.write_pos + D] = 1 - other_write[:, 1, core.write_pos: core.write_pos + D]
+    assert not torch.allclose(internal_head_grads(contexts)[3], internal_head_grads(other_write)[3]), "the write gradient must depend on the taken value"
 
     print("All tests passed!")

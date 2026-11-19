@@ -101,6 +101,7 @@ class Model(Agent):
         last_action = self.actions.get_last()
         int_action, ext_action, position, write_content = self.policy_model.unpack_action(last_action)
         memory_state = np.copy(self.policy_model.unpack_memory(last_action))  # the policy's previous memory state
+        write_feedback = np.copy(write_content)  # the previous write value as the policy's recurrence reads it back
         memory_reset = np.zeros((batch_size,), dtype=bool)  # the policy restarts its recurrence here instead of sliding through
 
         memory_action = [Graph_Memory_Operation_Type.IDLE for _ in range(batch_size)]
@@ -116,6 +117,7 @@ class Model(Agent):
                 # reset position and the policy's memory state
                 position[i, :] = np.zeros_like(position[i, :])
                 memory_state[i, :] = np.zeros_like(memory_state[i, :])
+                write_feedback[i, :] = 0
                 memory_reset[i] = True
             self.last_dones[-1][i] = d
             self.last_truncates[-1][i] = t
@@ -143,6 +145,7 @@ class Model(Agent):
                 b_int=int_action,
                 b_ext=ext_action,
                 b_position=position,
+                b_write=write_feedback,
                 b_memory_reset=memory_reset,
                 b_memory=memory_state,
                 b_content=np.concatenate([context, content], axis=-1)

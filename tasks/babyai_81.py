@@ -184,7 +184,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_b"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_c"
     if args.st_train:
         experiment_path += "_stmean"
 
@@ -232,7 +232,7 @@ if __name__ == "__main__":
         minibatch_size = 8
         rollout_length = 256
     elif args.scale == "medium":
-        # 8.xGB VRAM
+        # 21GB VRAM
         hidden_size = 256
         embedding_dim = 32
         node_dim = 32
@@ -243,7 +243,7 @@ if __name__ == "__main__":
         minibatch_size = 16
         rollout_length = 256
     else:
-        # large 9.3GB VRAM
+        # large 30GB VRAM
         hidden_size = 256
         embedding_dim = 32
         node_dim = 32
@@ -251,8 +251,8 @@ if __name__ == "__main__":
         layers = [1, 1, 1, 1]
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 64
-        rollout_length = 64
+        minibatch_size = 22
+        rollout_length = 256
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -285,7 +285,7 @@ if __name__ == "__main__":
         num_nodes=4096,
         max_edges_per_node=C,
         node_dim=node_dim,
-        # node values are the top recurrent layer's state (unbounded for lstm, [-1, 1] for gru)
+        # node values are the policy's sampled write values in [0, 1]^node_dim
         start_node_value=0.0,
         empty_value=0.0,
     )
