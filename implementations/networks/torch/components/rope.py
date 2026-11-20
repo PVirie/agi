@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from implementations.networks.torch.components.base import init_weights
+
 # ==========================================
 # 1. Core Utilities (RoPE, Attention, FFN)
 # ==========================================
@@ -212,6 +214,9 @@ class RoPEDecoderOnly(nn.Module, MaskGenerationMixin):
         
         self.layers = nn.ModuleList([GPTDecoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
         self.norm = nn.LayerNorm(d_model)
+
+    def reset_parameters(self):
+        self.apply(init_weights)
 
     def forward(self, x, pad_mask=None):
         device = x.device

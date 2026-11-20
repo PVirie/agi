@@ -78,7 +78,7 @@ def apply_cascading_masks(masks, *stop_conditions):
 class Model_Base(Agent):
     
     def __init__(self, 
-                 policy_model: Actor_Network, value_model: Value_Network,
+                 policy_model: Actor_Network,
                  trainer: RL_Learner, 
                  context_collector: Context_Collector, 
                  action_collector: Context_Collector, 
@@ -86,13 +86,14 @@ class Model_Base(Agent):
                  do_supervision: bool = False
                  ):
         self.policy_model = policy_model
-        self.value_model = value_model
         self.trainer = trainer
         self.obs = context_collector
         self.actions = action_collector
         self.valid_actions = valid_action_collector
         self.do_supervision = do_supervision
-        self.observe_external_int_actions = [0]
+
+        # the last ext action slot means "idle": no env step this turn
+        self.idle_ext_action = self.policy_model.ext_action_size - 1
 
         self.reset()
 
@@ -106,7 +107,7 @@ class Model_Base(Agent):
         self.last_dones = []
         self.last_truncates = []
 
-        self.thought_steps = None
+        self.resetted = True
 
 
     def choose_action(self, 
@@ -118,8 +119,9 @@ class Model_Base(Agent):
         current_cl = len(self.rewards)
 
         # initialize
-        if self.thought_steps is None:
-            self.thought_steps = [0 for _ in range(batch_size)]
+        first_call = self.resetted
+        if self.resetted:
+            self.resetted = False
             self.obs.append(
                 np.zeros((batch_size, self.policy_model.packed_context_size), dtype=np.float32)
             )
@@ -127,7 +129,6 @@ class Model_Base(Agent):
                 np.zeros((batch_size, self.policy_model.packed_action_size), dtype=np.float32)
             )
             self.valid_actions.append(
-                np.ones((batch_size, self.policy_model.int_action_size), dtype=bool),
                 np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
             )
             self.rewards.append(
@@ -142,37 +143,32 @@ class Model_Base(Agent):
 
         # get last action's position
         last_action = self.actions.get_last()
-        int_action, ext_action, position, last_content = self.policy_model.unpack_action(last_action)
+        ext_action, last_content = self.policy_model.unpack_action(last_action)
 
         for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
-            flag = int_action[i].item()
             if idle:
-                # if idle, use content and reward from last thought
-                content[i, :] = last_content[i, :]
                 reward[i] = 0
-            if d or t:
-                self.thought_steps[i] = 0
-                # reset position
-                position[i, :] = np.zeros_like(position[i, :])
             self.last_idles[-1][i] = idle
             self.last_dones[-1][i] = d
             self.last_truncates[-1][i] = t
 
-        # replace the reward and content
+        # this context holds a new episode's first observation; the previous reward and ext action belong to the old episode,
+        # so the policy sees them zeroed (self.rewards for the trainer keeps the real reward)
+        episode_start = np.array(last_resets, dtype=bool) | first_call
+        policy_reward = np.copy(reward)
+        policy_reward[episode_start] = 0
+        policy_ext = np.copy(ext_action)
+        policy_ext[episode_start] = 0
         self.obs.update_last(
             self.policy_model.pack_context(
-                b_reward=reward,
-                b_int=int_action,
-                b_ext=ext_action,
-                b_position=position,
+                b_reward=policy_reward,
+                b_ext=policy_ext,
+                b_episode_start=episode_start,
                 b_content=content
             )
         )
         self.rewards[-1] = reward
         self.valid_actions.update_last(
-            make_valid_mask([
-                self.observe_external_int_actions for i in range(batch_size)
-            ], self.policy_model.int_action_size),
             make_valid_mask(next_available_actions, self.policy_model.ext_action_size)
         )
 
@@ -207,7 +203,7 @@ class Model_Base(Agent):
                 next_dones=self.last_dones[1:],
                 valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
                 masks=masks,
-                aux_masks=svl_masks
+                aux=svl_masks
             )
             
             left_over_slide = self.obs.mark(skip_last=True)
@@ -227,12 +223,13 @@ class Model_Base(Agent):
         packed_action = packed_action[:, -1, ...]
 
         # extract output here
-        int_action, ext_action, position, content = self.policy_model.unpack_action(packed_action)
+        ext_action, content = self.policy_model.unpack_action(packed_action)
 
         # check flag for external observation override and update thought steps
-        return_action = [None for _ in range(batch_size)]
-        for i in range(batch_size):
-            return_action[i] = ext_action[i]
+        return_action = [
+            ext_action[i] if int(ext_action[i].item()) != self.idle_ext_action else None
+            for i in range(batch_size)
+        ]
 
         # populate last states
         self.obs.append(
@@ -240,7 +237,6 @@ class Model_Base(Agent):
         )
         self.actions.append(packed_action)
         self.valid_actions.append(
-            np.ones((batch_size, self.policy_model.int_action_size), dtype=bool),
             np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
         )
         self.rewards.append(np.zeros((batch_size,), dtype=np.float32))
@@ -248,7 +244,7 @@ class Model_Base(Agent):
         self.last_dones.append([False for _ in range(batch_size)])
         self.last_truncates.append([False for _ in range(batch_size)])
 
-        return return_action, position
+        return return_action, []
     
 
 if __name__ == "__main__":
