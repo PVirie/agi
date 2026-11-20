@@ -344,6 +344,10 @@ if __name__ == "__main__":
 
     # act one step at a time as model_base does, through a collector holding the last H + 1 contexts
     collector = State_Sequence(max_history=H)
+    # record how many steps each encode call processes, to see the cache at work
+    encoded_steps = []
+    full_encode = core._encode_context
+    core._encode_context = lambda context: (encoded_steps.append(context.shape[1]), full_encode(context))[1]
     episode_start = np.zeros((B, T + 1), dtype=bool)
     episode_start[:, 0] = True
     episode_start[0, 8] = True  # batch 0 starts a new episode mid-sequence
@@ -353,11 +357,21 @@ if __name__ == "__main__":
         ext_action, content = core.unpack_action(last_action)
         assert ext_action.shape == (B, 1) and content.shape == (B, 0)
         collector.append(core.pack_context(b_reward=np.random.rand(B), b_ext=ext_action, b_episode_start=episode_start[:, t], b_content=random_content()))
-        packed = core.get_action(collector.get_last_batch(), valid[:, max(0, t - H): t + 1])
+        window = collector.get_last_batch()
+        packed = core.get_action(window, valid[:, max(0, t - H): t + 1])
+        with torch.no_grad():
+            assert torch.allclose(core._token_cache[1], full_encode(torch.tensor(window, dtype=torch.float32)), atol=1e-5), f"cached tokens differ at step {t}"
         assert packed.shape == (B, min(t, H) + 1, core.packed_action_size)
         last_action = packed[:, -1]
         actions.append(last_action)
     contexts = torch.tensor(collector.make_batch(), dtype=torch.float32)
+    assert encoded_steps == [1] * (T + 1), "after the first step, acting must encode only the newest step"
+    core.get_action(np.ascontiguousarray(collector.get_last_batch()[:, ::-1]))
+    assert encoded_steps[-1] == H + 1, "a window that does not continue the cached one must be encoded in full"
+    core._encode_context = full_encode
+    core.train()
+    assert core._token_cache is None, "entering train mode must drop the cache"
+    core.eval()
     actions = np.stack(actions, axis=1)  # actions[:, t] was taken after contexts[:, t]
     assert valid[np.arange(B)[:, None], np.arange(T + 1), actions[..., 0].astype(int)].all(), "sampled ext actions must be valid"
 
