@@ -3,10 +3,10 @@ import torch.nn as nn
 import numpy as np
 
 from interfaces.network import Actor_Network, Policy_Value_Network
-from implementations.networks.torch.components.base import Categorical_With_Mask, init_weights
+from implementations.networks.torch.components.base import Categorical_With_Mask
 from implementations.networks.torch.components.std_conv import FiLMMiniGridCNN
 from implementations.networks.torch.components.std_lstm import Sample_Type, Straight_Through_Recurrent_Cell
-from implementations.networks.torch.components.transformer import InstructionTransformer, get_padding_mask
+from implementations.networks.torch.components.transformer import InstructionTransformer, Cross_Modal_Fusion, get_padding_mask
 from implementations.networks.torch.policy.base import Policy_Core as Base_Policy_Core
 from utilities.safe_torch_module import Safe_nn_Module
 
@@ -26,13 +26,14 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
                  cnn_channels=128, cnn_blocks=2,
                  value_size=1,
                  cell="lstm",
+                 fusion_queries=4, fusion_layers=1,
                  device=None, 
                  persistence_path=None, first_load_path=None):
         """
         Pipeline per step:
-            instruction, inventory -> embedding --------------------+
-            graph context (head + edge nodes) -> node projection ---+-> transformer -> CLS --+-> linear -> latent
-            obs -> FiLM CNN (conditioned on the CLS) ----------------------------------------+
+            graph context (head + edge nodes) -> transformer ----------------------+
+            instruction, inventory -> embedding -> transformer (graph cond token) --+-> cross-modal fusion -> latent
+            obs -> FiLM CNN (conditioned on the instruction CLS) -------------------+
             latent (+ prev ext action), prev memory state, prev internal output
                 -> Straight_Through_Recurrent_Cell -> internal output (int flag, edge_1, edge_2, write value), memory state, hidden
             hidden -> ext head, value head
@@ -43,9 +44,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             int flag and edges are categorical (fed back as one-hots), the graph write value is continuous in [0, 1]^node_dim
         memory_dim: per-layer recurrent state width (default hidden_size), scaled independently of the hidden units
         (cf. BabyAI 1.1's 2048-d memory); the memory stack rides in every context and action, so it costs len(layers) * memory_dim floats per step.
-        Graph nodes are transformer tokens after the instruction and inventory (projected to embedding_dim if node_dim differs):
-        they are never padding, and the positional encoding tells the slots apart
-        (slot 0 is the head node, slot i the i-th edge, which the edge heads index).
+        fusion_queries, fusion_layers: learned queries and cross-attention layers of the fusion read
         """
         nn.Module.__init__(self)
         Safe_nn_Module.__init__(self, name="babyai_lstm_core", device=device, persistence_path=persistence_path)
@@ -99,17 +98,29 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
         self.goal_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
         self.inv_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for inventory tokens
-        self.node_projection = nn.Linear(node_dim, embedding_dim) if node_dim != embedding_dim else nn.Identity()
 
         self.goal_feature_extraction = InstructionTransformer(
             input_dim=embedding_dim,
             d_model=hidden_size,
             nhead=8,
-            num_layers=4,
+            num_layers=2,
             dropout=0.0,
-            max_len=goal_size + inventory_size + internal_state_size,
+            max_len=goal_size + inventory_size,
             use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
             pooling="cls",  # mean pooling dilutes order-dependent structure ("A then B" vs "B then A")
+            cond_dim=hidden_size,  # graph context token lets memory select which mission clause to attend
+        )
+
+        # graph summary: self-attention over the node slots; the PE tells slot 0 (head) from the edge slots
+        self.internal_state_feature_extraction = InstructionTransformer(
+            input_dim=node_dim,
+            d_model=hidden_size,
+            nhead=4,
+            num_layers=2,
+            dropout=0.0,
+            max_len=internal_state_size,
+            use_pe=True,
+            pooling="cls",
         )
 
         # vision conditioned via FiLM on the graph-aware instruction features
@@ -122,9 +133,14 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             channels=cnn_channels, num_blocks=cnn_blocks
         )
 
-        self.latent_projection = nn.Sequential(
-            nn.Linear(2 * hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size)
+        self.fusion = Cross_Modal_Fusion(
+            hidden_size=hidden_size,
+            node_dim=node_dim,
+            num_nodes=internal_state_size,
+            map_channels=cnn_channels,
+            num_cells=width * height,
+            num_queries=fusion_queries,
+            num_layers=fusion_layers,
         )
 
         # internal heads [int flag, edge_1, edge_2, write value] live in the cell: their samples feed back into the recurrence.
@@ -164,11 +180,11 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         # Reset parameters of all layers
         self.goal_embedding.reset_parameters()
         self.inv_embedding.reset_parameters()
-        self.node_projection.apply(init_weights)
 
         self.goal_feature_extraction.reset_parameters()
+        self.internal_state_feature_extraction.reset_parameters()
         self.conv_layers.reset_parameters()
-        self.latent_projection.apply(init_weights)
+        self.fusion.reset_parameters()
         self.recurrent_cell.reset_parameters()
 
         def init_actor_weights(m):
@@ -201,25 +217,33 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         batch_size, context_size = internal_state.shape[:2]
         n = batch_size * context_size
 
-        node_tokens = self.node_projection(
-            internal_state.reshape(batch_size, context_size, self.internal_state_size, self.node_dim)
-        )  # (batch_size, context_size, internal_state_size, embedding_dim)
+        graph_nodes = internal_state.reshape(batch_size, context_size, self.internal_state_size, self.node_dim)
+        graph_summary = self.internal_state_feature_extraction(
+            graph_nodes, graph_nodes.new_ones(batch_size, context_size, self.internal_state_size)
+        )  # (batch_size, context_size, hidden_size)
 
-        padding_mask = torch.concat([
-            get_padding_mask(torch.concat([goal, inv], dim=-1), self.pad_token_id),
-            node_tokens.new_ones(batch_size, context_size, self.internal_state_size)
-        ], dim=-1)  # (batch_size, context_size, goal_size + inventory_size + internal_state_size)
-        tokens = torch.concat([
+        goal_inv = torch.concat([goal, inv], dim=-1)  # (batch_size, context_size, goal_size + inventory_size)
+        padding_mask = get_padding_mask(goal_inv, self.pad_token_id)  # (batch_size, context_size, goal_size + inventory_size)
+        goal_inv_embedded = torch.concat([
             self.goal_embedding(goal.long()),
-            self.inv_embedding(inv.long()),
-            node_tokens
-        ], dim=2)  # (batch_size, context_size, goal_size + inventory_size + internal_state_size, embedding_dim)
-        instruction_summary = self.goal_feature_extraction(tokens, padding_mask)  # (batch_size, context_size, hidden_size)
+            self.inv_embedding(inv.long())
+        ], dim=2)  # (batch_size, context_size, goal_size + inventory_size, embedding_dim)
+        instruction_summary, instruction_tokens = self.goal_feature_extraction(
+            goal_inv_embedded, padding_mask, cond=graph_summary, return_tokens=True
+        )  # (batch_size, context_size, hidden_size), (batch_size, context_size, goal_size + inventory_size, hidden_size)
 
         obs = torch.reshape(obs, (n, self.height, self.width, self.channel))
-        obs_summary = self.conv_layers(obs, instruction_summary.reshape(n, self.hidden_size))  # (n, hidden_size)
+        obs_summary, obs_map = self.conv_layers(obs, instruction_summary.reshape(n, self.hidden_size), return_map=True)
 
-        latent = self.latent_projection(torch.concat([instruction_summary.reshape(n, self.hidden_size), obs_summary], dim=-1))
+        latent = self.fusion(
+            graph_nodes=internal_state.reshape(n, self.internal_state_size, self.node_dim),
+            graph_summary=graph_summary.reshape(n, self.hidden_size),
+            instruction_tokens=instruction_tokens.reshape(n, -1, self.hidden_size),
+            instruction_mask=padding_mask.reshape(n, -1),
+            instruction_summary=instruction_summary.reshape(n, self.hidden_size),
+            obs_map=obs_map,
+            obs_summary=obs_summary,
+        )
         return latent.view(batch_size, context_size, self.hidden_size)
 
 
@@ -393,7 +417,7 @@ if __name__ == "__main__":
     valid[:, :, 0] = True
     valid[:, :, 6] = True
 
-    # every graph slot is a transformer token, so changing any one node changes the latent
+    # every graph slot reaches the fusion, so changing any one node changes the latent
     def encode_context(context):
         return core.encode(
             context[:, :, core.internal_state_pos: core.goal_pos], context[:, :, core.goal_pos: core.inv_pos],
