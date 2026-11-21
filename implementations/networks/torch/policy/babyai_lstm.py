@@ -22,6 +22,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
                  width, height, channel,
                  dict_size, embedding_dim, pad_token_id,
                  hidden_size, layers, 
+                 memory_dim=None,
                  cnn_channels=128, cnn_blocks=2,
                  value_size=1,
                  cell="lstm",
@@ -40,6 +41,8 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             internal heads: backpropagation only, straight-through the sampled output fed into later steps,
             plus their entropy as the aux loss (get_log_prob_with_value_aux, weighted by the learner's aux_coef);
             int flag and edges are categorical (fed back as one-hots), the graph write value is continuous in [0, 1]^node_dim
+        memory_dim: per-layer recurrent state width (default hidden_size), scaled independently of the hidden units
+        (cf. BabyAI 1.1's 2048-d memory); the memory stack rides in every context and action, so it costs len(layers) * memory_dim floats per step.
         Graph nodes are transformer tokens after the instruction and inventory (projected to embedding_dim if node_dim differs):
         they are never padding, and the positional encoding tells the slots apart
         (slot 0 is the head node, slot i the i-th edge, which the edge heads index).
@@ -67,11 +70,12 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
         self.position_size = 2
         self.content_size = internal_state_size * node_dim + goal_size + inventory_size + width * height * channel
-        # one recurrent layer per entry of layers, each with a hidden_size state; the stacked state is the memory
+        # one recurrent layer per entry of layers, each with a memory_dim state; the stacked state is the memory
         # cell: "lstm" (state = unbounded cell states c), "gru" (state = hidden states h in [-1, 1])
         # or "residual" (state = unbounded residual states s, s' = s + update)
         self.cell = cell
-        self.memory_size = len(layers) * hidden_size
+        self.memory_dim = memory_dim if memory_dim is not None else hidden_size
+        self.memory_size = len(layers) * self.memory_dim
         # the internal outputs [int flag, edge_1, edge_2, write value (node_dim)] are contiguous, in the recurrent cell's head order,
         # in both the action and the context; ext comes before them
         self.internal_output_size = 1 + self.position_size + node_dim
@@ -102,7 +106,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             d_model=hidden_size,
             nhead=8,
             num_layers=4,
-            dropout=0.01,
+            dropout=0.0,
             max_len=goal_size + inventory_size + internal_state_size,
             use_pe=True,  # mission semantics depend on word order (attribute binding, "then"/"after")
             pooling="cls",  # mean pooling dilutes order-dependent structure ("A then B" vs "B then A")
@@ -126,9 +130,9 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         # internal heads [int flag, edge_1, edge_2, write value] live in the cell: their samples feed back into the recurrence.
         # the previous ext action is a plain input: its effect goes through the environment, which is not differentiable
         self.recurrent_cell = Straight_Through_Recurrent_Cell(
-            output_dims=hidden_size,
+            output_dims=hidden_size * 2,
             input_dims=hidden_size + ext_action_size,
-            hidden_dims=hidden_size,
+            hidden_dims=self.memory_dim,
             layers=[hidden_size for _ in layers],
             heads=[
                 (Sample_Type.CATEGORICAL, int_action_size),
@@ -140,13 +144,13 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         )
 
         self.head_ext = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(hidden_size * 2, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, ext_action_size)
         )
 
         self.head_value = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(hidden_size * 2, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, value_size)
         )
@@ -372,7 +376,7 @@ if __name__ == "__main__":
         goal_size=5, inventory_size=3,
         width=7, height=7, channel=3,
         dict_size=32, embedding_dim=8, pad_token_id=0,
-        hidden_size=32, layers=[1, 1],
+        hidden_size=32, layers=[1, 1], memory_dim=48,
         cnn_channels=16, cnn_blocks=1,
         cell="gru",
         device=torch.device("cpu"),
@@ -433,7 +437,7 @@ if __name__ == "__main__":
     assert torch.allclose(memory_state, actions[:, :, 4 + D:], atol=1e-5), "unrolled memory differs from the acted memory"
     assert np.allclose(core.unpack_memory(actions[:, -1].numpy()), actions[:, -1, 4 + D:].numpy())
     write_value = core.unpack_action(actions[:, -1].numpy())[3]
-    assert core.memory_size == 2 * 32 and write_value.shape == (B, D), "the memory stack is hidden_size per layer, the write value node_dim"
+    assert core.memory_size == 2 * 48 and write_value.shape == (B, D), "the memory stack is memory_dim (not hidden_size) per layer, the write value node_dim"
     assert ((write_value >= 0) & (write_value <= 1)).all() and np.unique(write_value).size > 1, "the write value is sampled in [0, 1]^node_dim"
     assert internal_logits[3].shape == (B, T + 1, 2 * D), "the write head outputs one Beta (alpha, beta) per dim"
     with torch.no_grad():

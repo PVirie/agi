@@ -157,7 +157,7 @@ if __name__ == "__main__":
     parser.add_argument("--scale",                  "-s",   type=str, default="medium", choices=["small", "medium", "large"], help="The scale of the neural network. Default is 'medium'.")
     parser.add_argument("--st-train",               "-stt",   action="store_true", help="Use spatio-temporal training for the agent. Default is False.")
     parser.add_argument("--silent",                 "-silent", action="store_true", help="Disable reward logging for cleaner output.")
-    parser.add_argument("--cell",                   "-cell", type=str, default="residual", choices=["lstm", "gru", "residual"], help="Recurrent cell of the policy memory. Default is 'gru'.")
+    parser.add_argument("--cell",                   "-cell", type=str, default="gru", choices=["lstm", "gru", "residual"], help="Recurrent cell of the policy memory. Default is 'gru'.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
     parser.add_argument("--int-ent-coef",           "-ient", type=float, default=0.01, help="Entropy coefficient of the internal heads (the policy's aux loss). Default is 0.01.")
     args = parser.parse_args()
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_c"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_d"
     if args.st_train:
         experiment_path += "_stmean"
 
@@ -226,33 +226,36 @@ if __name__ == "__main__":
         embedding_dim = 32
         node_dim = 32
         C = 3
-        layers = [1, 1, 1]
+        layers = [1]  # BabyAI 1.1: a single wide recurrent layer
+        memory_dim = 2048
         cnn_channels = 64
         cnn_blocks = 2
         minibatch_size = 8
-        rollout_length = 256
+        rollout_length = 84
     elif args.scale == "medium":
-        # 15.8GB VRAM
+        # 10GB VRAM
         hidden_size = 256
         embedding_dim = 32
         node_dim = 32
         C = 7
-        layers = [1, 1, 1, 1]
+        layers = [1]  # BabyAI 1.1: a single wide recurrent layer
+        memory_dim = 2048
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 16
-        rollout_length = 256
+        minibatch_size = 32
+        rollout_length = 84
     else:
         # large 30GB VRAM
         hidden_size = 256
         embedding_dim = 32
         node_dim = 32
         C = 7
-        layers = [1, 1, 1, 1]
+        layers = [1]  # BabyAI 1.1: a single wide recurrent layer
+        memory_dim = 2048
         cnn_channels = 128
         cnn_blocks = 2
-        minibatch_size = 22
-        rollout_length = 256
+        minibatch_size = 32
+        rollout_length = 84
 
     parameters_path = f"{experiment_path}/parameters"
     os.makedirs(parameters_path, exist_ok=True)
@@ -263,7 +266,8 @@ if __name__ == "__main__":
         goal_size=mission_size, inventory_size=inventory_size,
         width=7, height=7, channel=3,
         dict_size=vocab_size, embedding_dim=embedding_dim, pad_token_id=0,
-        hidden_size=hidden_size, layers=layers,
+        hidden_size=hidden_size, layers=layers, 
+        memory_dim=memory_dim,
         cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
         cell=args.cell,
         device=device, persistence_path=parameters_path
