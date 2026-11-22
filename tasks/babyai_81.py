@@ -160,6 +160,7 @@ if __name__ == "__main__":
     parser.add_argument("--cell",                   "-cell", type=str, default="gru", choices=["lstm", "gru", "residual"], help="Recurrent cell of the policy memory. Default is 'gru'.")
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
     parser.add_argument("--int-ent-coef",           "-ient", type=float, default=0.01, help="Entropy coefficient of the internal heads (the policy's aux loss). Default is 0.01.")
+    parser.add_argument("--reward-scaling",         "-rs",   action="store_true", help="Scale reward by the number of sub goals. Default is disabled.")
     args = parser.parse_args()
 
 
@@ -187,6 +188,8 @@ if __name__ == "__main__":
     experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_e"
     if args.st_train:
         experiment_path += "_stmean"
+    if args.reward_scaling:
+        experiment_path += "_rs"
 
     if args.reset:
         # clear the experiment path
@@ -212,7 +215,8 @@ if __name__ == "__main__":
         bonus_type=BonusType.NONE,
         # extrinsic only: single-stream ppo_graph with a single value head (policy value_size=1)
         has_intrinsic_reward=False,
-        mission_translator=shorten_mission
+        mission_translator=shorten_mission,
+        scale_reward_by_sub_goals=args.reward_scaling,
     )
 
     mission_size = env.mission_max_len

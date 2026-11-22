@@ -33,17 +33,21 @@ class Multi_Environment:
         include_inventory=True,
         bonus_type=BonusType.NONE,
         has_intrinsic_reward=False,
-        mission_translator=None
+        mission_translator=None,
+        scale_reward_by_sub_goals=False
         ):
         """
         has_intrinsic_reward: if True, step() returns each reward as [extrinsic, intrinsic]; otherwise as [extrinsic].
                               The intrinsic channel carries the position bonus (0 when position_bonus is off).
                               position_bonus requires has_intrinsic_reward, so the bonus never leaks into the extrinsic reward.
+        scale_reward_by_sub_goals: if True, the extrinsic reward is multiplied by the number of sub-goals in the episode's
+                              mission, so a mission with n sub-goals has a maximum return of n instead of 1.
         """
         if bonus_type != BonusType.NONE and not has_intrinsic_reward:
             raise ValueError("bonus is an intrinsic reward; set has_intrinsic_reward=True")
         self.has_intrinsic_reward = has_intrinsic_reward
         self.reward_size = 2 if has_intrinsic_reward else 1
+        self.scale_reward_by_sub_goals = scale_reward_by_sub_goals
 
         self.mission_max_len = mission_max_len
         self.mission_translator = mission_translator
@@ -88,6 +92,7 @@ class Multi_Environment:
         self.total_idle = [0] * total # idle (None) actions in the current episode
         self.env_steps = 0 # env transitions in this session; the persistent count is the cumsum of "e" in Episode_Recorder
         self.total_duration = [0] * total # store the start time of the episode for each env, misnoming but consistent with other statistics
+        self.goal_counts = [1] * total # sub-goals in each env's current mission
 
 
     def reset(self, seed=None):
@@ -97,6 +102,7 @@ class Multi_Environment:
             obs, info = env.reset(seed=None if seed is None else seed + i)
             self.return_obs[i] = self.obs_to_object(obs)
             self.return_infos[i] = None
+            self.goal_counts[i] = self._count_goals(i)
 
             self.total_return[i] = 0
             self.total_aux_return[i] = 0
@@ -107,11 +113,17 @@ class Multi_Environment:
         return self.return_obs, self.return_infos
 
 
-    def _finish_episode(self, i):
-        # read the finished episode's mission before reset replaces it; every mission is at least one goal
+    def _count_goals(self, i):
+        # every mission is at least one goal
         # (non-BabyAI MiniGrid missions, e.g. "get to the green goal square", have no parsable action phrase)
-        goal_count = max(1, count_sub_goals(self.envs[i].unwrapped.mission))
+        return max(1, count_sub_goals(self.envs[i].unwrapped.mission))
+
+
+    def _finish_episode(self, i):
+        # the finished episode's goal count; reset below replaces the mission
+        goal_count = self.goal_counts[i]
         obs, _ = self.envs[i].reset() # You must manually reset!
+        self.goal_counts[i] = self._count_goals(i)
         # MiniGrid/BabyAI only emit a positive reward (1 - 0.9*steps/max_steps) on task completion
         success = self.total_return[i] > 0
         self.return_infos[i] = {
@@ -153,6 +165,8 @@ class Multi_Environment:
             # OriginalRewardWrapper records the pre-bonus reward; whatever Bonus added on top is intrinsic
             extrinsic_reward = float(info.get('original_reward', reward)) if info else float(reward)
             intrinsic_reward = float(reward) - extrinsic_reward
+            if self.scale_reward_by_sub_goals:
+                extrinsic_reward *= self.goal_counts[i]
             if self.has_intrinsic_reward:
                 self.return_rewards[i] = np.array([extrinsic_reward, intrinsic_reward], dtype=np.float32)
             else:
@@ -162,7 +176,7 @@ class Multi_Environment:
             self.return_infos[i] = None
 
             self.total_return[i] += extrinsic_reward
-            self.total_aux_return[i] += reward
+            self.total_aux_return[i] += extrinsic_reward + intrinsic_reward
             self.total_length[i] += 1
             self.env_steps += 1
             if termination or truncation:

@@ -118,10 +118,14 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] Model 77: Simplified Cognitive map building
     - [x] "recognized" location linking
     - [x] External to internal action transfer
-- [x] flipflop dataset (model 76)
-- [x] minigrid block-unlock-pickup (model 76)
-- [ ] Model 81:
+- [x] Model 81:
     - [x] Simplify 76 actions
-    - [ ] Gradient though all internal actions
-- [ ] babyai boss level vs LSTM
-- [ ] atari montezuma's revenge
+    - [x] Gradient though all internal actions
+- [ ] Experiments:
+    - [x] flipflop dataset (model 76)
+    - [x] minigrid block-unlock-pickup (model 76)
+    - [ ] babyai miniboss level (attention baseline)
+    - [ ] babyai miniboss level (rnn baseline)
+    - [ ] babyai miniboss level (model 81)
+    - [ ] babyai boss level (model 81)
+    - [ ] atari montezuma's revenge
