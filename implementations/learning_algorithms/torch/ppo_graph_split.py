@@ -1,0 +1,321 @@
+from typing import Any, List
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import time
+import logging
+
+from interfaces.learning import RL_Learner
+from interfaces.network import Policy_Value_Network
+from utilities.safe_torch_module import Safe_nn_Module
+
+from .base import convert_list_of_list_of_bool_to_float_tensor, convert_np_array_to_float_tensor, convert_list_of_np_array_to_float_tensor, convert_list_of_np_array_to_int_tensor, convert_np_array_to_bool_tensor
+from .base import masked_mean, masked_std
+from .graph_credit import compute_graph_gae
+
+
+class PPO(RL_Learner, Safe_nn_Module):
+
+    def __init__(self, 
+                 policy_model: Policy_Value_Network, 
+                 device, persistence_path=None, 
+                 lr=3e-4, minibatch_size=8,
+                 gamma=0.99,
+                 gamma_intrinsic=0.99,
+                 gae_lambda=None,
+                 ext_coef=2.0,
+                 int_coef=1.0,
+                 ent_coef=0.01,
+                 use_graph=False,
+                 aux_coef=None,
+                 episodic_intrinsic=True):
+        """
+        PPO with dual value estimation (extrinsic + intrinsic) and a policy split between the two streams:
+        each stream trains its own part of the policy with its own advantage (e.g. model 82: the ext action
+        learns from the extrinsic return, the internal actions from the intrinsic return).
+
+        The policy model's get_log_probability_with_value must return
+          - log-probs and entropies of shape (batch_size, context_length, 2): [..., 0] the part trained by the
+            extrinsic advantage, [..., 1] the part trained by the intrinsic advantage;
+          - values of shape (batch_size, context_length + 1, 2): [..., 0] extrinsic, [..., 1] intrinsic.
+
+        Each stream gets its own GAE (own discount), its own return target and its own value loss.
+        Each part gets its own normalised advantage and clipped ratio; the two surrogate losses are weighted by
+        ext_coef and int_coef. The entropy bonus sums both parts; approx_kl is of the joint policy.
+        The extrinsic stream is episodic: it resets on next_dones. The intrinsic stream also resets unless
+        episodic_intrinsic is False (e.g. an exploration bonus, whose return carries across episodes).
+
+        gamma: discount of the extrinsic stream.
+        gamma_intrinsic: discount of the intrinsic stream.
+        use_graph: if True, `causes` passed to learn() are used for graph-based credit assignment
+                   on both streams independently; otherwise `causes` are ignored and standard GAE is used.
+        aux_coef: coefficient of the policy's auxiliary loss (from get_log_prob_with_value_aux).
+                  If None, no auxiliary loss is used.
+        episodic_intrinsic: if True, the intrinsic stream's GAE stops at episode ends (next_dones) like the extrinsic one;
+                  if False, it bootstraps through them (non-episodic, Burda et al. 2018).
+
+        Issue: NaN when the sample actions are not on-policy.
+        """
+        self.policy_model = policy_model
+        self.device = device
+
+        self.lr = lr
+        self.gamma = 0.99 if gamma is None else gamma
+        self.gamma_intrinsic = 0.99 if gamma_intrinsic is None else gamma_intrinsic
+        self.gae_lambda = 0.95 if gae_lambda is None else gae_lambda
+        self.ext_coef = ext_coef
+        self.int_coef = int_coef
+        self.clip_coef = 0.2
+        self.norm_adv = True
+        self.clip_vloss = True
+        self.ent_coef = ent_coef
+        self.vf_coef = 0.5
+        self.max_grad_norm = 0.5
+        self.target_kl = None
+
+        self.aux_coef = aux_coef
+        self.episodic_intrinsic = episodic_intrinsic
+
+        self.update_epochs = 4
+        self.last_stats = {}
+        self.minibatch_size = minibatch_size
+
+        self.use_graph = use_graph
+        # How causal credit received by a step is aggregated across the future steps it caused.
+        # 'amax' keeps the best future return; 'mean' averages them.
+        self.causal_reduce = 'mean'  # one of {'amax', 'mean'}
+        # Weight of the causal credit against the step's own GAE return. Fixed, so a step that is
+        # referenced by many descendants does not lose its own learning signal to the average.
+        self.causal_alpha = 0.8
+        # Discount applied once per causal hop; kept separate from gamma so the graph shortcut
+        # can be priced independently of the temporal discount.
+        self.causal_decay = 0.99
+
+        self.all_parameters = list(self.policy_model.parameters())
+        self.optimizer = optim.Adam(self.all_parameters, lr=self.lr, eps=1e-5)
+
+        Safe_nn_Module.__init__(self, 
+            device=device, persistence_path=persistence_path, 
+            modules={"ppo_learner": self.optimizer}
+        )
+
+        self.load()
+
+
+    def update_learning_rate(self, time = 0.0):
+        frac = max(1.0 - time, 0.01)
+        lrnow = frac * self.lr
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = lrnow
+
+
+    def learn(self, 
+              obs: Any, 
+              last_actions: Any, 
+              rewards: List[Any], 
+              next_dones: List[List[bool]],
+              valid_actions: Any = None, 
+              masks: Any = None, 
+              aux: Any = None,
+              causes: Any = None
+            ):
+        """
+        obs: np array of shape (batch_size, context_length + 1, ...)
+        last_actions: np array of shape (batch_size, context_length + 1, ...)
+        rewards: list (context_length) of np array of shape (batch_size, 2); [:, 0] extrinsic, [:, 1] intrinsic
+        next_dones: list (context_length) of bools of length batch_size
+        valid_actions: np array of shape (batch_size, context_length, ...)
+        masks: np array of shape (batch_size, context_length)
+        aux: np array of shape (batch_size, context_length); mask of the auxiliary loss, defaults to masks; only used when aux_coef is set
+        causes: np array of shape (batch_size, context_length + 1, cause_size); only used when use_graph is True
+
+        Note that obs and last_actions include the context length + 1 items.
+        This corresponds to the observations after taking the last actions.
+
+        In graph mode, causes is a list of previous context indices that cause the current one.
+        All return values from the current context index should be propagated to the cause context indices as well, not just the previous step.
+        """
+        # Use dim 0 as context length dimension
+        b_obs = convert_np_array_to_float_tensor(obs, self.device)
+        b_actions = convert_np_array_to_float_tensor(last_actions, self.device)
+        b_rewards = convert_list_of_np_array_to_float_tensor(rewards, self.device)   # (batch_size, context_length, 2)
+        b_next_dones = convert_list_of_list_of_bool_to_float_tensor(next_dones, self.device)
+        b_valid_actions = convert_np_array_to_bool_tensor(valid_actions, self.device) if valid_actions is not None else None
+        b_causes = convert_list_of_np_array_to_int_tensor(causes, self.device) if (self.use_graph and causes is not None) else None
+
+        if b_rewards.dim() != 3 or b_rewards.shape[2] != 2:
+            raise ValueError(f"rewards must be a list of (batch_size, 2) arrays [extrinsic, intrinsic]; got stacked shape {tuple(b_rewards.shape)}")
+
+        batch_size = b_rewards.shape[0]
+        sequence_size = b_rewards.shape[1]
+        num_streams = b_rewards.shape[2]
+
+        b_masks = torch.ones((batch_size, sequence_size), device=self.device) if masks is None else convert_np_array_to_float_tensor(masks, self.device)
+        b_aux_masks = b_masks if aux is None else convert_np_array_to_float_tensor(aux, self.device)
+        gammas = torch.tensor([self.gamma, self.gamma_intrinsic], dtype=torch.float32, device=self.device)   # (2,)
+        stream_coefs = torch.tensor([self.ext_coef, self.int_coef], dtype=torch.float32, device=self.device)  # (2,)
+
+        self.policy_model.eval()
+
+        with torch.no_grad():
+            logprobs_list = []
+            values_with_last_list = []
+            for start in range(0, batch_size, self.minibatch_size):
+                end = start + self.minibatch_size
+                mb_obs = b_obs[start:end, ...]
+                mb_actions = b_actions[start:end, ...]
+                mb_valid_actions = b_valid_actions[start:end, ...] if b_valid_actions is not None else None
+
+                mb_logprob, _, mb_values = self.policy_model.get_log_probability_with_value(
+                    context=mb_obs,
+                    selected_action=mb_actions[:, 1:, ...],
+                    valid_actions=mb_valid_actions,
+                )
+                logprobs_list.append(mb_logprob)
+
+                values_with_last_list.append(mb_values)
+
+            logprobs = torch.cat(logprobs_list, dim=0)
+            values_with_last = torch.cat(values_with_last_list, dim=0)   # (batch_size, context_length + 1, 2)
+
+            if values_with_last.dim() != 3 or values_with_last.shape[2] != num_streams:
+                raise ValueError(f"policy model must return values of shape (batch_size, context_length + 1, 2); got {tuple(values_with_last.shape)}")
+            if logprobs.dim() != 3 or logprobs.shape[2] != num_streams:
+                raise ValueError(f"policy model must return log-probs of shape (batch_size, context_length, 2) [extrinsic part, intrinsic part]; got {tuple(logprobs.shape)}")
+
+            values = values_with_last[:, :-1, :]  # (batch_size, context_length, 2)
+
+            # per-stream episode ends: a non-episodic intrinsic stream never stops at them
+            stream_dones = torch.stack([
+                b_next_dones,
+                b_next_dones if self.episodic_intrinsic else torch.zeros_like(b_next_dones),
+            ], dim=-1)  # (batch_size, context_length, 2)
+
+            # each stream runs its own GAE with its own discount; causal credit is propagated per stream independently
+            advantages, returns = compute_graph_gae(
+                rewards=b_rewards,
+                values_with_last=values_with_last,
+                next_dones=stream_dones,
+                gamma=gammas,
+                gae_lambda=self.gae_lambda,
+                causes=b_causes,
+                masks=b_masks,
+                causal_reduce=self.causal_reduce,
+                causal_alpha=self.causal_alpha,
+                causal_decay=self.causal_decay,
+            )                                       # both (batch_size, context_length, 2)
+
+            # each stream keeps its own advantage for its own part of the policy, normalised per stream
+            if self.norm_adv:
+                stream_masks = b_masks.unsqueeze(-1).expand_as(advantages)
+                adv_mean = masked_mean(advantages, stream_masks, dim=(0, 1), keepdim=True)
+                adv_std = masked_std(advantages, stream_masks, dim=(0, 1), keepdim=True)
+                advantages = (advantages - adv_mean) / (adv_std + 1e-8)   # (batch_size, context_length, 2)
+
+        self.policy_model.train()
+
+        # averaged over the minibatch updates of this call, for diagnostics (last_stats)
+        stat_sums = {"entropy": 0.0, "approx_kl": 0.0, "pg_loss": 0.0, "v_loss": 0.0}
+        if self.aux_coef is not None:
+            stat_sums["aux_loss"] = 0.0
+        num_updates = 0
+
+        # Optimizing the policy and value network
+        b_inds = np.arange(batch_size)
+        for epoch in range(self.update_epochs):
+            np.random.shuffle(b_inds)
+            for start in range(0, batch_size, self.minibatch_size):
+                end = start + self.minibatch_size
+                mb_inds = b_inds[start:end]
+
+                mb_log_prob = logprobs[mb_inds, ...]
+                mb_value = values[mb_inds, ...]
+                mb_advantages = advantages[mb_inds, ...] 
+                mb_returns = returns[mb_inds, ...]
+                mb_masks = b_masks[mb_inds, ...]
+
+                if torch.sum(mb_masks) < 1e-8:
+                    continue
+
+                mb_obs = b_obs[mb_inds, ...]
+                mb_actions = b_actions[mb_inds, 1:, ...]
+                mb_valid_actions = b_valid_actions[mb_inds, ...] if b_valid_actions is not None else None
+                
+                # one forward pass for both: the aux variant also returns the policy's unreduced aux loss (or None)
+                aux_unsum_loss = None
+                if self.aux_coef is not None:
+                    mb_newlogprob, mb_entropy, mb_newvalue, aux_unsum_loss = self.policy_model.get_log_prob_with_value_aux(
+                        context=mb_obs,
+                        selected_action=mb_actions,
+                        valid_actions=mb_valid_actions,
+                    )
+                else:
+                    mb_newlogprob, mb_entropy, mb_newvalue = self.policy_model.get_log_probability_with_value(
+                        context=mb_obs,
+                        selected_action=mb_actions,
+                        valid_actions=mb_valid_actions,
+                    )
+                mb_newvalue = mb_newvalue[:, :-1, :]  # remove last value, (minibatch, context_length, 2)
+
+                aux_loss = None
+                if aux_unsum_loss is not None:
+                    aux_loss = masked_mean(aux_unsum_loss, b_aux_masks[mb_inds, ...])
+                
+                logratio = mb_newlogprob - mb_log_prob   # (minibatch, context_length, 2)
+                ratio = logratio.exp()
+
+                with torch.no_grad():
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html of the joint policy
+                    joint_logratio = logratio.sum(dim=-1)
+                    approx_kl = masked_mean((joint_logratio.exp() - 1) - joint_logratio, mb_masks)
+
+                # Policy loss: one clipped surrogate per stream, weighted by the stream coefficients
+                pg_loss1 = -mb_advantages * ratio
+                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - self.clip_coef, 1 + self.clip_coef)
+                pg_loss = masked_mean((torch.max(pg_loss1, pg_loss2) * stream_coefs).sum(dim=-1), mb_masks)
+
+                # Value loss: per-stream (clipped) squared error, summed over the two heads
+                if self.clip_vloss:
+                    v_loss_unclipped = (mb_newvalue - mb_returns) ** 2
+                    v_clipped = mb_value + torch.clamp(
+                        mb_newvalue - mb_value,
+                        -self.clip_coef,
+                        self.clip_coef,
+                    )
+                    v_loss_clipped = (v_clipped - mb_returns) ** 2
+                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                    v_loss = 0.5 * masked_mean(v_loss_max.sum(dim=-1), mb_masks)
+                else:
+                    v_loss = 0.5 * masked_mean(((mb_newvalue - mb_returns) ** 2).sum(dim=-1), mb_masks)
+
+                entropy_loss = masked_mean(mb_entropy.sum(dim=-1), mb_masks)
+
+                loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
+                if aux_loss is not None:
+                    loss = loss + aux_loss * self.aux_coef
+
+                stat_sums["entropy"] += entropy_loss.detach()
+                stat_sums["approx_kl"] += approx_kl
+                stat_sums["pg_loss"] += pg_loss.detach()
+                stat_sums["v_loss"] += v_loss.detach()
+                if aux_loss is not None:
+                    stat_sums["aux_loss"] += aux_loss.detach()
+                num_updates += 1
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                grad_norm = nn.utils.clip_grad_norm_(self.all_parameters, self.max_grad_norm)
+                if not torch.isfinite(grad_norm):
+                    # stepping would write NaN into every weight and Adam moment; drop this minibatch instead
+                    logging.warning(f"PPO: skipped a minibatch update with non-finite grad norm {grad_norm.item()}")
+                    self.optimizer.zero_grad()
+                    continue
+                self.optimizer.step()
+
+            if self.target_kl is not None and approx_kl > self.target_kl:
+                break
+
+        if num_updates > 0:
+            self.last_stats = {k: float(v) / num_updates for k, v in stat_sums.items()}
+        self.policy_model.eval()

@@ -28,7 +28,8 @@ class PPO(RL_Learner, Safe_nn_Module):
                  int_coef=1.0,
                  ent_coef=0.01,
                  use_graph=False,
-                 aux_coef=None):
+                 aux_coef=None,
+                 episodic_intrinsic=True):
         """
         PPO with dual value estimation (extrinsic + intrinsic/exploration), e.g. for RND.
 
@@ -38,7 +39,8 @@ class PPO(RL_Learner, Safe_nn_Module):
 
         Each stream gets its own GAE (own discount), its own return target and its own value loss.
         The policy advantage is ext_coef * adv_ext + int_coef * adv_int (Burda et al. 2018).
-        Both streams are episodic: they reset on next_dones.
+        The extrinsic stream is episodic: it resets on next_dones. The intrinsic stream also resets unless
+        episodic_intrinsic is False (e.g. an RND exploration bonus, whose return carries across episodes).
 
         gamma: discount of the extrinsic stream.
         gamma_intrinsic: discount of the intrinsic stream.
@@ -46,6 +48,8 @@ class PPO(RL_Learner, Safe_nn_Module):
                    on both streams independently; otherwise `causes` are ignored and standard GAE is used.
         aux_coef: coefficient of the policy's auxiliary loss (from get_log_prob_with_value_aux).
                   If None, no auxiliary loss is used.
+        episodic_intrinsic: if True, the intrinsic stream's GAE stops at episode ends (next_dones) like the extrinsic one;
+                  if False, it bootstraps through them (non-episodic, Burda et al. 2018).
 
         Issue: NaN when the sample actions are not on-policy.
         """
@@ -67,6 +71,7 @@ class PPO(RL_Learner, Safe_nn_Module):
         self.target_kl = None
 
         self.aux_coef = aux_coef
+        self.episodic_intrinsic = episodic_intrinsic
 
         self.update_epochs = 4
         self.last_stats = {}
@@ -175,11 +180,17 @@ class PPO(RL_Learner, Safe_nn_Module):
 
             values = values_with_last[:, :-1, :]  # (batch_size, context_length, 2)
 
+            # per-stream episode ends: a non-episodic intrinsic stream never stops at them
+            stream_dones = torch.stack([
+                b_next_dones,
+                b_next_dones if self.episodic_intrinsic else torch.zeros_like(b_next_dones),
+            ], dim=-1)  # (batch_size, context_length, 2)
+
             # each stream runs its own GAE with its own discount; causal credit is propagated per stream independently
             advantages, returns = compute_graph_gae(
                 rewards=b_rewards,
                 values_with_last=values_with_last,
-                next_dones=b_next_dones,
+                next_dones=stream_dones,
                 gamma=gammas,
                 gae_lambda=self.gae_lambda,
                 causes=b_causes,

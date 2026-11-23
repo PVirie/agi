@@ -96,6 +96,48 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.inv_pos = self.goal_pos + goal_size
         self.obs_pos = self.inv_pos + inventory_size
 
+        self._build_encoder(cnn_channels, cnn_blocks, fusion_queries, fusion_layers)
+
+        # internal heads [int flag, edge_1, edge_2, write value] live in the cell: their samples feed back into the recurrence.
+        # the previous ext action is a plain input: its effect goes through the environment, which is not differentiable
+        self.recurrent_cell = Straight_Through_Recurrent_Cell(
+            output_dims=hidden_size * 2,
+            input_dims=hidden_size + ext_action_size,
+            hidden_dims=self.memory_dim,
+            layers=[hidden_size for _ in layers],
+            heads=[
+                (Sample_Type.CATEGORICAL, int_action_size),
+                (Sample_Type.CATEGORICAL, self.edge_size),
+                (Sample_Type.CATEGORICAL, self.edge_size),
+                (Sample_Type.CONTINUOUS, node_dim),
+            ],
+            cell=cell,
+        )
+
+        self.head_ext = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, ext_action_size)
+        )
+
+        self.head_value = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, value_size)
+        )
+
+        self.reset_parameters()
+        self.load(override_persistence_path=first_load_path)
+        self.eval()
+
+
+    def _build_encoder(self, cnn_channels, cnn_blocks, fusion_queries, fusion_layers):
+        # the per-step encoder used by encode(); reads the size attributes set in __init__
+        dict_size, embedding_dim, pad_token_id = self.dict_size, self.embedding_dim, self.pad_token_id
+        hidden_size, node_dim = self.hidden_size, self.node_dim
+        goal_size, inventory_size, internal_state_size = self.goal_size, self.inventory_size, self.internal_state_size
+        width, height, channel = self.width, self.height, self.channel
+
         self.goal_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for goal tokens
         self.inv_embedding = nn.Embedding(dict_size, embedding_dim, padding_idx=pad_token_id)  # for inventory tokens
 
@@ -143,41 +185,8 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             num_layers=fusion_layers,
         )
 
-        # internal heads [int flag, edge_1, edge_2, write value] live in the cell: their samples feed back into the recurrence.
-        # the previous ext action is a plain input: its effect goes through the environment, which is not differentiable
-        self.recurrent_cell = Straight_Through_Recurrent_Cell(
-            output_dims=hidden_size * 2,
-            input_dims=hidden_size + ext_action_size,
-            hidden_dims=self.memory_dim,
-            layers=[hidden_size for _ in layers],
-            heads=[
-                (Sample_Type.CATEGORICAL, int_action_size),
-                (Sample_Type.CATEGORICAL, self.edge_size),
-                (Sample_Type.CATEGORICAL, self.edge_size),
-                (Sample_Type.CONTINUOUS, node_dim),
-            ],
-            cell=cell,
-        )
 
-        self.head_ext = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, ext_action_size)
-        )
-
-        self.head_value = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size),
-            nn.GELU(),
-            nn.Linear(hidden_size, value_size)
-        )
-
-        self.reset_parameters()
-        self.load(override_persistence_path=first_load_path)
-        self.eval()
-
-
-    def reset_parameters(self):
-        # Reset parameters of all layers
+    def _reset_encoder_parameters(self):
         self.goal_embedding.reset_parameters()
         self.inv_embedding.reset_parameters()
 
@@ -185,6 +194,11 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.internal_state_feature_extraction.reset_parameters()
         self.conv_layers.reset_parameters()
         self.fusion.reset_parameters()
+
+
+    def reset_parameters(self):
+        # Reset parameters of all layers
+        self._reset_encoder_parameters()
         self.recurrent_cell.reset_parameters()
 
         def init_actor_weights(m):

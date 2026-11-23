@@ -200,6 +200,50 @@ class Residual_RNN(Recurrent_Stack):
     cell_class = Residual_Cell
 
 
+RECURRENT_CLASSES = {"lstm": LSTM, "gru": GRU, "residual": Residual_RNN}
+
+
+def make_recurrent_stack(cell, **kwargs):
+    if cell not in RECURRENT_CLASSES:
+        raise ValueError(f"cell must be one of {list(RECURRENT_CLASSES)}, got {cell!r}")
+    return RECURRENT_CLASSES[cell](**kwargs)
+
+
+class Sliding_Recurrent_Cell(nn.Module):
+    """
+    A Recurrent_Stack slid through time over caller-supplied states, with no output heads:
+        (x_t, state_{t-1}) -> (state_t, output_t)
+    At t = 0 and wherever reset is set the step starts from prev_state[:, t] (e.g. replayed from a rollout, or zeros
+    at an episode start); elsewhere it carries its own state from step t - 1, so gradients flow back through time.
+
+    forward(x (batch, time, input_dims), prev_state (batch, time, state_dims), reset (batch, time) bool or None)
+        -> (state (batch, time, state_dims), output (batch, time, output_dims))
+    """
+
+    def __init__(self, output_dims, input_dims, hidden_dims, layers, cell="lstm"):
+        super().__init__()
+        self.recurrence = make_recurrent_stack(
+            cell, output_dims=output_dims, input_dims=input_dims, hidden_dims=hidden_dims, layers=layers
+        )
+        self.state_dims = self.recurrence.state_dims
+
+
+    def reset_parameters(self):
+        self.recurrence.reset_parameters()
+
+
+    def forward(self, x, prev_state, reset=None):
+        states, outputs = [], []
+        state = prev_state[:, 0]
+        for t in range(x.size(1)):
+            if t > 0 and reset is not None:
+                state = torch.where(reset[:, t, None], prev_state[:, t], state)
+            output, state = self.recurrence.step(x[:, t], state)
+            states.append(state)
+            outputs.append(output)
+        return torch.stack(states, dim=1), torch.stack(outputs, dim=1)
+
+
 def _step_mask(mask, t):
     # masks may cover fewer steps than the input (learning passes none for the bootstrap step)
     if mask is None or t >= mask.size(1):
@@ -248,10 +292,8 @@ class Straight_Through_Recurrent_Cell(nn.Module):
             self.output_slices.append(slice(offset, offset + width))
             offset += width
 
-        recurrent_classes = {"lstm": LSTM, "gru": GRU, "residual": Residual_RNN}
-        if cell not in recurrent_classes:
-            raise ValueError(f"cell must be one of {list(recurrent_classes)}, got {cell!r}")
-        self.recurrence = recurrent_classes[cell](
+        self.recurrence = make_recurrent_stack(
+            cell,
             output_dims=output_dims,
             input_dims=input_dims + sum(size for _, size in self.head_specs),
             hidden_dims=hidden_dims,

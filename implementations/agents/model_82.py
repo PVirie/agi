@@ -1,0 +1,236 @@
+import numpy as np
+from interfaces.learning import RL_Learner
+from interfaces.network import Actor_Network
+from interfaces.memory import Graph_Memory, Graph_Memory_Operation_Type
+from interfaces.data_structure import Context_Collector
+from implementations.agents.model_base import make_valid_mask, apply_cascading_masks, make_component_flags
+from implementations.agents import model_81
+from implementations.agents.model_81 import INT_FLAG_OPS
+
+
+# policy component index (edge_1 = 2, edge_2 = 3, write = 4) -> int-action flags on which it is used;
+# pass as babyai_82_core's component_flags. The ext action is independent of the flag (key 1 is unused)
+COMPONENT_FLAGS = make_component_flags(INT_FLAG_OPS, INT_FLAG_OPS.keys())
+
+
+class Model(model_81.Model):
+    """
+    model_81 with a dual reward stream [extrinsic, intrinsic] for ppo_graph_split:
+    the ext action learns from the extrinsic return, the internal actions (int flag, edges, write value) from the intrinsic return.
+    The intrinsic reward of a step is the policy's prediction reward (get_intrinsic_reward, see babyai_82_core:
+    next observation and/or step reward scores, whitened per prediction by default) plus the env's intrinsic reward when has_intrinsic_reward.
+    """
+
+    def __init__(self, 
+                 policy_model: Actor_Network,
+                 trainer: RL_Learner, 
+                 context_collector: Context_Collector, 
+                 action_collector: Context_Collector, 
+                 valid_action_collector: Context_Collector,
+                 graph_memory: Graph_Memory,
+                 has_intrinsic_reward: bool = False
+                 ):
+        """
+        has_intrinsic_reward: if False, each env reward passed to choose_action is a scalar (extrinsic);
+                              if True, each is a pair [extrinsic, intrinsic] (e.g. RND), added to the prediction reward.
+                              Rewards are always stored as (batch_size, 2) arrays [extrinsic, intrinsic] and handed to the
+                              trainer as a list (context_length) of such arrays.
+        """
+        super().__init__(
+            policy_model=policy_model,
+            trainer=trainer,
+            context_collector=context_collector,
+            action_collector=action_collector,
+            valid_action_collector=valid_action_collector,
+            graph_memory=graph_memory,
+            has_intrinsic_reward=has_intrinsic_reward,
+        )
+        self.env_reward_size = self.reward_size
+        self.reward_size = 2
+
+
+    def choose_action(self, 
+                      last_idles, last_dones, last_truncates, last_resets, 
+                      latest_frames, rewards, next_available_actions, 
+                      force_train=False):
+
+        batch_size = len(latest_frames)
+        current_cl = len(self.rewards)
+
+        # initialize
+        # the first call after a reset has no previous step, so nothing to score
+        first_call = self.resetted
+        if self.resetted:
+            self.resetted = False
+            self.obs.append(
+                np.zeros((batch_size, self.policy_model.packed_context_size), dtype=np.float32)
+            )
+            self.actions.append(
+                np.zeros((batch_size, self.policy_model.packed_action_size), dtype=np.float32)
+            )
+            self.valid_actions.append(
+                np.ones((batch_size, self.policy_model.int_action_size), dtype=bool),
+                np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
+            )
+            self.rewards.append(
+                np.zeros((batch_size, self.reward_size), dtype=np.float32)
+            )
+            self.last_dones.append([False for _ in range(batch_size)])
+            self.last_truncates.append([True for _ in range(batch_size)])
+        
+        content = np.reshape(np.stack(latest_frames, axis=0), (batch_size, -1)) # content must be batch leading tensor (batch_size, ...)
+        env_reward = np.asarray(rewards, dtype=np.float32).reshape(batch_size, self.env_reward_size)
+        reward = np.zeros((batch_size, self.reward_size), dtype=np.float32)  # [:, 0] extrinsic, [:, 1] intrinsic
+        reward[:, :self.env_reward_size] = env_reward
+
+        # get last action's position
+        last_action = self.actions.get_last()
+        int_action, ext_action, position, write_content = self.policy_model.unpack_action(last_action)
+        memory_state = np.copy(self.policy_model.unpack_memory(last_action))  # the policy's previous memory state
+        ended_memory_state = np.copy(memory_state)  # kept where the episode ends: the last transition's reward prediction reads it
+        latent = self.policy_model.unpack_latent(last_action)  # the policy's previous latent, its predictions' "last observation"
+        write_feedback = np.copy(write_content)  # the previous write value as the policy's recurrence reads it back
+        memory_reset = np.zeros((batch_size,), dtype=bool)  # the policy restarts its recurrence here (and does not predict the observation)
+
+        memory_action = [Graph_Memory_Operation_Type.IDLE for _ in range(batch_size)]
+        for i, (idle, d, t, r) in enumerate(zip(last_idles, last_dones, last_truncates, last_resets)):
+            flag = int_action[i].item()
+            if r:
+                memory_action[i] = Graph_Memory_Operation_Type.RESET
+            else:
+                memory_action[i] |= INT_FLAG_OPS.get(flag, Graph_Memory_Operation_Type.IDLE)              
+                if idle:
+                    reward[i] = 0
+            if d or t:
+                # reset position and the policy's memory state
+                position[i, :] = np.zeros_like(position[i, :])
+                memory_state[i, :] = np.zeros_like(memory_state[i, :])
+                write_feedback[i, :] = 0
+                memory_reset[i] = True
+            self.last_dones[-1][i] = d
+            self.last_truncates[-1][i] = t
+
+        # update memory
+        mem_op_results = self.graph_memory.execute(
+            operations=memory_action,
+            write_value=write_content, # write value
+            edge_1=position[:, 0],
+            edge_2=position[:, 1],
+            cause_time=len(self.rewards) - 2, # the pending op comes from the action chosen one step back
+        )
+        self.last_cause_times.append(self.graph_memory.get_cause_times())
+
+        # update extrinsic reward by mem_op_results (0 for True, -0.001 for False)
+        reward[:, 0] += np.array([0 if res else -0.001 for res in mem_op_results])
+
+        context = self.graph_memory.get_node_context()
+        context = context.reshape(batch_size, -1) # reshape to (batch_size, context_size)
+
+        # replace the reward and content
+        packed_context = self.policy_model.pack_context(
+            b_reward=reward[:, 0],   # the policy observes the extrinsic reward only
+            b_int=int_action,
+            b_ext=ext_action,
+            b_position=position,
+            b_write=write_feedback,
+            b_memory_reset=memory_reset,
+            b_memory=memory_state,
+            b_latent=latent,
+            b_content=np.concatenate([context, content], axis=-1)
+        )
+        self.obs.update_last(packed_context)
+
+        # how well the previous step predicted this observation and reward (raw scores), and the intrinsic reward made of them;
+        # where an episode ended only its last reward is scored, the observation being the next episode's
+        if first_call:
+            prediction_reward = np.zeros((batch_size,), dtype=np.float32)
+            prediction_scores = np.zeros((batch_size, 2), dtype=np.float32)
+        else:
+            prediction_reward, prediction_scores = self.policy_model.get_intrinsic_reward(packed_context[:, None], ended_memory_state[:, None])
+            prediction_reward, prediction_scores = prediction_reward[:, 0], prediction_scores[:, 0]
+        reward[:, 1] += prediction_reward
+
+        self.rewards[-1] = reward
+        self.valid_actions.update_last(
+            make_valid_mask([
+                self.valid_int_actions for _ in range(batch_size)
+            ], self.policy_model.int_action_size),
+            make_valid_mask([
+                list(available) + [self.idle_ext_action] for available in next_available_actions
+            ], self.policy_model.ext_action_size)
+        )
+
+        if force_train and current_cl > 1:
+            
+            # learn RL
+
+            # masks has shape (batch_size, context_length)
+            # need to shift last_truncates by 1 to the left, because t signals whether t-1 is truncated
+            masks = apply_cascading_masks(
+                self.actions.make_mask(batch_led=True)[:, :-1], 
+                self.last_truncates[1:]
+            )
+
+            self.trainer.learn(
+                obs=self.obs.make_batch(batch_led=True), 
+                last_actions=self.actions.make_batch(batch_led=True), 
+                rewards=self.rewards[1:],
+                next_dones=self.last_dones[1:],
+                valid_actions=self.valid_actions[:-1].make_batch(batch_led=True),
+                masks=masks,
+                causes=self.last_cause_times
+            )
+            
+            left_over_slide = self.obs.mark(skip_last=True)
+            self.actions.mark(skip_last=True)
+            self.valid_actions.mark(skip_last=True)
+            self.rewards = self.rewards[left_over_slide]
+            self.last_dones = self.last_dones[left_over_slide]
+            self.last_truncates = self.last_truncates[left_over_slide]
+
+            self.graph_memory.reset_timestamp()
+            # keep one slot so causes stay index-aligned with obs; reset_timestamp just
+            # invalidated the retained entry's stamps, so they must not be reused
+            self.last_cause_times = [np.full_like(self.last_cause_times[-1], -1)]
+
+        packed_action = self.policy_model.get_action(
+            self.obs.get_last_batch(batch_led=True),
+            self.valid_actions.get_last_batch(batch_led=True)
+        )
+        packed_action = packed_action[:, -1, ...]
+
+        # extract output here
+        int_action, ext_action, position, write_content = self.policy_model.unpack_action(packed_action)
+
+        return_action = [
+            ext_action[i] if int(ext_action[i].item()) != self.idle_ext_action else None
+            for i in range(batch_size)
+        ]
+
+        # populate last states
+        self.obs.append(
+            np.zeros((batch_size, self.policy_model.packed_context_size), dtype=np.float32)
+        )
+        self.actions.append(packed_action)
+        self.valid_actions.append(
+            np.ones((batch_size, self.policy_model.int_action_size), dtype=bool),
+            np.ones((batch_size, self.policy_model.ext_action_size), dtype=bool)
+        )
+        self.rewards.append(np.zeros((batch_size, self.reward_size), dtype=np.float32))
+        self.last_dones.append([False for _ in range(batch_size)])
+        self.last_truncates.append([False for _ in range(batch_size)])
+
+        # calculate metrics per batch
+        metrics = []
+        # 1. branching: mean excess degree sum(max(deg - 2, 0)) / N; 0 for paths/cycles, ~0.5 binary tree, ~1 star
+        degrees = self.graph_memory.next_free_edge  # (B, num_nodes); unused nodes have degree 0
+        metrics.append(np.maximum(degrees - 2, 0).sum(axis=1) / self.graph_memory.total_used_nodes())
+        # 2. graph size
+        metrics.append(self.graph_memory.total_used_nodes())
+        # 3. this step's prediction reward (the intrinsic reward from the predictions)
+        metrics.append(prediction_reward)
+        # 4., 5. this step's raw observation and reward prediction scores in [0, 1]
+        metrics.append(prediction_scores[:, 0])
+        metrics.append(prediction_scores[:, 1])
+
+        return return_action, metrics

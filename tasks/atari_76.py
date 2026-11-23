@@ -328,6 +328,8 @@ if __name__ == "__main__":
         gamma_intrinsic=0.99,
         ext_coef=1.0,
         int_coef=1.0,
+        # both streams reset at episode ends, as before the episodic_intrinsic option existed
+        episodic_intrinsic=True,
         gae_lambda=0.95 if not args.low_var else 0.90,
         ent_coef=args.ent_coef,
         use_graph=args.st_train

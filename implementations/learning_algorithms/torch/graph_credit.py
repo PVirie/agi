@@ -18,7 +18,7 @@ def compute_graph_gae(
 
     rewards: (batch_size, context_length, num_streams)
     values_with_last: (batch_size, context_length + 1, num_streams); the last entry is the bootstrap value
-    next_dones: (batch_size, context_length)
+    next_dones: (batch_size, context_length), or (batch_size, context_length, num_streams) for per-stream episode ends
     gamma: float, or a tensor of shape (num_streams,) for a per-stream discount
     causes: (batch_size, context_length + 1, cause_size) int tensor of past context indices that caused each step
             (-1 = empty slot), or None for plain GAE
@@ -33,6 +33,8 @@ def compute_graph_gae(
     batch_size, sequence_size, num_streams = rewards.shape
     device = rewards.device
     values = values_with_last[:, :-1]
+    if next_dones.dim() == 2:
+        next_dones = next_dones[:, :, None]                                 # (batch_size, context_length, 1): shared by every stream
 
     # Single backward pass. For every step t we propagate its effective return back to all
     # past causes c (c < t). Because causes always point backward, by the time the loop
@@ -54,7 +56,7 @@ def compute_graph_gae(
     returns_list = []
     lastgaelam = torch.zeros((batch_size, num_streams), device=device)
     for t in reversed(range(sequence_size)):
-        nextnonterminal = (1.0 - next_dones[:, t])[:, None]                # (batch_size, 1)
+        nextnonterminal = 1.0 - next_dones[:, t]                            # (batch_size, 1 or num_streams)
         nextvalues = values_with_last[:, t + 1]                             # (batch_size, num_streams)
         delta = rewards[:, t] + gamma * nextvalues * nextnonterminal - values_with_last[:, t]
         lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam

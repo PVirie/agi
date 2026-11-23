@@ -4,6 +4,7 @@ An attempt to solve AGI.
 
 | Generation | Model Name      | Description                                                 |
 | ---------- | --------------- | ----------------------------------------------------------- |
+| LXXXII     | Discovery       | Intrinsic prediction reward                                 |
 | LXXIV      | Graph Automaton | Full Quest Graph Automaton                                  |
 | LXXVI      | Graph Hybrid    | 74 with Concatenated Observations (for general RL problems) |
 
@@ -121,6 +122,7 @@ We recommend using [VSCode](https://code.visualstudio.com/) as the IDE for devel
 - [x] Model 81:
     - [x] Simplify 76 actions
     - [x] Gradient though all internal actions
+- [ ] Model 82: Discover for the sake of discovery
 - [ ] Experiments:
     - [x] flipflop dataset (model 76)
     - [x] minigrid block-unlock-pickup (model 76)
