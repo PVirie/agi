@@ -185,7 +185,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_f"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_g"
     if args.st_train:
         experiment_path += "_stmean"
     if args.reward_scaling:
@@ -274,6 +274,8 @@ if __name__ == "__main__":
         memory_dim=memory_dim,
         cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
         cell=args.cell,
+        # the memory-queried fusion read: 2 layers so it can pick the current clause, then look for its object
+        fusion_layers=2,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(

@@ -271,10 +271,13 @@ class Straight_Through_Recurrent_Cell(nn.Module):
     evaluated at the taken output, into the heads; where it restarts the feedback is a constant.
 
     forward(x (batch, time, input_dims), prev_outputs (batch, time, output_size), prev_state (batch, time, state_dims),
-            reset (batch, time) bool or None, masks list (num_heads) of (batch, time or fewer, size) bool or None, sample)
+            reset (batch, time) bool or None, masks list (num_heads) of (batch, time or fewer, size) bool or None, sample,
+            read callable or None)
         -> (params list (num_heads) of (batch, time, param_size), state (batch, time, state_dims), output (batch, time, output_dims),
             samples (batch, time, output_size) if sample else None)
     output_size is the heads' output slots concatenated in order; masks apply to categorical heads only.
+    read(t, state_{t-1}) -> (batch, read_dims): an input computed per step from the state the step starts from (after any
+    restart), appended to x[:, t]; input_dims counts x and the read together. It lets the state steer what the step reads.
     """
 
     def __init__(self, output_dims, input_dims, hidden_dims, layers, heads, cell="lstm"):
@@ -350,7 +353,7 @@ class Straight_Through_Recurrent_Cell(nn.Module):
         return torch.concat(parts, dim=-1)
 
 
-    def forward(self, x, prev_outputs, prev_state, reset=None, masks=None, sample=False):
+    def forward(self, x, prev_outputs, prev_state, reset=None, masks=None, sample=False, read=None):
         masks = masks if masks is not None else [None] * self.num_heads
         prev_feedback = self._feedback(prev_outputs)
 
@@ -365,7 +368,8 @@ class Straight_Through_Recurrent_Cell(nn.Module):
                 # E - E.detach() is exactly 0 in the forward pass, so the input stays the taken output bit for bit
                 feedback = torch.where(restart, feedback, feedback + (expected - expected.detach()))
 
-            output, state = self.recurrence.step(torch.concat([x[:, t], feedback], dim=-1), state)
+            x_t = x[:, t] if read is None else torch.concat([x[:, t], read(t, state)], dim=-1)
+            output, state = self.recurrence.step(torch.concat([x_t, feedback], dim=-1), state)
             params = [head(output) for head in self.heads]
             distributions = [self.distribution(h, p, _step_mask(m, t)) for h, (p, m) in enumerate(zip(params, masks))]
             expected = torch.concat([
