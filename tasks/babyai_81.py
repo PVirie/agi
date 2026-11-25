@@ -27,7 +27,7 @@ from utilities.episode_recorder import Episode_Recorder, CUMSUM, prefixed_header
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from implementations.agents import model_81
-from implementations.networks.torch.policy.babyai_lstm import Policy_Core
+from implementations.networks.torch.policy.babyai_rnn_splitmem import Policy_Core
 from implementations.learning_algorithms.torch.ppo_graph import PPO
 from implementations.collectors.states import State_Sequence as Collector
 from implementations.memories.graph_memory import NP_Graph_Memory as Graph_Memory
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_e"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_f"
     if args.st_train:
         experiment_path += "_stmean"
     if args.reward_scaling:
@@ -293,7 +293,7 @@ if __name__ == "__main__":
         num_nodes=4096,
         max_edges_per_node=C,
         node_dim=node_dim,
-        # node values are the policy's sampled write values in [0, 1]^node_dim
+        # node values are the policy's write values: the first node_dim entries of its top recurrent layer's state
         start_node_value=0.0,
         empty_value=0.0,
     )
