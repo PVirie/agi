@@ -34,7 +34,8 @@ class Multi_Environment:
         bonus_type=BonusType.NONE,
         has_intrinsic_reward=False,
         mission_translator=None,
-        scale_reward_by_sub_goals=False
+        scale_reward_by_sub_goals=False,
+        max_sub_goals=None
         ):
         """
         has_intrinsic_reward: if True, step() returns each reward as [extrinsic, intrinsic]; otherwise as [extrinsic].
@@ -42,9 +43,14 @@ class Multi_Environment:
                               position_bonus requires has_intrinsic_reward, so the bonus never leaks into the extrinsic reward.
         scale_reward_by_sub_goals: if True, the extrinsic reward is multiplied by the number of sub-goals in the episode's
                               mission, so a mission with n sub-goals has a maximum return of n instead of 1.
+        max_sub_goals: if set, every reset resamples the environment until its mission has at most this many sub-goals
+                              (an easy-mission filter); None keeps every mission.
         """
         if bonus_type != BonusType.NONE and not has_intrinsic_reward:
             raise ValueError("bonus is an intrinsic reward; set has_intrinsic_reward=True")
+        if max_sub_goals is not None and max_sub_goals < 1:
+            raise ValueError(f"max_sub_goals must be at least 1 (every mission has a goal), got {max_sub_goals}")
+        self.max_sub_goals = max_sub_goals
         self.has_intrinsic_reward = has_intrinsic_reward
         self.reward_size = 2 if has_intrinsic_reward else 1
         self.scale_reward_by_sub_goals = scale_reward_by_sub_goals
@@ -99,10 +105,9 @@ class Multi_Environment:
             # return self.envs.reset(seed=seed)
         for i, env in enumerate(self.envs):
             # offset per env: a shared seed would make every env replay the same episode
-            obs, info = env.reset(seed=None if seed is None else seed + i)
+            obs = self._reset_env(i, seed=None if seed is None else seed + i)
             self.return_obs[i] = self.obs_to_object(obs)
             self.return_infos[i] = None
-            self.goal_counts[i] = self._count_goals(i)
 
             self.total_return[i] = 0
             self.total_aux_return[i] = 0
@@ -119,11 +124,21 @@ class Multi_Environment:
         return max(1, count_sub_goals(self.envs[i].unwrapped.mission))
 
 
+    def _reset_env(self, i, seed=None):
+        # resets env i (resampling while its mission exceeds max_sub_goals) and records the new mission's goal count;
+        # only the first reset is seeded: the retries continue the seeded RNG, so a seeded run stays reproducible
+        obs, _ = self.envs[i].reset(seed=seed)
+        self.goal_counts[i] = self._count_goals(i)
+        while self.max_sub_goals is not None and self.goal_counts[i] > self.max_sub_goals:
+            obs, _ = self.envs[i].reset()
+            self.goal_counts[i] = self._count_goals(i)
+        return obs
+
+
     def _finish_episode(self, i):
         # the finished episode's goal count; reset below replaces the mission
         goal_count = self.goal_counts[i]
-        obs, _ = self.envs[i].reset() # You must manually reset!
-        self.goal_counts[i] = self._count_goals(i)
+        obs = self._reset_env(i) # You must manually reset!
         # MiniGrid/BabyAI only emit a positive reward (1 - 0.9*steps/max_steps) on task completion
         success = self.total_return[i] > 0
         self.return_infos[i] = {

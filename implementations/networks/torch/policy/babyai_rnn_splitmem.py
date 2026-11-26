@@ -32,13 +32,10 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         """
         Pipeline per step:
             graph context (head + edge nodes) -> transformer ----------------------+
-            instruction, inventory -> embedding -> transformer (graph cond token) --+-> tokens + pooled summaries (all steps at once)
+            instruction, inventory -> embedding -> transformer (graph cond token) --+-> cross-modal fusion -> latent
             obs -> FiLM CNN (conditioned on the instruction CLS) -------------------+
-            inside the recurrence, per step t:
-                prev memory state (LayerNorm) + graph summary + CLS -> fusion queries -> cross-attend over the tokens -> latent
-                (memory first: the state tracking mission progress chooses which clause, nodes and cells the step reads)
-                prev ext action, latent, prev internal output
-                    -> Straight_Through_Recurrent_Cell -> internal output (int flag, edge_1, edge_2), memory state, hidden
+            latent (+ prev ext action), prev memory state, prev internal output
+                -> Straight_Through_Recurrent_Cell -> internal output (int flag, edge_1, edge_2), memory state, hidden
             hidden -> ext head, value head
             memory state -> first node_dim entries of the top layer -> graph write value (split memory, not sampled)
         Training signals:
@@ -49,8 +46,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         memory_dim: per-layer recurrent state width (default hidden_size), scaled independently of the hidden units
         (cf. BabyAI 1.1's 2048-d memory); the memory stack rides in every context and action, so it costs len(layers) * memory_dim floats per step.
         It must be at least node_dim, since the write value is cut from the top layer's state.
-        fusion_queries, fusion_layers: learned queries and cross-attention layers of the per-step fusion read;
-        with 2+ layers the read can chain (pick the current clause, then look for its object)
+        fusion_queries, fusion_layers: learned queries and cross-attention layers of the fusion read
         """
         memory_dim = memory_dim if memory_dim is not None else hidden_size
         if node_dim > memory_dim:
@@ -107,11 +103,10 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self._build_encoder(cnn_channels, cnn_blocks, fusion_queries, fusion_layers)
 
         # internal heads [int flag, edge_1, edge_2] live in the cell: their samples feed back into the recurrence.
-        # the previous ext action is a plain input: its effect goes through the environment, which is not differentiable;
-        # the fusion latent is the cell's per-step read (see compute), appended after it
+        # the previous ext action is a plain input: its effect goes through the environment, which is not differentiable
         self.recurrent_cell = Straight_Through_Recurrent_Cell(
             output_dims=hidden_size * 2,
-            input_dims=ext_action_size + hidden_size,
+            input_dims=hidden_size + ext_action_size,
             hidden_dims=self.memory_dim,
             layers=[hidden_size for _ in layers],
             heads=[
@@ -183,8 +178,6 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             channels=cnn_channels, num_blocks=cnn_blocks
         )
 
-        # the memory stack is unbounded for the lstm and residual cells: normalized before it conditions the fusion queries
-        self.memory_query_norm = nn.LayerNorm(self.memory_size)
         self.fusion = Cross_Modal_Fusion(
             hidden_size=hidden_size,
             node_dim=node_dim,
@@ -193,7 +186,6 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
             num_cells=width * height,
             num_queries=fusion_queries,
             num_layers=fusion_layers,
-            query_cond_dims=self.memory_size + 2 * hidden_size,  # [memory stack, graph summary, instruction CLS]
         )
 
 
@@ -204,7 +196,6 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         self.goal_feature_extraction.reset_parameters()
         self.internal_state_feature_extraction.reset_parameters()
         self.conv_layers.reset_parameters()
-        self.memory_query_norm.reset_parameters()
         self.fusion.reset_parameters()
 
 
@@ -239,9 +230,7 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
 
     def encode(self, internal_state, goal, inv, obs):
         # internal_state: (batch, context_size, internal_state_size * node_dim); goal, inv: token ids; obs: flattened grid
-        # every step is independent here, so time is batched; returns per step (batch, context_size, ...):
-        # fusion tokens (num_tokens, hidden_size), their key padding mask (num_tokens,), and the pooled
-        # graph summary, instruction CLS and CNN vector (hidden_size each), all to be read per step by read()
+        # returns the fused latent (batch, context_size, hidden_size); every step is independent, so time is batched
         batch_size, context_size = internal_state.shape[:2]
         n = batch_size * context_size
 
@@ -263,29 +252,16 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         obs = torch.reshape(obs, (n, self.height, self.width, self.channel))
         obs_summary, obs_map = self.conv_layers(obs, instruction_summary.reshape(n, self.hidden_size), return_map=True)
 
-        tokens, key_padding_mask = self.fusion.embed_tokens(
+        latent = self.fusion(
             graph_nodes=internal_state.reshape(n, self.internal_state_size, self.node_dim),
+            graph_summary=graph_summary.reshape(n, self.hidden_size),
             instruction_tokens=instruction_tokens.reshape(n, -1, self.hidden_size),
             instruction_mask=padding_mask.reshape(n, -1),
+            instruction_summary=instruction_summary.reshape(n, self.hidden_size),
             obs_map=obs_map,
+            obs_summary=obs_summary,
         )
-        return (
-            tokens.view(batch_size, context_size, -1, self.hidden_size),
-            key_padding_mask.view(batch_size, context_size, -1),
-            graph_summary,
-            instruction_summary,
-            obs_summary.view(batch_size, context_size, self.hidden_size),
-        )
-
-
-    def read(self, memory_state, tokens, key_padding_mask, graph_summary, instruction_summary, obs_summary):
-        # one step's fusion read, steered by the memory state the step starts from
-        # memory_state: (batch, memory_size); the rest: one step of encode()'s outputs. returns the latent (batch, hidden_size)
-        return self.fusion.read(
-            tokens, key_padding_mask,
-            query_cond=torch.concat([self.memory_query_norm(memory_state), graph_summary, instruction_summary], dim=-1),
-            pooled=[graph_summary, instruction_summary, obs_summary],
-        )
+        return latent.view(batch_size, context_size, self.hidden_size)
 
 
     def compute(self, context, available_flags=None, sample=False):
@@ -300,16 +276,13 @@ class Policy_Core(Base_Policy_Core, Actor_Network, Policy_Value_Network):
         inv = context[:, :, self.inv_pos: self.obs_pos]  # (batch_size, context_size, inventory_size)
         obs = context[:, :, self.obs_pos:]  # (batch_size, context_size, obs_size)
 
-        encoded = self.encode(internal_state, goal, inv, obs)  # per step tokens, mask and pooled summaries, see encode
-
-        def read(t, state):
-            return self.read(state, *(e[:, t] for e in encoded))
+        latent = self.encode(internal_state, goal, inv, obs)  # (batch_size, context_size, hidden_size)
 
         prev_ext_one_hot = nn.functional.one_hot(prev_ext, num_classes=self.ext_action_size).float()
 
         internal_params, memory_state, hidden, internal_samples = self.recurrent_cell(
-            prev_ext_one_hot, prev_internal, prev_memory_state, memory_reset,
-            masks=[available_flags, None, None], sample=sample, read=read
+            torch.concat([latent, prev_ext_one_hot], dim=-1), prev_internal, prev_memory_state, memory_reset,
+            masks=[available_flags, None, None], sample=sample
         )  # [(batch_size, context_size, size)] * 3, (batch_size, context_size, memory_size), (batch_size, context_size, hidden_size), (batch_size, context_size, 3) or None
 
         ext_logits = self.head_ext(hidden)  # (batch_size, context_size, ext_action_size)
@@ -470,13 +443,11 @@ if __name__ == "__main__":
     valid[:, :, 6] = True
 
     # every graph slot reaches the fusion, so changing any one node changes the latent
-    def encode_context(context, memory_state=None):
-        encoded = core.encode(
+    def encode_context(context):
+        return core.encode(
             context[:, :, core.internal_state_pos: core.goal_pos], context[:, :, core.goal_pos: core.inv_pos],
             context[:, :, core.inv_pos: core.obs_pos], context[:, :, core.obs_pos:]
         )
-        memory_state = memory_state if memory_state is not None else context[:, 0, core.memory_pos: core.internal_state_pos]
-        return core.read(memory_state, *(e[:, 0] for e in encoded))
 
     with torch.no_grad():
         probe = torch.tensor(core.pack_context(b_reward=np.zeros(B), b_int=np.zeros(B, dtype=int), b_ext=np.zeros((B, 1), dtype=int),
@@ -485,9 +456,6 @@ if __name__ == "__main__":
             perturbed = probe.clone()
             perturbed[:, :, core.internal_state_pos + slot * D] += 1.0
             assert not torch.allclose(encode_context(probe), encode_context(perturbed), atol=1e-6), f"graph slot {slot} does not reach the latent"
-        # memory first: the previous memory state steers what the step reads from the same inputs
-        other_memory = torch.randn(B, core.memory_size)
-        assert not torch.allclose(encode_context(probe), encode_context(probe, other_memory), atol=1e-6), "the memory state does not steer the read"
 
     # act one step at a time as model_81 does: the context carries the executed action and the memory
     contexts, actions = [], []

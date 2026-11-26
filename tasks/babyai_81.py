@@ -161,6 +161,7 @@ if __name__ == "__main__":
     parser.add_argument("--ent-coef",               "-ent", type=float, default=0.01, help="PPO entropy coefficient. Default is 0.01.")
     parser.add_argument("--int-ent-coef",           "-ient", type=float, default=0.01, help="Entropy coefficient of the internal heads (the policy's aux loss). Default is 0.01.")
     parser.add_argument("--reward-scaling",         "-rs",   action="store_true", help="Scale reward by the number of sub goals. Default is disabled.")
+    parser.add_argument("--easy",                   "-easy", action="store_true", help="Only train on easy missions (at most 2 sub goals); resets resample until one is found. Default is disabled.")
     args = parser.parse_args()
 
 
@@ -185,7 +186,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.use_deterministic_algorithms(True)
 
-    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_g"
+    experiment_path = f"{APP_ROOT}/experiments/babyai_81_size_{args.scale}_cell_{args.cell}_f"
     if args.st_train:
         experiment_path += "_stmean"
     if args.reward_scaling:
@@ -202,9 +203,9 @@ if __name__ == "__main__":
     tokenizer = Text_Tokenizer(max_vocab_size=vocab_size)
     tokenizer.load(f"{experiment_path}/parameters")
 
-    # game_ids = ["BabyAI-MiniBossLevel-v0"] * 256 + ["BabyAI-GoToLocalS8N7-v0"] * 128 + ["BabyAI-UnlockPickupDist-v0"] * 128
+    # game_ids = ["BabyAI-GoToSeqS5R2-v0"] * 128 + ["BabyAI-MoveTwoAcrossS8N9-v0"] * 128 + ["BabyAI-SynthS5R2-v0"] * 256
     # game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
-    game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
+    game_ids = ["BabyAI-GoToSeqS5R2-v0"] * 128 + ["BabyAI-MoveTwoAcrossS8N9-v0"] * 128 + ["BabyAI-SynthS5R2-v0"] * 256
     # compact missions: longest possible BossLevel mission is 27 tokens, total vocab ~58 words
     env = Multi_Environment(
         game_ids=game_ids,
@@ -217,6 +218,7 @@ if __name__ == "__main__":
         has_intrinsic_reward=False,
         mission_translator=shorten_mission,
         scale_reward_by_sub_goals=args.reward_scaling,
+        max_sub_goals=2 if args.easy else None,
     )
 
     mission_size = env.mission_max_len
@@ -274,8 +276,6 @@ if __name__ == "__main__":
         memory_dim=memory_dim,
         cnn_channels=cnn_channels, cnn_blocks=cnn_blocks,
         cell=args.cell,
-        # the memory-queried fusion read: 2 layers so it can pick the current clause, then look for its object
-        fusion_layers=2,
         device=device, persistence_path=parameters_path
     ).to(device)
     ppo_learner = PPO(

@@ -166,17 +166,13 @@ class Cross_Modal_Fusion(nn.Module):
       - graph nodes: shared node MLP + slot embedding (slot 0 is the head node, slot i the i-th edge, which the edge heads index)
       - instruction / inventory tokens: the instruction transformer's outputs, padding masked out
       - observation cells: the FiLM CNN feature map + a 2D cell embedding
-    num_queries learned queries, shifted by a query condition (by default the graph summary and the instruction CLS: what
-    to look for depends on the memory and the mission), cross-attend over all tokens. The latent mixes the read-out
-    queries with the pooled paths (graph summary, CLS, CNN vector), so attention only adds to the plain concatenation.
-    query_cond_dims: width of the query condition (default 2 * hidden_size, [graph summary, CLS]).
-    forward() does both stages at once; embed_tokens() and read() split them, so the tokens of many steps can be embedded
-    in one batch while the read runs per step with a condition only known then (e.g. the previous recurrent state).
+    num_queries learned queries, shifted by the graph summary and the instruction CLS (what to look for depends on the
+    memory and the mission), cross-attend over all tokens. The latent mixes the read-out queries with the pooled paths
+    (graph summary, CLS, CNN vector), so attention only adds to the plain concatenation.
     """
 
-    def __init__(self, hidden_size, node_dim, num_nodes, map_channels, num_cells, num_queries=4, num_layers=1, nhead=8, query_cond_dims=None):
+    def __init__(self, hidden_size, node_dim, num_nodes, map_channels, num_cells, num_queries=4, num_layers=1, nhead=8):
         super().__init__()
-        query_cond_dims = query_cond_dims if query_cond_dims is not None else 2 * hidden_size
         self.hidden_size = hidden_size
         self.num_queries = num_queries
 
@@ -192,7 +188,7 @@ class Cross_Modal_Fusion(nn.Module):
         self.token_norm = nn.LayerNorm(hidden_size)
 
         self.queries = nn.Parameter(torch.zeros(1, num_queries, hidden_size))
-        self.query_condition = nn.Linear(query_cond_dims, hidden_size)
+        self.query_condition = nn.Linear(2 * hidden_size, hidden_size)
         self.blocks = nn.ModuleList([Cross_Attention_Block(hidden_size, nhead) for _ in range(num_layers)])
 
         self.output_layer = nn.Sequential(
@@ -220,16 +216,6 @@ class Cross_Modal_Fusion(nn.Module):
         obs_map: (N, map_channels, H, W); obs_summary: (N, hidden)
         Returns: latent (N, hidden)
         """
-        tokens, key_padding_mask = self.embed_tokens(graph_nodes, instruction_tokens, instruction_mask, obs_map)
-        return self.read(
-            tokens, key_padding_mask,
-            query_cond=torch.concat([graph_summary, instruction_summary], dim=-1),
-            pooled=[graph_summary, instruction_summary, obs_summary],
-        )
-
-
-    def embed_tokens(self, graph_nodes, instruction_tokens, instruction_mask, obs_map):
-        # inputs as in forward; returns tokens (N, num_tokens, hidden) and key_padding_mask (N, num_tokens), True = ignore
         n = graph_nodes.size(0)
         graph_tokens = self.node_projection(graph_nodes) + self.slot_embedding + self.type_embedding[0]
         instruction_tokens = instruction_tokens + self.type_embedding[1]
@@ -242,17 +228,12 @@ class Cross_Modal_Fusion(nn.Module):
             instruction_mask == 0,
             torch.zeros(n, obs_tokens.size(1), dtype=torch.bool, device=tokens.device),
         ], dim=1)
-        return tokens, key_padding_mask
 
-
-    def read(self, tokens, key_padding_mask, query_cond, pooled):
-        # tokens, key_padding_mask: from embed_tokens; query_cond: (N, query_cond_dims)
-        # pooled: the three pooled paths [graph summary, instruction CLS, CNN vector], each (N, hidden)
-        queries = self.queries + self.query_condition(query_cond).unsqueeze(1)
+        queries = self.queries + self.query_condition(torch.concat([graph_summary, instruction_summary], dim=-1)).unsqueeze(1)
         for block in self.blocks:
             queries = block(queries, tokens, key_padding_mask)
 
-        return self.output_layer(torch.concat([queries.flatten(1)] + list(pooled), dim=-1))
+        return self.output_layer(torch.concat([queries.flatten(1), graph_summary, instruction_summary, obs_summary], dim=-1))
 
 
 def get_padding_mask(x, pad_token_id):
