@@ -203,7 +203,7 @@ if __name__ == "__main__":
     tokenizer.load(f"{experiment_path}/parameters")
 
     # game_ids = ["BabyAI-MiniBossLevel-v0"] * 512
-    game_ids = ["BabyAI-GoToSeqS5R2-v0"] * 128 + ["BabyAI-SynthS5R2-v0"] * 128 + ["BabyAI-SynthLoc-v0"] * 128 + ["BabyAI-SynthSeq-v0"] * 128
+    game_ids = ["BabyAI-UnblockPickup-v0"] * 128 + ["BabyAI-SynthLoc-v0"] * 128 + ["BabyAI-GoToSeqS5R2-v0"] * 128 + ["BabyAI-SynthSeq-v0"] * 128
     # compact missions: longest possible BossLevel mission is 27 tokens, total vocab ~58 words
     env = Multi_Environment(
         game_ids=game_ids,

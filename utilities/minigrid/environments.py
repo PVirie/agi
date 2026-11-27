@@ -1,5 +1,7 @@
 import gymnasium as gym
 from minigrid.wrappers import FullyObsWrapper, PositionBonus, ActionBonus
+from minigrid.core.roomgrid import RoomGrid
+from minigrid.minigrid_env import MiniGridEnv
 import numpy as np
 import time
 from enum import Enum
@@ -14,6 +16,26 @@ MINIGRID_ACTIONS = [
 # idle (None) actions allowed per episode before it is truncated; counted separately from
 # the env's own max_steps, so an episode lasts at most max_steps + MAX_IDLE_STEPS steps
 MAX_IDLE_STEPS = 1024
+
+
+def _bounded_room_place_agent(self, i=None, j=None, rand_dir=True, max_tries=1000):
+    # Same as minigrid's RoomGrid.place_agent (same RNG draws when it succeeds), but its retry loop is bounded:
+    # in a crowded room (e.g. BabyAI-SynthS5R2, 3x3 interiors with 18 distractors) every free cell can face an
+    # object, and the original loops forever. RecursionError makes RoomGridLevel._gen_grid regenerate the level.
+    if i is None:
+        i = self._rand_int(0, self.num_cols)
+    if j is None:
+        j = self._rand_int(0, self.num_rows)
+    room = self.room_grid[j][i]
+    for _ in range(max_tries):
+        MiniGridEnv.place_agent(self, room.top, room.size, rand_dir, max_tries=1000)
+        front_cell = self.grid.get(*self.front_pos)
+        if front_cell is None or front_cell.type == "wall":
+            return self.agent_pos
+    raise RecursionError("rejection sampling failed in RoomGrid.place_agent")
+
+
+RoomGrid.place_agent = _bounded_room_place_agent
 
 
 class BonusType(Enum):
