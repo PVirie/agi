@@ -236,7 +236,7 @@ if __name__ == "__main__":
         minibatch_size = 8
         rollout_length = 84
     elif args.scale == "medium":
-        # 10GB VRAM
+        # 12GB VRAM
         hidden_size = 256
         embedding_dim = 32
         node_dim = 32

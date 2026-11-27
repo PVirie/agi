@@ -11,8 +11,8 @@
                     "remoteRoot": "/app/implementations"
                 },
                 {
-                    "localRoot": "${workspaceFolder}/quest_interface",
-                    "remoteRoot": "/app/quest_interface"
+                    "localRoot": "${workspaceFolder}/interfaces",
+                    "remoteRoot": "/app/interfaces"
                 },
                 {
                     "localRoot": "${workspaceFolder}/tasks",
@@ -38,8 +38,8 @@
                     "remoteRoot": "/app/implementations"
                 },
                 {
-                    "localRoot": "${workspaceFolder}/quest_interface",
-                    "remoteRoot": "/app/quest_interface"
+                    "localRoot": "${workspaceFolder}/interfaces",
+                    "remoteRoot": "/app/interfaces"
                 },
                 {
                     "localRoot": "${workspaceFolder}/tasks",
